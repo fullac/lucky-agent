@@ -59,9 +59,24 @@ func TestDelegateExecutionSessionIsStableAndPersisted(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("delegate executor did not run")
 	}
-	record, ok, err := store.Get(started.TaskID)
-	if err != nil || !ok {
-		t.Fatalf("get persisted task: ok=%t err=%v", ok, err)
+	// The delegate runs asynchronously. Wait for its terminal persistence before
+	// the TempDir cleanup runs; otherwise the worker can still write the result
+	// directory after the test has returned.
+	deadline := time.Now().Add(time.Second)
+	var record taskstore.Record
+	var ok bool
+	for {
+		record, ok, err = store.Get(started.TaskID)
+		if err != nil {
+			t.Fatalf("get persisted task: %v", err)
+		}
+		if ok && record.Status == taskstore.StatusCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("delegate task did not reach terminal persistence: ok=%t record=%+v", ok, record)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	if record.ExecutionSessionID != wantSession || record.ParentSessionID != "parent-session" || record.Role != "subagent" {
 		t.Fatalf("persisted execution references: %+v", record)
