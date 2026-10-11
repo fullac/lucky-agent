@@ -252,6 +252,7 @@ func toProviderConfig(c *config.Config, modelOverride, apiBaseOverride string) p
 			Model:            model,
 			Protocol:         c.LlmProvider.Protocol,
 			ReasoningSummary: c.LlmProvider.ReasoningSummary,
+			ReasoningEffort:  c.LlmProvider.ReasoningEffort,
 			Temperature:      c.Temperature,
 		},
 		ExtraHeaders: c.ExtraHeaders,
@@ -440,6 +441,7 @@ func buildConfiguredProvider(c *config.Config, registry *provider.Registry) (pro
 			Model:            c.Model,
 			Protocol:         c.LlmProvider.Protocol,
 			ReasoningSummary: c.LlmProvider.ReasoningSummary,
+			ReasoningEffort:  c.LlmProvider.ReasoningEffort,
 		})
 		for _, fb := range c.Fallbacks {
 			fallbackConfigs = append(fallbackConfigs, provider.FallbackConfig{
@@ -449,6 +451,7 @@ func buildConfiguredProvider(c *config.Config, registry *provider.Registry) (pro
 				Model:            fb.Model,
 				Protocol:         fb.Protocol,
 				ReasoningSummary: fb.ReasoningSummary,
+				ReasoningEffort:  fb.ReasoningEffort,
 			})
 		}
 		chain, err := provider.NewFallbackChain(fallbackConfigs, registry)

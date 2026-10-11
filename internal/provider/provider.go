@@ -3,11 +3,20 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 )
+
+func normalizedReasoningEffort(value string) string {
+	effort := config.NormalizeReasoningEffort(value)
+	if effort == "" || effort == "auto" {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(effort))
+}
 
 type ContentPart struct {
 	Type  string     `json:"type"`
@@ -208,6 +217,7 @@ type LlmProvider struct {
 	Model            string  `json:"model"`
 	Protocol         string  `json:"protocol,omitempty"`
 	ReasoningSummary string  `json:"reasoning_summary,omitempty"`
+	ReasoningEffort  string  `json:"reasoning_effort,omitempty"`
 	Dimension        int     `json:"dimension"`
 	Temperature      float64 `json:"temperature"`
 }

@@ -15,6 +15,7 @@ func canonicalModelKey(key string) string {
 		"llm_provider.api_key": "models.endpoints.chat.api_key", "llm_provider.base_url": "models.endpoints.chat.api_base",
 		"llm_provider.model": "models.active.chat", "llm_provider.protocol": "models.endpoints.chat.protocol",
 		"llm_provider.reasoning_summary": "models.endpoints.chat.reasoning_summary",
+		"llm_provider.reasoning_effort":  "models.endpoints.chat.reasoning_effort",
 		"multimodal.image_model":         "models.active.vision", "multimodal.transcription_model": "models.active.transcription",
 	}
 	if alias, ok := aliases[key]; ok {
@@ -94,6 +95,12 @@ func (c *Config) setModelKey(key, value string) (bool, error) {
 			ep.Protocol = value
 		case "reasoning_summary":
 			ep.ReasoningSummary = value
+		case "reasoning_effort":
+			if normalized := NormalizeReasoningEffort(value); normalized == "" {
+				return true, fmt.Errorf("unsupported reasoning effort %q", value)
+			} else {
+				ep.ReasoningEffort = normalized
+			}
 		case "timeout_seconds":
 			n, err := strconv.Atoi(value)
 			if err != nil || n < 0 {

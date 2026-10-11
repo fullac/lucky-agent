@@ -229,6 +229,7 @@ type LlmProviderConfig struct {
 	Model            string `json:"model,omitempty"`
 	Protocol         string `json:"protocol,omitempty"`          // chat_completions (default) or responses
 	ReasoningSummary string `json:"reasoning_summary,omitempty"` // Responses API reasoning.summary verbosity: "", "auto", "concise", "detailed"
+	ReasoningEffort  string `json:"reasoning_effort,omitempty"`  // Reasoning effort: auto, none, minimal, low, medium, high, xhigh
 	Vision           bool   `json:"vision,omitempty"`            // 模型是否支持视觉能力
 }
 
@@ -820,6 +821,7 @@ type FallbackEntry struct {
 	Model            string `json:"model,omitempty"`
 	Protocol         string `json:"protocol,omitempty"`
 	ReasoningSummary string `json:"reasoning_summary,omitempty"`
+	ReasoningEffort  string `json:"reasoning_effort,omitempty"`
 }
 
 // DefaultConfig 返回默认配置
