@@ -60,6 +60,75 @@ func TestHandleConfigCanonicalRoundTripAndVisionMode(t *testing.T) {
 	}
 }
 
+func TestHandleConfigPatchMergesAndReportsChanges(t *testing.T) {
+	a := createTestAgent(t)
+	s := New(a, DefaultServerConfig())
+	before := a.Config().Get()
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/config", bytes.NewBufferString(`{"patch":{"agent":{"max_iterations":17}},"dry_run":true}`))
+	s.handleConfig(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("dry-run status = %d: %s", response.Code, response.Body.String())
+	}
+	var preview configPatchResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if !preview.DryRun || preview.Persisted || preview.Config.Agent.MaxIterations != 17 {
+		t.Fatalf("unexpected dry-run response: %#v", preview)
+	}
+	if got := a.Config().Get().Agent.MaxIterations; got != before.Agent.MaxIterations {
+		t.Fatalf("dry-run changed active config to %d", got)
+	}
+
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPatch, "/api/v1/config", bytes.NewBufferString(`{"agent":{"max_iterations":17}}`))
+	s.handleConfig(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("patch status = %d: %s", response.Code, response.Body.String())
+	}
+	var applied configPatchResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &applied); err != nil {
+		t.Fatal(err)
+	}
+	if !applied.Applied || !applied.Persisted || applied.Version == "" {
+		t.Fatalf("unexpected applied response: %#v", applied)
+	}
+	if len(applied.Changed) != 1 || applied.Changed[0] != "agent.max_iterations" {
+		t.Fatalf("changed paths = %#v", applied.Changed)
+	}
+	if got := a.Config().Get().Agent.MaxIterations; got != 17 {
+		t.Fatalf("active max_iterations = %d", got)
+	}
+	if got := a.Config().Get().Temperature; got != before.Temperature {
+		t.Fatalf("untouched temperature changed from %v to %v", before.Temperature, got)
+	}
+}
+
+func TestHandleConfigPatchClearsSecretAndRejectsStaleVersion(t *testing.T) {
+	a := createTestAgent(t)
+	s := New(a, DefaultServerConfig())
+	current := a.Config().Get()
+	stale := configVersion(current) + "-stale"
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/config", bytes.NewBufferString(`{"patch":{"temperature":0.4}}`))
+	request.Header.Set("If-Match", stale)
+	s.handleConfig(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("stale status = %d: %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPatch, "/api/v1/config", bytes.NewBufferString(`{"patch":{},"clear_secrets":["models.endpoints.chat.api_key"]}`))
+	s.handleConfig(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("clear status = %d: %s", response.Code, response.Body.String())
+	}
+	if got := a.Config().Get().ModelEndpoint(config.ModelKindChat).APIKey; got != "" {
+		t.Fatalf("chat API key was not cleared: %q", got)
+	}
+}
+
 func TestHandleModelsRefreshQueriesProvider(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer sk-test" {

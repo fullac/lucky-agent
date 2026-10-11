@@ -47,14 +47,26 @@ const (
 
 // Server 是 LuckyAgent 的 HTTP API Server
 type Server struct {
-	mu           sync.RWMutex
-	server       *http.Server
-	agent        *agent.Agent
-	config       ServerConfig
-	running      bool
-	statsMu      sync.RWMutex
-	chatCancelMu sync.Mutex
-	chatCancels  map[string]*chatCancellation
+	mu sync.RWMutex
+	// configUpdateMu serializes configuration read-modify-write operations so
+	// two clients cannot overwrite each other's PATCH/PUT changes.
+	configUpdateMu sync.Mutex
+	server         *http.Server
+	agent          *agent.Agent
+	config         ServerConfig
+	running        bool
+	// gatewayCtx is owned by the API server, rather than an individual HTTP
+	// request.  Gateway adapters keep polling/listening after the start request
+	// has returned and are stopped when the server is stopped.
+	gatewayCtx    context.Context
+	gatewayCancel context.CancelFunc
+	// gatewayReleases holds process-wide channel leases acquired for API-
+	// started gateways. Telegram uses a lease because Telegram only permits
+	// one long-polling consumer for a bot token.
+	gatewayReleases map[string]func()
+	statsMu         sync.RWMutex
+	chatCancelMu    sync.Mutex
+	chatCancels     map[string]*chatCancellation
 
 	// 限流
 	rateLimiter *rateLimiter
@@ -301,8 +313,28 @@ func New(a *agent.Agent, cfg ServerConfig) *Server {
 	// v0.22.0: 多 Agent 协作
 	collabRegistry := collab.NewRegistry()
 	delegateManager := collab.NewDelegateManager(collabRegistry, collab.TaskHandlerFunc(func(ctx context.Context, task *collab.SubTask) (string, error) {
-		// 默认处理器：调用 Agent Chat
-		return a.Chat(ctx, task.Input)
+		// Keep one durable transcript per delegated sub-agent. The execution
+		// session IDs are assigned by DelegateManager before the goroutine starts,
+		// so the task detail page can open the same conversation while it runs.
+		if a == nil {
+			return "", fmt.Errorf("agent runtime is not initialized")
+		}
+		sessionID := strings.TrimSpace(task.ExecutionSessionID)
+		if sessionID == "" {
+			return a.Chat(ctx, task.Input)
+		}
+		if _, ok := a.Sessions().Get(sessionID); !ok {
+			a.Sessions().Ensure(sessionID)
+		}
+		if sess, ok := a.Sessions().Get(sessionID); ok {
+			role := "subagent"
+			if strings.TrimSpace(task.AgentID) != "" {
+				role += ":" + strings.TrimSpace(task.AgentID)
+			}
+			profile := "You are a delegated collaboration sub-agent in LuckyAgent. Follow the assigned role, keep evidence for your result, and report blockers or unfinished work clearly."
+			sess.SetAgentProfile(role, profile)
+		}
+		return a.ChatWithSession(ctx, sessionID, task.Input)
 	}))
 	if a != nil && a.TaskStore() != nil {
 		delegateManager.SetTaskStore(a.TaskStore())
@@ -325,6 +357,7 @@ func New(a *agent.Agent, cfg ServerConfig) *Server {
 			StartTime: time.Now(),
 		},
 		chatCancels:     make(map[string]*chatCancellation),
+		gatewayReleases: make(map[string]func()),
 		metrics:         m,
 		healthCheck:     hc,
 		wsHub:           wsHub,
@@ -354,17 +387,21 @@ func broadcastTaskEvent(hub *websocket.Hub, event taskstore.Event) {
 		}
 	}
 	msg, err := websocket.NewMessage(websocket.TypeTaskEvent, sessionID, websocket.TaskEventData{
-		Type:        string(event.Type),
-		TaskID:      event.TaskID,
-		ParentID:    event.ParentID,
-		Status:      string(event.Status),
-		Mode:        string(event.Mode),
-		Message:     event.Message,
-		Progress:    event.Progress,
-		ChildID:     event.ChildID,
-		Error:       event.Error,
-		SessionID:   sessionID,
-		Description: description,
+		Type:               string(event.Type),
+		TaskID:             event.TaskID,
+		ParentID:           event.ParentID,
+		ExecutionSessionID: event.ExecutionSessionID,
+		ParentSessionID:    event.ParentSessionID,
+		Role:               event.Role,
+		Status:             string(event.Status),
+		Mode:               string(event.Mode),
+		Message:            event.Message,
+		Progress:           event.Progress,
+		ChildID:            event.ChildID,
+		Error:              event.Error,
+		SessionID:          sessionID,
+		Description:        description,
+		Metadata:           event.Metadata,
 	})
 	if err != nil {
 		return
@@ -410,6 +447,10 @@ func (s *Server) Start() error {
 		s.mu.Unlock()
 		return fmt.Errorf("server already running")
 	}
+	// Gateway adapters are long-lived server resources. Never pass an HTTP
+	// request context to them: net/http cancels that context when the handler
+	// returns, which would stop a gateway immediately after a successful start.
+	s.gatewayCtx, s.gatewayCancel = context.WithCancel(context.Background())
 
 	mux := http.NewServeMux()
 
@@ -420,6 +461,7 @@ func (s *Server) Start() error {
 		{path: "/api/v1/health/detail", handler: s.handleHealthDetail},
 		{path: "/api/v1/metrics", handler: s.handleMetrics},
 		{path: "/api/v1/config/reload", handler: s.handleConfigReload},
+		{path: "/api/v1/config/schema", handler: s.handleConfigSchema},
 		{path: "/api/v1/config", handler: s.handleConfig},
 		{path: "/api/v1/models", handler: s.handleModels},
 		{path: "/api/v1/models/switch", handler: s.handleModelSwitch},
@@ -481,6 +523,8 @@ func (s *Server) Start() error {
 		{path: "/api/v1/agents/task", handler: s.handleAgentsTask},
 		{path: "/api/v1/agents/tasks", handler: s.handleAgentsTasks},
 		{path: "/api/v1/agents/cancel", handler: s.handleAgentsCancel},
+		{path: "/api/v1/agents/blackboard", handler: s.handleAgentsBlackboard},
+		{path: "/api/v1/agents/messages", handler: s.handleAgentsMessages},
 		{path: "/api/v1/workflows", handler: s.handleWorkflows},
 		{path: "/api/v1/workflows/", handler: s.handleWorkflowByID},
 		{path: "/api/v1/workflow-instances", handler: s.handleWorkflowInstances},
@@ -508,6 +552,11 @@ func (s *Server) Start() error {
 
 	ln, err := net.Listen("tcp", s.config.Addr)
 	if err != nil {
+		if s.gatewayCancel != nil {
+			s.gatewayCancel()
+		}
+		s.gatewayCtx = nil
+		s.gatewayCancel = nil
 		s.mu.Unlock()
 		return fmt.Errorf("listen %s: %w", s.config.Addr, err)
 	}
@@ -571,7 +620,19 @@ func (s *Server) Stop() error {
 	s.mu.Lock()
 	running := s.running
 	httpServer := s.server
+	gatewayCancel := s.gatewayCancel
+	s.gatewayCancel = nil
+	s.gatewayCtx = nil
 	s.mu.Unlock()
+
+	if gatewayCancel != nil {
+		gatewayCancel()
+	}
+	var gatewayErr error
+	if s.agent != nil && s.agent.MsgGateway() != nil {
+		gatewayErr = s.agent.MsgGateway().StopAll()
+	}
+	s.releaseAllGatewayLeases()
 
 	// These components are started by New, so they must also be stopped when
 	// Stop is called before Start (or after Serve exits unexpectedly).
@@ -582,7 +643,7 @@ func (s *Server) Stop() error {
 		s.wsHub.Stop()
 	}
 	if !running || httpServer == nil {
-		return nil
+		return gatewayErr
 	}
 
 	logger.Info("api server stopping", "addr", s.config.Addr)
@@ -603,7 +664,7 @@ func (s *Server) Stop() error {
 	s.running = false
 	s.mu.Unlock()
 	logger.Info("api server stopped", "addr", s.config.Addr)
-	return nil
+	return gatewayErr
 }
 
 // IsRunning 返回是否运行中
@@ -1117,6 +1178,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		type sessionInfo struct {
 			ID           string `json:"id"`
 			Title        string `json:"title"`
+			AgentRole    string `json:"agent_role,omitempty"`
 			Pinned       bool   `json:"pinned,omitempty"`
 			Project      string `json:"project,omitempty"`
 			MessageCount int    `json:"message_count"`
@@ -1135,6 +1197,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			infos = append(infos, sessionInfo{
 				ID:           sess.ID,
 				Title:        sess.Title,
+				AgentRole:    sess.AgentRole,
 				Pinned:       sess.Pinned,
 				Project:      sess.Project,
 				MessageCount: sess.MessageCount,
@@ -1172,10 +1235,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			sess.SetTitle(body.Title)
 			_ = sess.Save()
 		}
+		role, _ := sess.AgentProfile()
 
 		s.sendJSON(w, http.StatusCreated, map[string]interface{}{
 			"id":            sess.ID,
 			"title":         sess.Title,
+			"agent_role":    role,
 			"message_count": sess.MessageCount(),
 			"created_at":    sess.CreatedAt.Format(time.RFC3339),
 			"updated_at":    sess.UpdatedAt.Format(time.RFC3339),
@@ -1219,6 +1284,7 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 			s.sendError(w, "delete session failed", http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.agent.ForgetShortTermSession(sess.ID)
 		s.sendJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 		return
 	case http.MethodGet:
@@ -1261,9 +1327,11 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	messages := s.historyMessagesWithOptions(rawMessages, includeFull, previewChars)
 
 	pinned, project := sess.Organization()
+	role, systemPrompt := sess.AgentProfile()
 	payload := map[string]interface{}{
 		"id":                sess.ID,
 		"title":             sess.Title,
+		"agent_role":        role,
 		"pinned":            pinned,
 		"project":           project,
 		"message_count":     total,
@@ -1273,6 +1341,9 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		"updated_at":        sess.UpdatedAt.Format(time.RFC3339),
 		"messages":          messages,
 		"content_truncated": !includeFull,
+	}
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("profile")), "1") || strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("profile")), "true") {
+		payload["agent_system_prompt"] = systemPrompt
 	}
 
 	// Without a limit the whole history is returned, as before. With one, page
@@ -1724,13 +1795,17 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"endpoints": []string{
 			"POST /api/v1/chat       — 流式聊天 (SSE)",
 			"POST /api/v1/chat/sync  — 同步聊天",
-			"POST /api/v1/config/reload — 重载后续请求的配置",
-			"GET|PUT /api/v1/config — 读取或更新脱敏配置",
+			"GET|PUT|PATCH /api/v1/config — 读取或更新脱敏配置",
+			"GET /api/v1/config/schema — 配置字段元数据",
+			"POST /api/v1/config/reload — 从磁盘重载配置",
 			"GET /api/v1/models — 列出模型。refresh=1 用当前 chat key 查询供应商",
 			"POST /api/v1/models/switch — 切换并保存指定类型模型",
 			"GET  /api/v1/ws         — WebSocket 实时通信",
 			"GET  /api/v1/ws/stats   — WebSocket 统计",
 			"GET  /api/v1/sessions   — 会话列表",
+			"GET  /api/v1/gateways   — 消息网关状态",
+			"POST /api/v1/gateways/{name}/start|stop — 启停消息网关",
+			"GET  /api/v1/gateways/{name}/status — 单个网关状态",
 			"GET|POST /api/v1/approvals — 外部编码代理审批列表与回执",
 			"GET  /api/v1/memory     — 记忆统计",
 			"POST /api/v1/memory     — 保存记忆",

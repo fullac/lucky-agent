@@ -85,6 +85,10 @@ go run ./cmd/la config set models.endpoints.chat.credential_ref openai-main
 
 凭据值通过 TTY 隐藏输入，保存在 `~/.luckyagent/runtime/credentials.db` 中；配置文件只保存引用。`credential list` 只显示凭据元数据，`credential remove <id>` 删除凭据。模型调用 `request_credential` 时，客户端弹出掩码表单，明文不进入模型上下文。
 
+需要调用带凭据的外部 HTTP API 时，可在 `request_credential` 之后调用 `create_ephemeral_credential_tool`。它会创建一个绑定当前会话、带 TTL 的临时工具；工具只持有 `credential_ref`，明文只在请求执行期间注入认证头，不写入会话或后台任务。详见 [`docs/tools/basic/create_ephemeral_credential_tool.md`](docs/tools/basic/create_ephemeral_credential_tool.md)。
+
+需要让 CLI 或 shell 命令使用凭据时，可调用 `create_ephemeral_credential_terminal_tool`。它只在一次受控子进程中注入环境变量，secret 不进入命令参数、ShellContext、工具结果或日志，并且创建和执行都需要审批。
+
 如需在回答末尾显示工具来源引用，可开启自动引用尾注（默认关闭）：
 
 ```bash

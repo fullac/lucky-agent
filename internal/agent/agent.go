@@ -1008,6 +1008,11 @@ func (a *Agent) StartConfigWatch(interval time.Duration) (func(), error) {
 	})
 	w.OnChange(func(oldCfg, newCfg *config.Config) {
 		if err := a.ApplyRuntimeConfig(newCfg); err != nil {
+			if oldCfg != nil {
+				if restoreErr := a.cfg.Replace(oldCfg); restoreErr == nil {
+					_ = a.ApplyRuntimeConfig(oldCfg)
+				}
+			}
 			logger.Warn("configuration reload could not update provider runtime", "error", err)
 			return
 		}
@@ -1100,6 +1105,15 @@ func (a *Agent) ReloadConfig() (config.ReloadResult, error) {
 		return result, err
 	}
 	if err := a.ApplyRuntimeConfig(result.New); err != nil {
+		// ReloadValidated swaps the manager snapshot before the runtime provider
+		// is rebuilt. Restore both the in-memory and persisted snapshots when
+		// applying the new provider fails, so callers can rely on the rejected
+		// configuration never becoming the active one.
+		if result.Old != nil {
+			if restoreErr := a.cfg.Replace(result.Old); restoreErr == nil {
+				_ = a.ApplyRuntimeConfig(result.Old)
+			}
+		}
 		return config.ReloadResult{}, err
 	}
 	return result, nil
@@ -1364,6 +1378,17 @@ func New(cfg *config.Manager) (*Agent, error) {
 	} else if restored > 0 {
 		fmt.Printf("[autonomy] restored %d queued tasks\n", restored)
 	}
+	if err := supportRT.autonomyKit.Queue().SetSessionInitializer(func(task *autonomy.QueueTask) (string, error) {
+		sess := memoryRT.sessions.Ensure("autonomy-" + task.ID)
+		sess.SetTitle(task.Title)
+		sess.SetAgentProfile("worker-task", "You are a LuckyAgent worker executing a queued task. Work on the assigned task, preserve evidence, and report blockers or unfinished work clearly.")
+		if err := sess.Save(); err != nil {
+			return "", err
+		}
+		return sess.ID, nil
+	}); err != nil {
+		fmt.Printf("[autonomy] initialize queued task sessions failed: %v\n", err)
+	}
 
 	supportRT.toolServices.Cron = tool.NewCronToolService(
 		supportRT.cronEngine,
@@ -1376,6 +1401,12 @@ func New(cfg *config.Manager) (*Agent, error) {
 		return a.StartAutonomyNow(context.Background())
 	})
 	supportRT.toolServices.Heartbeat = tool.NewHeartbeatToolService(a.handleHeartbeatTrigger, a.handleHeartbeatStatus)
+	if supportRT.toolServices.Ephemeral == nil {
+		supportRT.toolServices.Ephemeral = tool.NewEphemeralCredentialToolService(cfg.HomeDir())
+	}
+	if supportRT.toolServices.EphemeralTerminal == nil {
+		supportRT.toolServices.EphemeralTerminal = tool.NewEphemeralCredentialTerminalToolService(cfg.HomeDir())
+	}
 	supportRT.toolServices.RegisterCoreTools(supportRT.tools)
 
 	// v0.35.0: 自动加载 skills 目录
@@ -1401,8 +1432,25 @@ func New(cfg *config.Manager) (*Agent, error) {
 
 	// v0.38.0: 设置 delegate 的 Agent 执行器，让 delegate_task 真正走 Agent Loop
 	delegateCfg := supportRT.delegateMgr.Config()
+	supportRT.delegateMgr.SetSessionInitializer(func(task *tool.DelegateTask) error {
+		sess := memoryRT.sessions.Ensure(task.ExecutionSessionID)
+		sess.SetTitle("delegate-task")
+		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
+		if task.Workspace != "" {
+			sess.SetCwd(task.Workspace)
+		}
+		return sess.Save()
+	})
 	supportRT.delegateMgr.SetAgentExecutorWithOptions(func(ctx context.Context, description, contextStr string, options tool.AgentExecutorOptions) (string, error) {
-		sess := memoryRT.sessions.NewWithTitle("delegate-task")
+		sessionID := tool.DelegateExecutionSessionID(ctx)
+		var sess *session.Session
+		if sessionID != "" {
+			sess = memoryRT.sessions.Ensure(sessionID)
+			sess.SetTitle("delegate-task")
+		} else {
+			sess = memoryRT.sessions.NewWithTitle("delegate-task")
+		}
+		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
 		if workspace := tool.ExtractDelegateWorkspace(contextStr); workspace != "" {
 			if err := os.MkdirAll(workspace, 0o755); err == nil {
 				sess.SetCwd(workspace)
@@ -1440,6 +1488,11 @@ func New(cfg *config.Manager) (*Agent, error) {
 		}
 	}
 	return a, nil
+}
+
+func delegatedSubagentSystemPrompt() string {
+	profile := "You are a delegated sub-agent in LuckyAgent. Work only on the assigned task, use the available tools within their limits, preserve evidence, and return a concise result with blockers and unfinished work. Do not claim that work was completed without checking it."
+	return profile
 }
 
 // Chat 执行一次对话
@@ -2528,6 +2581,7 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 		return nil, fmt.Errorf("prepare %s sandbox: %w", a.SandboxMode(), snapshotErr)
 	}
 	loopCfg.Sandbox = snapshot
+	loopCfg.SessionID = strings.TrimSpace(sess.ID)
 	ctx = sandbox.WithSnapshot(ctx, snapshot)
 
 	events := make(chan ChatEvent, 64)
@@ -3051,6 +3105,7 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 	if sess != nil {
 		sessionID = sess.ID
 	}
+	callOpts = a.appendEphemeralToolSchemas(callOpts, sessionID)
 	if remaining <= 0 {
 		if message, blocked := state.pendingDelegateWaitMessage(); blocked {
 			a.finalizeStreamWithState(events, sess, turnInput, message, state)
@@ -3675,6 +3730,9 @@ func (a *Agent) ForgetShortTermSession(sessionID string) {
 	if a == nil {
 		return
 	}
+	if a.toolServices != nil {
+		a.toolServices.RevokeEphemeralSession(sessionID)
+	}
 	if a.shortTerms != nil {
 		a.shortTerms.Clear(sessionID)
 	}
@@ -4073,6 +4131,10 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 	if !ok {
 		sess = a.agent.sessions.Ensure(sessionID)
 	}
+	profile := strings.TrimSpace(cfg.SystemPrompt)
+	if profile != "" {
+		sess.SetAgentProfile("worker", profile)
+	}
 
 	loopCfg := LoopConfig{
 		Execution:              cfg.Execution,
@@ -4104,6 +4166,27 @@ NewSession 创建 autonomy 使用的新会话并返回其 ID。
 */
 func (a *agentExecutorAdapter) NewSession(title string) string {
 	sess := a.agent.sessions.NewWithTitle(title)
+	return sess.ID
+}
+
+// EnsureSession returns a deterministic session for a long-lived worker or
+// another runtime-owned actor. Existing history is preserved across process
+// restarts; a new session receives the supplied title.
+func (a *agentExecutorAdapter) EnsureSession(id, title string) string {
+	if a == nil || a.agent == nil {
+		return ""
+	}
+	sess := a.agent.sessions.Ensure(strings.TrimSpace(id))
+	if strings.TrimSpace(sess.Title) == "" && strings.TrimSpace(title) != "" {
+		sess.SetTitle(strings.TrimSpace(title))
+	}
+	if strings.HasPrefix(strings.TrimSpace(id), "worker-") {
+		sess.SetAgentProfile("worker", "You are a long-lived LuckyAgent worker. Process queued work within the assigned limits, preserve evidence, and report blockers or unfinished work clearly.")
+	}
+	// Worker sessions are UI entry points and may have no task messages of
+	// their own (work runs in isolated task sessions). Persist their metadata
+	// now so the deterministic id and role survive a process restart.
+	_ = sess.Save()
 	return sess.ID
 }
 

@@ -27,8 +27,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		s.sendJSON(w, http.StatusOK, config.RedactSecrets(s.agent.Config().Get()))
+		current := s.agent.Config().Get()
+		setConfigETag(w, configVersion(current))
+		s.sendJSON(w, http.StatusOK, config.RedactSecrets(current))
 	case http.MethodPut:
+		s.configUpdateMu.Lock()
+		defer s.configUpdateMu.Unlock()
 		defer r.Body.Close()
 		var submitted config.Config
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
@@ -52,7 +56,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			s.sendError(w, "configuration could not be applied; previous configuration restored", http.StatusBadRequest, "")
 			return
 		}
-		s.sendJSON(w, http.StatusOK, config.RedactSecrets(s.agent.Config().Get()))
+		active := s.agent.Config().Get()
+		setConfigETag(w, configVersion(active))
+		s.sendJSON(w, http.StatusOK, config.RedactSecrets(active))
+	case http.MethodPatch:
+		s.configUpdateMu.Lock()
+		defer s.configUpdateMu.Unlock()
+		s.handleConfigPatch(w, r)
 	default:
 		s.sendError(w, "method not allowed", http.StatusMethodNotAllowed, "")
 	}

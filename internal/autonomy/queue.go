@@ -109,12 +109,13 @@ type QueueTask struct {
 
 // TaskQueue is a concurrent-safe, persistent task queue.
 type TaskQueue struct {
-	mu               sync.RWMutex
-	tasks            map[string]*QueueTask
-	nextID           atomic.Int64
-	persistPath      string
-	policy           RunPolicy
-	persistenceError error
+	mu                 sync.RWMutex
+	tasks              map[string]*QueueTask
+	nextID             atomic.Int64
+	persistPath        string
+	policy             RunPolicy
+	persistenceError   error
+	sessionInitializer func(*QueueTask) (string, error)
 }
 
 type persistedTaskQueue struct {
@@ -132,6 +133,35 @@ func NewTaskQueue(bufferSize int) *TaskQueue {
 		tasks:  make(map[string]*QueueTask, bufferSize),
 		policy: DefaultRunPolicy(),
 	}
+}
+
+// SetSessionInitializer provisions a conversation when work enters the queue,
+// so queued tasks already have a usable conversation link before a worker is
+// available. Existing ready tasks without a session are backfilled as well.
+// The callback must not call back into this queue.
+func (q *TaskQueue) SetSessionInitializer(fn func(*QueueTask) (string, error)) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.sessionInitializer = fn
+	if fn == nil {
+		return nil
+	}
+	for id, current := range q.tasks {
+		if current.State != TaskReady || strings.TrimSpace(current.SessionID) != "" {
+			continue
+		}
+		next := cloneTask(current)
+		sessionID, err := fn(next)
+		if err != nil {
+			return fmt.Errorf("initialize queued task session: %w", err)
+		}
+		next.SessionID = strings.TrimSpace(sessionID)
+		if next.SessionID == "" {
+			return fmt.Errorf("initialize queued task session: empty session ID")
+		}
+		q.tasks[id] = next
+	}
+	return q.persistLocked()
 }
 
 // Add adds a new task to the queue.
@@ -183,6 +213,16 @@ func (q *TaskQueue) AddWithAcceptance(title, description string, priority TaskPr
 		Metadata:           meta,
 		CreatedAt:          now,
 		UpdatedAt:          now,
+	}
+	if q.sessionInitializer != nil {
+		sessionID, err := q.sessionInitializer(cloneTask(task))
+		if err != nil {
+			return nil, false, fmt.Errorf("initialize queued task session: %w", err)
+		}
+		task.SessionID = strings.TrimSpace(sessionID)
+		if task.SessionID == "" {
+			return nil, false, fmt.Errorf("initialize queued task session: empty session ID")
+		}
 	}
 
 	q.tasks[id] = task

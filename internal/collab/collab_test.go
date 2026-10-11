@@ -249,6 +249,14 @@ func TestDelegateManagerPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delegate: %v", err)
 	}
+	if task.ExecutionSessionID != "collab-"+task.ID || task.Role != "orchestrator" {
+		t.Fatalf("unexpected task execution references: %+v", task)
+	}
+	for _, sub := range task.SubTasks {
+		if sub.ExecutionSessionID != "collab-"+sub.ID || sub.Role != "subagent" {
+			t.Fatalf("unexpected subtask execution references: %+v", sub)
+		}
+	}
 
 	// 等待完成
 	time.Sleep(100 * time.Millisecond)
@@ -266,6 +274,91 @@ func TestDelegateManagerPipeline(t *testing.T) {
 	expected := "input->processed_by_agent-1->processed_by_agent-2"
 	if updated.Result != expected {
 		t.Errorf("result: got %s, want %s", updated.Result, expected)
+	}
+}
+
+func TestDelegateManagerPersistsChildExecutionSessionsAndProgress(t *testing.T) {
+	r := NewRegistry()
+	_ = r.Register(&AgentProfile{ID: "agent-1", Name: "Agent 1"})
+	store, err := taskstore.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	dm := NewDelegateManager(r, TaskHandlerFunc(func(ctx context.Context, task *SubTask) (string, error) {
+		return "child result", nil
+	}))
+	dm.SetTaskStore(store)
+	parent, err := dm.DelegateWithSession(context.Background(), ModeParallel, "persist child", "input", []string{"agent-1"}, time.Second, 0, "parent-session")
+	if err != nil {
+		t.Fatalf("delegate: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		current, ok := dm.GetTask(parent.ID)
+		if ok && current.State == TaskCompleted {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	child := parent.SubTasks[0]
+	record, ok, err := store.Get(child.ID)
+	if err != nil || !ok {
+		t.Fatalf("child record missing: ok=%t err=%v", ok, err)
+	}
+	if record.ParentID != parent.ID || record.ExecutionSessionID != child.ExecutionSessionID || record.ParentSessionID != "parent-session" {
+		t.Fatalf("child execution references not persisted: %+v", record)
+	}
+	if record.Status != taskstore.StatusCompleted {
+		t.Fatalf("child status = %s, want completed", record.Status)
+	}
+	events, err := store.Events(parent.ID)
+	if err != nil {
+		t.Fatalf("parent events: %v", err)
+	}
+	var progress int
+	for _, event := range events {
+		if event.Type == taskstore.EventProgress && event.ChildID == child.ID {
+			progress++
+		}
+	}
+	if progress < 2 {
+		t.Fatalf("expected child start and completion progress events, got %+v", events)
+	}
+}
+
+func TestDelegateManagerDebatePublishesTurnsAndVotes(t *testing.T) {
+	r := NewRegistry()
+	_ = r.Register(&AgentProfile{ID: "agent-1", Name: "Agent 1"})
+	dm := NewDelegateManager(r, TaskHandlerFunc(func(ctx context.Context, task *SubTask) (string, error) {
+		return "agent-1", nil
+	}))
+	task, err := dm.Delegate(context.Background(), ModeDebate, "debate topic", "input", []string{"agent-1"}, time.Second)
+	if err != nil {
+		t.Fatalf("delegate: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		current, ok := dm.GetTask(task.ID)
+		if ok && current.State == TaskCompleted {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	messages := dm.MessageBus().List(MessageFilter{TaskID: task.ID, Limit: 200})
+	var turns, votes int
+	for _, message := range messages {
+		switch message.Type {
+		case MsgDebateTurn:
+			turns++
+			if message.Payload["round"] == nil || message.Payload["total_rounds"] == nil {
+				t.Fatalf("debate turn lacks round metadata: %+v", message)
+			}
+		case MsgDebateVote:
+			votes++
+		}
+	}
+	if turns == 0 || votes == 0 {
+		t.Fatalf("expected debate turn and vote messages, got %+v", messages)
 	}
 }
 

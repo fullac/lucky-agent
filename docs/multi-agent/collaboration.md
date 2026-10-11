@@ -56,6 +56,17 @@ current HTTP handler (nanoseconds); `60000000000` is 60 seconds. API clients
 should read the returned task's `metadata.planner_trace` for an auditable
 selection record.
 
+The response carries `execution_session_id`, `parent_session_id`, and `role`.
+The execution session is stable for the task, so clients can open
+`/api/v1/sessions/{execution_session_id}` during execution and send follow-up
+messages to the same sub-agent session after the run completes. The session
+stores the sub-agent role prompt and reuses it on later turns.
+
+Collaborative sub-tasks publish `task_progress` and `task_result` messages to
+the in-process A2A mailbox. Use `GET /api/v1/agents/messages?to=...` to read
+messages and `GET /api/v1/agents/blackboard?task_id=...` for the latest shared
+task notes.
+
 ## Operational Notes
 
 - Register each referenced agent before delegating work.

@@ -2,12 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/workflow"
 )
@@ -819,6 +821,85 @@ func TestHandleGatewayByNameInvalidAction(t *testing.T) {
 		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
+
+func TestHandleGatewayStartUnknownPlatform(t *testing.T) {
+	a := createTestAgent(t)
+	s := New(a, DefaultServerConfig())
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/discord/start", bytes.NewReader([]byte(`{}`)))
+	w := httptest.NewRecorder()
+	s.handleGatewayStart(w, req, "discord")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestHandleGatewayStartUsesConfigValidation(t *testing.T) {
+	a := createTestAgent(t)
+	s := New(a, DefaultServerConfig())
+	// An empty body is valid; required credentials are checked against the
+	// runtime config and the request override is optional.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/weixin/start", nil)
+	w := httptest.NewRecorder()
+	s.handleGatewayStart(w, req, "weixin")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing configured credentials, got %d", w.Code)
+	}
+}
+
+func TestHandleGatewayStartNapCatRegistersAndStarts(t *testing.T) {
+	a := createTestAgent(t)
+	s := New(a, DefaultServerConfig())
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/gateways/napcat/start", bytes.NewReader([]byte(`{"listen_addr":"127.0.0.1:0"}`)))
+	w := httptest.NewRecorder()
+	s.handleGatewayStart(w, req, "napcat")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	gw, ok := a.MsgGateway().Get("napcat")
+	if !ok || !gw.IsRunning() {
+		t.Fatal("napcat gateway should be registered and running")
+	}
+	if err := a.MsgGateway().Stop("napcat"); err != nil {
+		t.Fatalf("stop napcat: %v", err)
+	}
+}
+
+func TestServerStopStopsRegisteredGateways(t *testing.T) {
+	a := createTestAgent(t)
+	s := New(a, DefaultServerConfig())
+	gw := &serverTestGateway{name: "test", running: true}
+	if err := a.MsgGateway().Register(gw); err != nil {
+		t.Fatalf("register gateway: %v", err)
+	}
+	if err := s.Stop(); err != nil {
+		t.Fatalf("stop server: %v", err)
+	}
+	if gw.running {
+		t.Fatal("server stop should stop registered gateways")
+	}
+}
+
+type serverTestGateway struct {
+	name    string
+	running bool
+}
+
+func (g *serverTestGateway) Name() string { return g.name }
+func (g *serverTestGateway) Start(context.Context) error {
+	g.running = true
+	return nil
+}
+func (g *serverTestGateway) Stop() error {
+	g.running = false
+	return nil
+}
+func (g *serverTestGateway) Send(context.Context, string, string) error { return nil }
+func (g *serverTestGateway) SendWithReply(context.Context, string, string, string) error {
+	return nil
+}
+func (g *serverTestGateway) IsRunning() bool { return g.running }
+
+var _ gateway.Gateway = (*serverTestGateway)(nil)
 
 // ===== WebSocket Stats =====
 

@@ -24,6 +24,80 @@ func TestDelegateManagerCreate(t *testing.T) {
 	}
 }
 
+func TestDelegateExecutionSessionIsStableAndPersisted(t *testing.T) {
+	store, err := taskstore.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("new task store: %v", err)
+	}
+	dm := NewDelegateManager(DefaultDelegateConfig())
+	dm.SetTaskStore(store)
+	seen := make(chan string, 1)
+	dm.SetAgentExecutor(func(ctx context.Context, description, contextStr string) (string, error) {
+		seen <- DelegateExecutionSessionID(ctx)
+		return "ok", nil
+	})
+
+	result, err := DelegateTaskTool(dm).ContextDetailedHandler(ExecutionContext{
+		Context: context.Background(), SessionID: "parent-session", Source: "http",
+	}, map[string]any{"description": "stable session"})
+	if err != nil {
+		t.Fatalf("delegate task: %v", err)
+	}
+	var started delegateStartResponse
+	if err := json.Unmarshal([]byte(result.Output), &started); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	wantSession := "delegate-" + started.TaskID
+	if started.ExecutionSessionID != wantSession || started.ParentSessionID != "parent-session" || started.Role != "subagent" {
+		t.Fatalf("unexpected execution references: %+v", started)
+	}
+	select {
+	case got := <-seen:
+		if got != wantSession {
+			t.Fatalf("executor session = %q, want %q", got, wantSession)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("delegate executor did not run")
+	}
+	record, ok, err := store.Get(started.TaskID)
+	if err != nil || !ok {
+		t.Fatalf("get persisted task: ok=%t err=%v", ok, err)
+	}
+	if record.ExecutionSessionID != wantSession || record.ParentSessionID != "parent-session" || record.Role != "subagent" {
+		t.Fatalf("persisted execution references: %+v", record)
+	}
+}
+
+func TestDelegateInitializesSessionBeforeReturningOrExecuting(t *testing.T) {
+	dm := NewDelegateManager(DefaultDelegateConfig())
+	initialized := make(chan string, 1)
+	dm.SetSessionInitializer(func(task *DelegateTask) error {
+		initialized <- task.ExecutionSessionID
+		return nil
+	})
+	executed := make(chan bool, 1)
+	dm.SetAgentExecutor(func(ctx context.Context, _, _ string) (string, error) {
+		select {
+		case sessionID := <-initialized:
+			executed <- sessionID == DelegateExecutionSessionID(ctx)
+		default:
+			executed <- false
+		}
+		return "done", nil
+	})
+	if _, err := dm.handleDelegate(map[string]any{"description": "precreate session"}); err != nil {
+		t.Fatalf("delegate: %v", err)
+	}
+	select {
+	case ok := <-executed:
+		if !ok {
+			t.Fatal("executor ran before the execution session was initialized")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("delegate executor did not run")
+	}
+}
+
 func TestDelegateTaskToolRegistration(t *testing.T) {
 	dm := NewDelegateManager(DefaultDelegateConfig())
 	r := NewRegistry()

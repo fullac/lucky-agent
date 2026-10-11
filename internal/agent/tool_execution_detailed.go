@@ -173,10 +173,13 @@ func (a *Agent) executeToolWithSessionDetailedContext(ctx context.Context, name,
 // gateToolApproval returns allowed=true when the tool may run. When the host
 // must confirm a PermApprove tool, it blocks until resolved.
 func (a *Agent) gateToolApproval(ctx context.Context, sessionID, name string, args map[string]any, autoApprove bool) (allowed bool, meta map[string]any, err error) {
-	if autoApprove || a == nil || a.tools == nil {
+	if a == nil || a.tools == nil {
 		return true, nil, nil
 	}
 	canonical := a.canonicalToolName(name)
+	if autoApprove && !requiresCredentialToolApproval(canonical) {
+		return true, nil, nil
+	}
 	if !requiresInteractiveApproval(canonical, args) {
 		return true, nil, nil
 	}
@@ -188,6 +191,9 @@ func (a *Agent) gateToolApproval(ctx context.Context, sessionID, name string, ar
 // run shell commands, or delegate work. Read-only lookups stay automatic so
 // ordinary questions do not stall on a confirmation card.
 func requiresInteractiveApproval(name string, args map[string]any) bool {
+	if requiresCredentialToolApproval(name) {
+		return true
+	}
 	switch name {
 	case "terminal", "file_write", "file_mkdir", "file_move", "file_delete", "file_patch",
 		"computer_act", "image_generate", "text_to_speech",
@@ -222,6 +228,14 @@ func requiresInteractiveApproval(name string, args map[string]any) bool {
 	default:
 		return false
 	}
+}
+
+func requiresCredentialToolApproval(name string) bool {
+	name = strings.TrimSpace(name)
+	return name == "create_ephemeral_credential_tool" ||
+		name == "create_ephemeral_credential_terminal_tool" ||
+		strings.HasPrefix(name, "tmp_credential_") ||
+		strings.HasPrefix(name, "tmp_terminal_credential_")
 }
 
 func (a *Agent) waitHITLApproval(ctx context.Context, sessionID, name string, args map[string]any, reason, action string) (bool, map[string]any, error) {

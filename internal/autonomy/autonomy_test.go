@@ -29,6 +29,26 @@ func TestTaskQueueAdd(t *testing.T) {
 	}
 }
 
+func TestTaskQueueSessionInitializerBindsPendingTasks(t *testing.T) {
+	q := NewTaskQueue(16)
+	if err := q.SetSessionInitializer(func(task *QueueTask) (string, error) {
+		return "autonomy-" + task.ID, nil
+	}); err != nil {
+		t.Fatalf("set session initializer: %v", err)
+	}
+	task, err := q.AddWithError("session task", "", PriorityNormal, nil)
+	if err != nil {
+		t.Fatalf("add task: %v", err)
+	}
+	if task.SessionID != "autonomy-"+task.ID {
+		t.Fatalf("session id = %q, want autonomy-%s", task.SessionID, task.ID)
+	}
+	claimed := q.Pull("worker-1")
+	if claimed == nil || claimed.SessionID != task.SessionID {
+		t.Fatalf("claim lost execution session: %+v", claimed)
+	}
+}
+
 func TestTaskQueuePull(t *testing.T) {
 	q := NewTaskQueue(16)
 

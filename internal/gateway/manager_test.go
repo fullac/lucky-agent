@@ -121,6 +121,7 @@ func TestStart(t *testing.T) {
 	err := gm.Start(context.Background(), "test")
 	require.NoError(t, err)
 	assert.True(t, gw.IsRunning())
+	assert.True(t, gm.IsRunning())
 }
 
 func TestStartNotFound(t *testing.T) {
@@ -163,6 +164,7 @@ func TestStop(t *testing.T) {
 	err := gm.Stop("test")
 	require.NoError(t, err)
 	assert.False(t, gw.IsRunning())
+	assert.False(t, gm.IsRunning())
 }
 
 func TestStopNotFound(t *testing.T) {

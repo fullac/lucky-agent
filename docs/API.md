@@ -333,6 +333,62 @@ curl "http://127.0.0.1:9090/api/v1/memory/recall?q=project"
 
 ## Configuration
 
+Configuration routes use the normal API authentication middleware. When
+`server.api_keys` is empty, they are available only from localhost or with a
+process-local pairing key; otherwise send `X-API-Key` or `Authorization:
+Bearer ...`.
+
+### `GET /api/v1/config`
+
+Returns the canonical configuration snapshot used by the runtime. API keys,
+tokens, passwords and extra headers are redacted. The response includes an
+`ETag` that can be sent as `If-Match` with a later PATCH.
+
+### `PUT /api/v1/config`
+
+Replaces the complete configuration. The body is limited to 2 MiB and is
+validated before it is persisted and applied. Clients should GET the current
+snapshot, modify it, and then PUT the complete document; PUT is not a partial
+update. Empty redacted secrets keep their existing value, so use PATCH with
+`clear_secrets` when a credential must be removed.
+
+### `PATCH /api/v1/config`
+
+Applies a JSON Merge Patch to the current configuration. The body can be the
+patch object directly:
+
+```json
+{
+  "agent": {"max_iterations": 20},
+  "context": {"max_history_turns": 80}
+}
+```
+
+For a dry run, optimistic concurrency, or explicit secret removal, use the
+envelope form:
+
+```json
+{
+  "patch": {"server": {"progress_summary_with_llm": true}},
+  "if_match": "<etag>",
+  "clear_secrets": ["models.endpoints.chat.api_key"],
+  "dry_run": false
+}
+```
+
+The response contains the redacted `config`, changed paths, `hot_reloaded`,
+`restart_required`, `applied`, `persisted`, and a new `version`. A stale
+`If-Match` returns `409`. Changes to server listening/authentication, gateways,
+and startup-created services are persisted but require a restart or service
+rebuild; the response reports those groups.
+
+### `GET /api/v1/config/schema`
+
+Returns field metadata for configuration clients: JSON path, type, default,
+whether the field is sensitive, and whether it is hot-reloadable or requires a
+restart. Sensitive defaults are always `null`. The response also groups paths
+under `hot`, `restart`, and `unknown`.
+
 ### `POST /api/v1/config/reload`
 
 Reload the active configuration without interrupting in-flight requests. The
@@ -605,6 +661,11 @@ Test request body:
 | `GET` | `/api/v1/agents/task?id=...` | Get delegated task |
 | `GET` | `/api/v1/agents/tasks` | List delegated tasks |
 | `POST` | `/api/v1/agents/cancel?id=...` | Cancel delegated task |
+| `GET` | `/api/v1/agents/blackboard?task_id=...` | Read shared collaboration notes |
+| `PUT` | `/api/v1/agents/blackboard` | Write a task collaboration note |
+| `DELETE` | `/api/v1/agents/blackboard?task_id=...&key=...` | Delete a collaboration note |
+| `GET` | `/api/v1/agents/messages?task_id=...&from=...&to=...` | Read A2A collaboration messages |
+| `POST` | `/api/v1/agents/messages` | Publish an A2A collaboration message |
 
 Delegate request example:
 
@@ -624,6 +685,14 @@ execution mode: it is the internal decision mechanism used by `auto` and is
 rejected with `400 Bad Request`. `cost_budget` is optional and normalized to
 the `0..1` range; `0` leaves planning cost unconstrained. `timeout` follows
 the Go JSON duration representation used by this handler (nanoseconds).
+
+Every delegated task and sub-task includes an `execution_session_id` when the
+runtime can execute it. `parent_session_id` identifies the requesting session
+and `role` identifies the runtime actor (for example `subagent` or
+`orchestrator`). Open `GET /api/v1/sessions/{execution_session_id}` to inspect
+the same transcript while the task is running and continue the conversation
+after it completes. `GET /api/v1/sessions/{id}?profile=1` also returns the
+runtime-owned `agent_role` and `agent_system_prompt` for that session.
 
 See [the collaboration guide](multi-agent/collaboration.md) for selection
 criteria and MDP learning behavior.
@@ -666,11 +735,18 @@ Start workflow request body:
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/v1/gateways` | List gateway statuses |
-| `POST` | `/api/v1/gateways/telegram/start` | Start Telegram gateway |
+| `POST` | `/api/v1/gateways/{name}/start` | Start a configured gateway in the `lh serve` process |
 | `POST` | `/api/v1/gateways/{name}/stop` | Stop gateway |
 | `GET` | `/api/v1/gateways/{name}/status` | Gateway status |
 
-Telegram start request body:
+The start endpoint accepts an optional JSON body. Credentials and listener
+settings are read from `msg_gateway.<name>` in the host configuration; fields
+sent by the caller override the matching values. This lets a remote client
+start a configured QQ, NapCat, Feishu, Weixin, or OpenClaw Weixin gateway
+without starting a second CLI process.
+
+Telegram start request body (the token may be omitted when it is already in
+the host configuration):
 
 ```json
 {
@@ -679,6 +755,13 @@ Telegram start request body:
   "admin_ids": ["123456"]
 }
 ```
+
+For the other channels, send `{}` to use the host configuration. The gateway
+instance belongs to the `lh serve` process and is stopped automatically when
+that process shuts down. Do not run the same channel in a separate
+`lh msg-gateway start` process at the same time; the Telegram API start is
+guarded by the same local lease used by the CLI. The endpoint returns `409`
+when the named gateway is already running.
 
 ## pprof
 

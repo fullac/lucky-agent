@@ -41,6 +41,11 @@ func ReduceObservation(record Record, events []Event) MainAgentObservation {
 	seenEvidence := make(map[string]struct{})
 	seenFiles := make(map[string]struct{})
 	seenTests := make(map[string]struct{})
+	// Child events can describe several attempts (and, for a debate, several
+	// rounds) for the same child. Reduce its latest state instead of counting
+	// every transition as a different child.
+	childStates := make(map[string]Status)
+	childErrors := make(map[string]string)
 	for _, event := range events {
 		if event.Progress > obs.Progress {
 			obs.Progress = event.Progress
@@ -54,30 +59,34 @@ func ReduceObservation(record Record, events []Event) MainAgentObservation {
 		if event.Cost.ChildCount > 0 {
 			obs.Cost.ChildCount += event.Cost.ChildCount
 		}
-		switch event.Type {
-		case EventChildCreated:
-			obs.RunningChildren++
-		case EventCompleted:
-			if event.ChildID != "" && obs.RunningChildren > 0 {
-				obs.RunningChildren--
+		if childID := strings.TrimSpace(event.ChildID); childID != "" {
+			state := event.Status
+			switch event.Type {
+			case EventChildCreated:
+				if state == "" {
+					state = StatusPending
+				}
+			case EventStarted:
+				state = StatusRunning
+			case EventCompleted:
+				state = StatusCompleted
+			case EventFailed:
+				state = StatusFailed
+			case EventCancelled:
+				state = StatusCancelled
 			}
-			if event.ChildID != "" {
-				obs.CompletedChildren++
+			if state != "" {
+				childStates[childID] = state
+				delete(childErrors, childID)
+				if state == StatusFailed || state == StatusBlocked {
+					childErrors[childID] = strings.TrimSpace(event.Error)
+					if childErrors[childID] == "" {
+						childErrors[childID] = strings.TrimSpace(event.Metadata["error"])
+					}
+				}
 			}
-		case EventFailed:
-			if event.ChildID != "" && obs.RunningChildren > 0 {
-				obs.RunningChildren--
-			}
-			if event.ChildID != "" {
-				obs.FailedChildren++
-			}
-			if strings.TrimSpace(event.Error) != "" {
-				obs.Blockers = append(obs.Blockers, event.Error)
-			}
-		case EventCancelled:
-			if event.ChildID != "" && obs.RunningChildren > 0 {
-				obs.RunningChildren--
-			}
+		} else if event.Type == EventFailed && strings.TrimSpace(event.Error) != "" {
+			obs.Blockers = append(obs.Blockers, event.Error)
 		}
 		appendUnique(&obs.FreshEvidence, seenEvidence, event.Evidence)
 		appendUnique(&obs.FilesChanged, seenFiles, event.Files)
@@ -85,6 +94,31 @@ func ReduceObservation(record Record, events []Event) MainAgentObservation {
 		if v := strings.TrimSpace(event.Metadata["verifier_status"]); v != "" {
 			obs.VerifierStatus = v
 		}
+	}
+	terminalChildren := 0
+	for _, state := range childStates {
+		switch state {
+		case StatusPending, StatusRunning:
+			obs.RunningChildren++
+		case StatusCompleted:
+			obs.CompletedChildren++
+			terminalChildren++
+		case StatusFailed, StatusBlocked:
+			obs.FailedChildren++
+			terminalChildren++
+		case StatusCancelled:
+			terminalChildren++
+		}
+	}
+	// Keep blocker order deterministic and consistent with the timeline.
+	for _, event := range events {
+		if blocker := childErrors[event.ChildID]; blocker != "" {
+			obs.Blockers = append(obs.Blockers, blocker)
+			delete(childErrors, event.ChildID)
+		}
+	}
+	if len(childStates) > 0 && (record.Status == StatusPending || record.Status == StatusRunning) {
+		obs.Progress = float64(terminalChildren) / float64(len(childStates))
 	}
 
 	if obs.RunningChildren > 0 && obs.Status != StatusCompleted && obs.Status != StatusCancelled {

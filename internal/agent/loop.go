@@ -121,6 +121,7 @@ type LoopConfig struct {
 	DisabledTools          []string            // 本轮对模型隐藏的工具名
 	Ephemeral              bool                // 临时后台执行，不写会话外持久化上下文
 	Source                 string              // 调用入口，例如 cli、tui、http、telegram
+	SessionID              string              // 当前回合的会话作用域（临时工具使用）
 	Sandbox                *sandbox.Snapshot   // task-scoped execution boundary
 }
 
@@ -352,6 +353,9 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	if strings.TrimSpace(loopCfg.Source) == "" {
 		loopCfg.Source = "cli"
 	}
+	if sess != nil {
+		loopCfg.SessionID = strings.TrimSpace(sess.ID)
+	}
 	if loopCfg.Execution != nil {
 		a.applyIntentToolGating(&loopCfg, routingText)
 		a.applyVisionToolPolicy(&loopCfg, turnProvider)
@@ -503,6 +507,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	)
 
 	for i := 0; i < loopCfg.MaxIterations; i++ {
+		callOpts = a.appendEphemeralToolSchemas(callOpts, loopCfg.SessionID)
 		result.Iterations = i + 1
 		result.State = StateReason
 		logger.Debug("agent loop iteration started",

@@ -366,10 +366,28 @@ func copyFile(dst, src *os.File) (int64, error) {
 
 // Command builds the process that runs a shell command under the snapshot.
 func (s *Snapshot) Command(command, workdir string, env map[string]string) (*exec.Cmd, error) {
+	return s.command(context.Background(), command, workdir, env, false)
+}
+
+// CommandWithEphemeralEnv builds a shell command with short-lived credentials
+// in the child environment. The environment is passed to bubblewrap through
+// the process environment rather than --setenv arguments so secret values do
+// not appear in the sandbox launcher argv.
+func (s *Snapshot) CommandWithEphemeralEnv(ctx context.Context, command, workdir string, env map[string]string) (*exec.Cmd, error) {
+	return s.command(ctx, command, workdir, env, true)
+}
+
+func (s *Snapshot) command(ctx context.Context, command, workdir string, env map[string]string, ephemeral bool) (*exec.Cmd, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if s == nil || s.Mode == ModeDev {
-		cmd := exec.Command("sh", "-c", command)
+		cmd := exec.CommandContext(ctx, "sh", "-c", command)
 		if workdir != "" {
 			cmd.Dir = workdir
+		}
+		if ephemeral {
+			cmd.Env = append(os.Environ(), envPairs(env)...)
 		}
 		return cmd, nil
 	}
@@ -387,7 +405,7 @@ func (s *Snapshot) Command(command, workdir string, env map[string]string) (*exe
 		return nil, fmt.Errorf("isolated workdir is outside sandbox root: %s", workdir)
 	}
 	args := []string{
-		"--die-with-parent", "--new-session", "--unshare-all", "--clearenv",
+		"--die-with-parent", "--new-session", "--unshare-all",
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind-try", "/bin", "/bin",
 		"--ro-bind-try", "/lib", "/lib",
@@ -397,8 +415,11 @@ func (s *Snapshot) Command(command, workdir string, env map[string]string) (*exe
 		"--bind", s.Root, "/workspace",
 		"--chdir", filepath.Join("/workspace", mustRelative(s.Root, workdir)),
 	}
-	for key, value := range filteredEnvMap(env, true) {
-		args = append(args, "--setenv", key, value)
+	if !ephemeral {
+		args = append(args, "--clearenv")
+		for key, value := range filteredEnvMap(env, true) {
+			args = append(args, "--setenv", key, value)
+		}
 	}
 	args = append(args,
 		"--setenv", "HOME", "/tmp/home",
@@ -406,7 +427,28 @@ func (s *Snapshot) Command(command, workdir string, env map[string]string) (*exe
 		"--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin",
 		"--", "sh", "-c", command,
 	)
-	return exec.Command(bwrap, args...), nil
+	cmd := exec.CommandContext(ctx, bwrap, args...)
+	if ephemeral {
+		// Keep the launcher environment minimal. Bubblewrap inherits this
+		// environment because --clearenv is intentionally omitted above.
+		cmd.Env = append([]string{
+			"HOME=/tmp/home",
+			"TMPDIR=/tmp",
+			"PATH=/usr/local/bin:/usr/bin:/bin",
+		}, envPairs(filteredEnvMap(env, false))...)
+	}
+	return cmd, nil
+}
+
+func envPairs(env map[string]string) []string {
+	values := make([]string, 0, len(env))
+	for key, value := range env {
+		if !validEnvKey(key) {
+			continue
+		}
+		values = append(values, key+"="+value)
+	}
+	return values
 }
 
 func filteredEnv(env map[string]string, isolated bool) []string {

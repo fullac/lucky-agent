@@ -20,11 +20,55 @@ import (
 // buildLoopCallOptions constructs the model-visible tool schema for one user input.
 func (a *Agent) buildLoopCallOptions(userInput string, loopCfg LoopConfig) provider.CallOptions {
 	fcMgr := function.NewManager(a.tools)
-	opts := a.buildFunctionCallOptionsForInput(userInput, fcMgr.BuildTools())
+	modelTools := fcMgr.BuildTools()
+	opts := a.buildFunctionCallOptionsForInput(userInput, modelTools)
+	opts = a.appendEphemeralToolSchemas(opts, loopCfg.SessionID)
 	opts.Tools = filterFunctionTools(opts.Tools, loopCfg.DisabledTools)
 	opts.ToolChoice = normalizeToolChoiceForTools(opts.ToolChoice, opts.Tools)
 	if len(opts.Tools) == 0 {
 		opts.ToolChoice = "none"
+	}
+	return opts
+}
+
+// appendEphemeralToolSchemas adds only the current session's generated tools
+// to an already prepared call option set. This is needed after the factory
+// creates a tool in the middle of an agent loop.
+func (a *Agent) appendEphemeralToolSchemas(opts provider.CallOptions, sessionID string) provider.CallOptions {
+	if a == nil || a.toolServices == nil || (a.toolServices.Ephemeral == nil && a.toolServices.EphemeralTerminal == nil) {
+		return opts
+	}
+	seen := make(map[string]struct{}, len(opts.Tools))
+	for _, item := range opts.Tools {
+		if name := functionToolNameFromSchema(item); name != "" {
+			seen[name] = struct{}{}
+		}
+	}
+	if a.toolServices.Ephemeral != nil {
+		for _, item := range a.toolServices.Ephemeral.VisibleTools(sessionID) {
+			name := functionToolNameFromSchema(item)
+			if name == "" {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			opts.Tools = append(opts.Tools, item)
+			seen[name] = struct{}{}
+		}
+	}
+	if a.toolServices.EphemeralTerminal != nil {
+		for _, item := range a.toolServices.EphemeralTerminal.VisibleTools(sessionID) {
+			name := functionToolNameFromSchema(item)
+			if name == "" {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			opts.Tools = append(opts.Tools, item)
+			seen[name] = struct{}{}
+		}
 	}
 	return opts
 }

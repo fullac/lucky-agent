@@ -105,6 +105,9 @@ func TestRequiresInteractiveApproval(t *testing.T) {
 	if !requiresInteractiveApproval("http_request", map[string]any{"method": "POST"}) {
 		t.Fatal("POST http_request must wait")
 	}
+	if !requiresInteractiveApproval("create_ephemeral_credential_tool", nil) || !requiresInteractiveApproval("tmp_credential_a81f", nil) {
+		t.Fatal("temporary credential tools must always wait")
+	}
 	if requiresInteractiveApproval("memory_hygiene", map[string]any{"action": "audit"}) {
 		t.Fatal("audit must not stall")
 	}
