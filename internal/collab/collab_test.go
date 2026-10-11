@@ -292,24 +292,40 @@ func TestDelegateManagerPersistsChildExecutionSessionsAndProgress(t *testing.T) 
 	if err != nil {
 		t.Fatalf("delegate: %v", err)
 	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		current, ok := dm.GetTask(parent.ID)
-		if ok && current.State == TaskCompleted {
+	child := parent.SubTasks[0]
+
+	// In-memory TaskCompleted flips before deferred store finalization. Wait for
+	// durable parent/child completion so TempDir cleanup cannot race writers.
+	deadline := time.Now().Add(2 * time.Second)
+	var childRecord, parentRecord taskstore.Record
+	var ok bool
+	for {
+		current, found := dm.GetTask(parent.ID)
+		if !found || current.State != TaskCompleted {
+			if time.Now().After(deadline) {
+				t.Fatalf("parent task did not complete in memory")
+			}
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		childRecord, ok, err = store.Get(child.ID)
+		if err != nil {
+			t.Fatalf("get child record: %v", err)
+		}
+		parentRecord, found, err = store.Get(parent.ID)
+		if err != nil {
+			t.Fatalf("get parent record: %v", err)
+		}
+		if ok && found && childRecord.Status == taskstore.StatusCompleted && parentRecord.Status == taskstore.StatusCompleted {
 			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("delegate persistence incomplete: child_ok=%t child=%+v parent_ok=%t parent=%+v", ok, childRecord, found, parentRecord)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	child := parent.SubTasks[0]
-	record, ok, err := store.Get(child.ID)
-	if err != nil || !ok {
-		t.Fatalf("child record missing: ok=%t err=%v", ok, err)
-	}
-	if record.ParentID != parent.ID || record.ExecutionSessionID != child.ExecutionSessionID || record.ParentSessionID != "parent-session" {
-		t.Fatalf("child execution references not persisted: %+v", record)
-	}
-	if record.Status != taskstore.StatusCompleted {
-		t.Fatalf("child status = %s, want completed", record.Status)
+	if childRecord.ParentID != parent.ID || childRecord.ExecutionSessionID != child.ExecutionSessionID || childRecord.ParentSessionID != "parent-session" {
+		t.Fatalf("child execution references not persisted: %+v", childRecord)
 	}
 	events, err := store.Events(parent.ID)
 	if err != nil {
