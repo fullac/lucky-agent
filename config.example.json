@@ -18,6 +18,7 @@
         "api_base": "https://api.openai.com/v1",
         "protocol": "chat_completions",
         "reasoning_summary": "detailed",
+        "reasoning_effort": "auto",
         "extra_headers": {
           "User-Agent": "luckyagent"
         }

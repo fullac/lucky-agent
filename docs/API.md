@@ -84,6 +84,28 @@ Common status codes:
 | `500` | Internal error |
 | `503` | Service not initialized |
 
+## Models
+
+### `GET /api/v1/models/effort`
+
+Returns the active chat model's reasoning effort setting and the stable option
+list (`auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`).
+`auto` omits the upstream parameter and uses the model service default.
+`supported` is false when the active provider/protocol is not an OpenAI or
+OpenAI-compatible endpoint.
+
+### `PUT /api/v1/models/effort`
+
+Persists and hot-applies the setting for subsequent requests. Body:
+
+```json
+{"effort":"high"}
+```
+
+Explicit values are rejected when the active provider does not support the
+OpenAI reasoning parameter. Model-dependent availability is still enforced by
+the upstream model service.
+
 ## Chat
 
 ### `POST /api/v1/chat`

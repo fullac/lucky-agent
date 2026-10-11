@@ -45,6 +45,7 @@ type openaiChatRequest struct {
 	Tools               []openaiTool           `json:"tools,omitempty"`
 	ToolChoice          any                    `json:"tool_choice,omitempty"`
 	StreamOptions       *openAIStreamOptions   `json:"stream_options,omitempty"`
+	ReasoningEffort     string                 `json:"reasoning_effort,omitempty"`
 }
 
 // openAIStreamOptions requests the final usage event from OpenAI-compatible
@@ -555,6 +556,9 @@ func callOpenAI(ctx context.Context, cfg Config, messages []Message, opts CallOp
 		Temperature:         cfg.LlmProvider.Temperature,
 		Stream:              false,
 	}
+	if effort := normalizedReasoningEffort(cfg.LlmProvider.ReasoningEffort); effort != "" {
+		reqBody.ReasoningEffort = effort
+	}
 
 	// v0.16.0: 添加 function calling 工具定义
 	if len(opts.Tools) > 0 {
@@ -832,6 +836,9 @@ func callOpenAIStream(ctx context.Context, cfg Config, messages []Message, opts 
 		Temperature:         cfg.LlmProvider.Temperature,
 		Stream:              true,
 		StreamOptions:       &openAIStreamOptions{IncludeUsage: true},
+	}
+	if effort := normalizedReasoningEffort(cfg.LlmProvider.ReasoningEffort); effort != "" {
+		reqBody.ReasoningEffort = effort
 	}
 
 	// v0.16.0: 添加 function calling 工具定义
