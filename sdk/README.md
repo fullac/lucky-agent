@@ -43,6 +43,10 @@ Streaming `Event` values may carry optional `Approval`, `Observation`, and `Usag
 
 ### Config knobs
 
+- `Provider`, `Model`, `APIKey`, `APIBase`, `Protocol` — select the model service
+- `MaxTokens` — override the per-response generation cap when greater than zero
+- `MaxContextTokens` — override the assembled context window when greater than zero
+- `Temperature` — override sampling temperature when greater than zero
 - `SystemPrompt` — write an embed-local SOUL.md
 - `AutoApprove` — auto-approve gated tools inside the host process
 - `DisableTools` — disable builtins after bootstrap (e.g. `terminal`)

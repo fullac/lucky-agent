@@ -1,15 +1,11 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/yurika0211/luckyagent/internal/gateway"
-	"github.com/yurika0211/luckyagent/internal/gateway/telegram"
 	"github.com/yurika0211/luckyagent/internal/utils"
 	"github.com/yurika0211/luckyagent/internal/workflow"
 )
@@ -166,67 +162,14 @@ func (s *Server) handleGatewaysList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGatewayTelegramStart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.sendError(w, "method not allowed", http.StatusMethodNotAllowed, "")
-		return
-	}
-
-	var req struct {
-		Token        string   `json:"token"`
-		AllowedChats []string `json:"allowed_chats,omitempty"`
-		AdminIDs     []string `json:"admin_ids,omitempty"`
-	}
-	if err := jsonAPI.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.sendError(w, "invalid request body", http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if req.Token == "" {
-		s.sendError(w, "token is required", http.StatusBadRequest, "")
-		return
-	}
-
-	gm := s.agent.MsgGateway()
-
-	// Check if already registered
-	if _, exists := gm.Get("telegram"); exists {
-		s.sendError(w, "telegram gateway already registered", http.StatusConflict, "")
-		return
-	}
-
-	tgAdapter := telegram.NewAdapter(telegram.Config{
-		Token:        req.Token,
-		AllowedChats: req.AllowedChats,
-		AdminIDs:     req.AdminIDs,
-	})
-	handler := telegram.NewHandler(tgAdapter, s.agent)
-	// 与 CLI 路径保持一致：持久化 chatID→sessionID 映射，重启后恢复会话
-	handler.SetDataDir(filepath.Join(s.agent.Config().HomeDir(), "data", "telegram"))
-	tgAdapter.SetHandler(func(ctx context.Context, msg *gateway.Message) error {
-		return handler.HandleMessage(ctx, msg)
-	})
-
-	if err := gm.Register(tgAdapter); err != nil {
-		s.sendError(w, "failed to register telegram gateway", http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if err := gm.Start(r.Context(), "telegram"); err != nil {
-		s.sendError(w, "failed to start telegram gateway", http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	s.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "telegram gateway started",
-		"running": true,
-	})
+	s.handleGatewayStart(w, r, "telegram")
 }
 
 func (s *Server) handleGatewayByName(w http.ResponseWriter, r *http.Request) {
 	// Extract gateway name from path: /api/v1/gateways/{name}/...
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/gateways/")
 	parts := strings.SplitN(path, "/", 2)
-	name := parts[0]
+	name := normalizeGatewayName(parts[0])
 
 	gm := s.agent.MsgGateway()
 
@@ -236,11 +179,15 @@ func (s *Server) handleGatewayByName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case len(parts) == 2 && parts[1] == "start":
+		s.handleGatewayStart(w, r, name)
+
 	case len(parts) == 2 && parts[1] == "stop" && r.Method == http.MethodPost:
 		if err := gm.Stop(name); err != nil {
 			s.sendError(w, "failed to stop gateway", http.StatusNotFound, err.Error())
 			return
 		}
+		s.releaseGatewayLease(name)
 		s.sendJSON(w, http.StatusOK, map[string]interface{}{
 			"message": fmt.Sprintf("gateway %s stopped", name),
 			"running": false,

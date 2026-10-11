@@ -21,6 +21,28 @@ func TestNewSession(t *testing.T) {
 	}
 }
 
+func TestAgentProfilePersistsWithSession(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSession("profile-session", dir)
+	s.SetAgentProfile("subagent", "Use evidence and report blockers.")
+	s.AddMessage("user", "inspect the files")
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	mgr, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	loaded, ok := mgr.Get("profile-session")
+	if !ok {
+		t.Fatal("profile session not loaded")
+	}
+	role, prompt := loaded.AgentProfile()
+	if role != "subagent" || prompt != "Use evidence and report blockers." {
+		t.Fatalf("loaded profile = %q / %q", role, prompt)
+	}
+}
+
 func TestAddMessage(t *testing.T) {
 	s := NewSession("test-2", t.TempDir())
 	s.AddMessage("user", "hello")

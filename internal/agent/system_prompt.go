@@ -64,6 +64,15 @@ func (a *Agent) buildSystemPromptWithOptions(sess *session.Session, opts systemP
 	if core := a.buildCorePromptBlock(); core != "" {
 		parts = append(parts, core)
 	}
+	if sess != nil {
+		if role, profile := sess.AgentProfile(); strings.TrimSpace(profile) != "" {
+			role = strings.TrimSpace(role)
+			if role == "" {
+				role = "runtime agent"
+			}
+			parts = append(parts, "【执行角色："+role+"】\n"+strings.TrimSpace(profile))
+		}
+	}
 	if len(toolNames) > 0 {
 		if toolPolicy := a.buildToolPolicyPromptBlock(); toolPolicy != "" {
 			parts = append(parts, toolPolicy)
@@ -192,6 +201,7 @@ Tool discipline:
 - If a tool fails, identify whether the blocker is permissions, network, missing input, invalid arguments, or wrong tool choice before retrying.
 - If a required value is missing (path, choice, confirmation text), call ask_user with a short prompt and wait. Do not invent the value and do not keep calling other tools while blocked on the user.
 - If a secret is missing (API key, token, password), call request_credential. Never ask the user to paste a secret into chat, and never put a secret in a tool argument. The form result only returns credential_ref.
+- For a command that needs a stored credential, use create_ephemeral_credential_terminal_tool. Put the credential only in its declared environment variable; never interpolate a secret into command_template, arguments, ShellContext, or a persistent shell export.
 - Prefer a small number of high-value tool calls over many low-value ones.`
 
 	loader := getPromptLoader()

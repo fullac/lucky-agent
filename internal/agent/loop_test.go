@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,43 @@ func TestDefaultLoopConfig(t *testing.T) {
 	}
 	if cfg.DuplicateFetchLimit != 1 {
 		t.Errorf("expected duplicate fetch limit 1, got %d", cfg.DuplicateFetchLimit)
+	}
+}
+
+func TestAppendEphemeralToolSchemasUsesSessionScope(t *testing.T) {
+	service := tool.NewEphemeralCredentialToolService(t.TempDir())
+	registry := tool.NewRegistry()
+	service.RegisterTools(registry)
+	factory, ok := registry.Get("create_ephemeral_credential_tool")
+	if !ok {
+		t.Fatal("temporary tool factory was not registered")
+	}
+	created, err := factory.ContextDetailedHandler(tool.ExecutionContext{Context: context.Background(), SessionID: "session-a"}, map[string]any{
+		"credential_ref": "ref-1",
+		"name":           "temporary",
+		"description":    "temporary test tool",
+		"url_template":   "https://example.com/resource",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := ""
+	for _, field := range strings.Fields(created.Output) {
+		if strings.HasPrefix(field, "tool_name=") {
+			name = strings.TrimPrefix(field, "tool_name=")
+		}
+	}
+	if name == "" {
+		t.Fatalf("temporary tool name missing: %s", created.Output)
+	}
+
+	a := &Agent{toolServices: &tool.Services{Ephemeral: service}}
+	opts := a.appendEphemeralToolSchemas(provider.CallOptions{}, "session-a")
+	if len(opts.Tools) != 1 || functionToolNameFromSchema(opts.Tools[0]) != name {
+		t.Fatalf("session-a tools = %#v", opts.Tools)
+	}
+	if other := a.appendEphemeralToolSchemas(provider.CallOptions{}, "session-b"); len(other.Tools) != 0 {
+		t.Fatalf("session-b unexpectedly saw tools: %#v", other.Tools)
 	}
 }
 

@@ -305,7 +305,12 @@ func classifyReload(oldCfg, newCfg *Config) (hotReloaded, restartRequired []stri
 	if !reflect.DeepEqual(oldCfg.LlmProvider, newCfg.LlmProvider) || oldCfg.APIKey != newCfg.APIKey || oldCfg.APIBase != newCfg.APIBase || !reflect.DeepEqual(oldCfg.ExtraHeaders, newCfg.ExtraHeaders) || !reflect.DeepEqual(oldCfg.Models, newCfg.Models) {
 		hotReloaded = append(hotReloaded, "llm_provider")
 	}
-	if oldCfg.MaxTokens != newCfg.MaxTokens || oldCfg.Temperature != newCfg.Temperature || !reflect.DeepEqual(oldCfg.Limits, newCfg.Limits) || !reflect.DeepEqual(oldCfg.Retry, newCfg.Retry) || !reflect.DeepEqual(oldCfg.CircuitBreaker, newCfg.CircuitBreaker) || !reflect.DeepEqual(oldCfg.RateLimit, newCfg.RateLimit) || !reflect.DeepEqual(oldCfg.Context, newCfg.Context) || !reflect.DeepEqual(oldCfg.Agent, newCfg.Agent) || !reflect.DeepEqual(oldCfg.ModelRouter, newCfg.ModelRouter) || !reflect.DeepEqual(oldCfg.Hooks, newCfg.Hooks) || !reflect.DeepEqual(oldCfg.ToolTrace, newCfg.ToolTrace) {
+	// Fallbacks and custom models are consumed while rebuilding the provider
+	// catalog, so they follow the same live provider path as model changes.
+	if !reflect.DeepEqual(oldCfg.Fallbacks, newCfg.Fallbacks) || !reflect.DeepEqual(oldCfg.CustomModels, newCfg.CustomModels) {
+		hotReloaded = append(hotReloaded, "provider_runtime")
+	}
+	if oldCfg.MaxTokens != newCfg.MaxTokens || oldCfg.Temperature != newCfg.Temperature || !reflect.DeepEqual(oldCfg.Limits, newCfg.Limits) || !reflect.DeepEqual(oldCfg.Retry, newCfg.Retry) || !reflect.DeepEqual(oldCfg.CircuitBreaker, newCfg.CircuitBreaker) || !reflect.DeepEqual(oldCfg.RateLimit, newCfg.RateLimit) || !reflect.DeepEqual(oldCfg.Context, newCfg.Context) || !reflect.DeepEqual(oldCfg.Agent, newCfg.Agent) || !reflect.DeepEqual(oldCfg.ModelRouter, newCfg.ModelRouter) || !reflect.DeepEqual(oldCfg.Hooks, newCfg.Hooks) || !reflect.DeepEqual(oldCfg.ToolTrace, newCfg.ToolTrace) || oldCfg.StreamMode != newCfg.StreamMode || !reflect.DeepEqual(oldCfg.ContextBudget, newCfg.ContextBudget) {
 		hotReloaded = append(hotReloaded, "request_runtime")
 	}
 	if !reflect.DeepEqual(oldCfg.Server, newCfg.Server) {
@@ -317,7 +322,7 @@ func classifyReload(oldCfg, newCfg *Config) (hotReloaded, restartRequired []stri
 	if !reflect.DeepEqual(oldCfg.MsgGateway, newCfg.MsgGateway) {
 		restartRequired = append(restartRequired, "msg_gateway")
 	}
-	if !reflect.DeepEqual(oldCfg.Embedding, newCfg.Embedding) || !reflect.DeepEqual(oldCfg.RAG, newCfg.RAG) || !reflect.DeepEqual(oldCfg.Memory, newCfg.Memory) || !reflect.DeepEqual(oldCfg.Tools, newCfg.Tools) || !reflect.DeepEqual(oldCfg.Multimodal, newCfg.Multimodal) || !reflect.DeepEqual(oldCfg.ImageGeneration, newCfg.ImageGeneration) || !reflect.DeepEqual(oldCfg.TTS, newCfg.TTS) || !reflect.DeepEqual(oldCfg.Autonomy, newCfg.Autonomy) || !reflect.DeepEqual(oldCfg.Delegate, newCfg.Delegate) || !reflect.DeepEqual(oldCfg.Proactive, newCfg.Proactive) {
+	if !reflect.DeepEqual(oldCfg.Embedding, newCfg.Embedding) || !reflect.DeepEqual(oldCfg.RAG, newCfg.RAG) || !reflect.DeepEqual(oldCfg.Memory, newCfg.Memory) || !reflect.DeepEqual(oldCfg.Tools, newCfg.Tools) || !reflect.DeepEqual(oldCfg.Multimodal, newCfg.Multimodal) || !reflect.DeepEqual(oldCfg.ImageGeneration, newCfg.ImageGeneration) || !reflect.DeepEqual(oldCfg.TTS, newCfg.TTS) || !reflect.DeepEqual(oldCfg.Autonomy, newCfg.Autonomy) || !reflect.DeepEqual(oldCfg.Delegate, newCfg.Delegate) || !reflect.DeepEqual(oldCfg.Proactive, newCfg.Proactive) || !reflect.DeepEqual(oldCfg.WebSearch, newCfg.WebSearch) || !reflect.DeepEqual(oldCfg.OpenCLI, newCfg.OpenCLI) || !reflect.DeepEqual(oldCfg.Codex, newCfg.Codex) || !reflect.DeepEqual(oldCfg.Grok, newCfg.Grok) || oldCfg.SoulPath != newCfg.SoulPath || !reflect.DeepEqual(oldCfg.Extra, newCfg.Extra) || !reflect.DeepEqual(oldCfg.Skills, newCfg.Skills) {
 		restartRequired = append(restartRequired, "runtime_services")
 	}
 	return hotReloaded, restartRequired

@@ -166,17 +166,21 @@ type StatusData struct {
 
 // TaskEventData is a stored task event pushed to connected clients.
 type TaskEventData struct {
-	Type        string  `json:"type"`
-	TaskID      string  `json:"task_id"`
-	ParentID    string  `json:"parent_id,omitempty"`
-	Status      string  `json:"status,omitempty"`
-	Mode        string  `json:"mode,omitempty"`
-	Message     string  `json:"message,omitempty"`
-	Progress    float64 `json:"progress,omitempty"`
-	ChildID     string  `json:"child_id,omitempty"`
-	Error       string  `json:"error,omitempty"`
-	SessionID   string  `json:"session_id,omitempty"`
-	Description string  `json:"description,omitempty"`
+	Type               string            `json:"type"`
+	TaskID             string            `json:"task_id"`
+	ParentID           string            `json:"parent_id,omitempty"`
+	ExecutionSessionID string            `json:"execution_session_id,omitempty"`
+	ParentSessionID    string            `json:"parent_session_id,omitempty"`
+	Role               string            `json:"role,omitempty"`
+	Status             string            `json:"status,omitempty"`
+	Mode               string            `json:"mode,omitempty"`
+	Message            string            `json:"message,omitempty"`
+	Progress           float64           `json:"progress,omitempty"`
+	ChildID            string            `json:"child_id,omitempty"`
+	Error              string            `json:"error,omitempty"`
+	SessionID          string            `json:"session_id,omitempty"`
+	Description        string            `json:"description,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
 }
 
 // ErrorData 错误消息数据

@@ -93,6 +93,20 @@ func TestBuildSystemPromptIncludesSoulSkillsAndPlatformHints(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptIncludesSessionAgentProfile(t *testing.T) {
+	mgr, err := config.NewManagerWithDir(filepath.Join(t.TempDir(), ".luckyagent"))
+	if err != nil {
+		t.Fatalf("NewManagerWithDir: %v", err)
+	}
+	sess := session.NewSession("subagent-test", t.TempDir())
+	sess.SetAgentProfile("researcher", "Keep source evidence and report uncertainty.")
+	a := &Agent{cfg: mgr, soul: &soul.Soul{}, tools: tool.NewRegistry()}
+	prompt := a.buildSystemPrompt(sess)
+	if !strings.Contains(prompt, "【执行角色：researcher】") || !strings.Contains(prompt, "Keep source evidence") {
+		t.Fatalf("expected session agent profile in prompt, got %q", prompt)
+	}
+}
+
 func TestBuildSystemPromptIncludesHybridComputerTerminalPolicyOnlyWhenAllToolsVisible(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&tool.Tool{Name: "terminal", Enabled: true})

@@ -68,6 +68,7 @@ func (gm *GatewayManager) Unregister(name string) error {
 
 	delete(gm.gateways, name)
 	delete(gm.stats, name)
+	gm.refreshRunningLocked()
 	logger.Info("gateway unregistered", "name", name)
 	return nil
 }
@@ -176,6 +177,7 @@ func (gm *GatewayManager) Start(ctx context.Context, name string) error {
 		return fmt.Errorf("start gateway %q: %w", name, err)
 	}
 
+	gm.running.Store(true)
 	logger.Info("gateway started", "name", name)
 	return nil
 }
@@ -218,8 +220,24 @@ func (gm *GatewayManager) Stop(name string) error {
 		logger.Error("gateway stop failed", "name", name, "error", err)
 		return err
 	}
+
+	gm.mu.RLock()
+	gm.refreshRunningLocked()
+	gm.mu.RUnlock()
 	logger.Info("gateway stopped", "name", name)
 	return nil
+}
+
+// refreshRunningLocked keeps the manager-level flag in sync with individual
+// adapters. Callers must hold at least gm.mu.RLock while inspecting gateways.
+func (gm *GatewayManager) refreshRunningLocked() {
+	for _, gw := range gm.gateways {
+		if gw.IsRunning() {
+			gm.running.Store(true)
+			return
+		}
+	}
+	gm.running.Store(false)
 }
 
 // Get returns a gateway by name.
@@ -290,14 +308,36 @@ type GatewayStatus struct {
 // Status returns the status of all gateways.
 func (gm *GatewayManager) Status() []GatewayStatus {
 	gm.mu.RLock()
-	defer gm.mu.RUnlock()
-
-	statuses := make([]GatewayStatus, 0, len(gm.gateways))
+	snapshots := make([]struct {
+		name     string
+		gateway  Gateway
+		counters *GatewayStats
+	}, 0, len(gm.gateways))
 	for name, gw := range gm.gateways {
-		stats, _ := gm.Stats(name)
+		snapshots = append(snapshots, struct {
+			name     string
+			gateway  Gateway
+			counters *GatewayStats
+		}{name: name, gateway: gw, counters: gm.stats[name]})
+	}
+	gm.mu.RUnlock()
+
+	// Do not call adapter methods while holding the manager lock. Besides
+	// reducing lock contention, this avoids the nested-RLock deadlock that the
+	// old implementation could trigger when a writer was queued.
+	statuses := make([]GatewayStatus, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		stats := GatewayStats{}
+		if counters := snapshot.counters; counters != nil {
+			stats = GatewayStats{
+				MessagesSent:     atomic.LoadInt64(&counters.MessagesSent),
+				MessagesReceived: atomic.LoadInt64(&counters.MessagesReceived),
+				Errors:           atomic.LoadInt64(&counters.Errors),
+			}
+		}
 		statuses = append(statuses, GatewayStatus{
-			Name:    name,
-			Running: gw.IsRunning(),
+			Name:    snapshot.name,
+			Running: snapshot.gateway.IsRunning(),
 			Stats:   stats,
 		})
 	}

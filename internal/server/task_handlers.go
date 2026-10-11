@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ type taskTreeNode struct {
 	Task        taskstore.Record               `json:"task"`
 	Observation taskstore.MainAgentObservation `json:"observation"`
 	Children    []taskTreeNode                 `json:"children,omitempty"`
+	Result      string                         `json:"result,omitempty"`
 }
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +201,9 @@ func (s *Server) handleTaskTree(w http.ResponseWriter, store taskstore.Store, ta
 		s.sendError(w, "task not found", http.StatusNotFound, taskID)
 		return
 	}
-	records, err := store.List(taskstore.ListFilter{Limit: 200})
+	// A tree is scoped by its root, not by the global recent-task list. Older
+	// descendants must remain visible even when newer unrelated tasks exist.
+	records, err := store.List(taskstore.ListFilter{})
 	if err != nil {
 		s.sendError(w, "list task tree failed", http.StatusInternalServerError, err.Error())
 		return
@@ -209,6 +213,15 @@ func (s *Server) handleTaskTree(w http.ResponseWriter, store taskstore.Store, ta
 		if strings.TrimSpace(record.ParentID) != "" {
 			childrenByParent[record.ParentID] = append(childrenByParent[record.ParentID], record)
 		}
+	}
+	for parentID := range childrenByParent {
+		sort.SliceStable(childrenByParent[parentID], func(i, j int) bool {
+			left, right := childrenByParent[parentID][i], childrenByParent[parentID][j]
+			if left.CreatedAt.Equal(right.CreatedAt) {
+				return left.ID < right.ID
+			}
+			return left.CreatedAt.Before(right.CreatedAt)
+		})
 	}
 	visiting := make(map[string]bool)
 	node, err := buildTaskTreeNode(store, root, childrenByParent, visiting)
@@ -233,6 +246,11 @@ func buildTaskTreeNode(store taskstore.Store, record taskstore.Record, childrenB
 	node := taskTreeNode{
 		Task:        record,
 		Observation: taskstore.ReduceObservation(record, events),
+	}
+	if result, _, err := store.Result(record.ID); err != nil {
+		return taskTreeNode{}, err
+	} else {
+		node.Result = result
 	}
 	for _, child := range childrenByParent[record.ID] {
 		childNode, err := buildTaskTreeNode(store, child, childrenByParent, visiting)
@@ -275,12 +293,15 @@ func (s *Server) handleTaskFeedback(w http.ResponseWriter, r *http.Request, stor
 		return
 	}
 	if err := store.AppendEvent(taskstore.Event{
-		Type:    taskstore.EventOutcomeRecorded,
-		TaskID:  record.ID,
-		Time:    time.Now(),
-		Status:  record.Outcome.Status,
-		Message: record.Outcome.UserFeedback,
-		Cost:    record.Outcome.Cost,
+		Type:               taskstore.EventOutcomeRecorded,
+		TaskID:             record.ID,
+		ExecutionSessionID: record.ExecutionSessionID,
+		ParentSessionID:    record.ParentSessionID,
+		Role:               record.Role,
+		Time:               time.Now(),
+		Status:             record.Outcome.Status,
+		Message:            record.Outcome.UserFeedback,
+		Cost:               record.Outcome.Cost,
 		Metadata: map[string]string{
 			"verified":         fmt.Sprintf("%t", record.Outcome.Verified),
 			"verifier":         record.Outcome.Verifier,
@@ -323,6 +344,24 @@ func (s *Server) handleTaskCancel(w http.ResponseWriter, r *http.Request, store 
 	if s.delegateManager != nil && record.Source == taskstore.SourceHTTP {
 		_ = s.delegateManager.CancelTask(record.ID)
 	}
+	if record.Source == taskstore.SourceTool && s.agent != nil && s.agent.Delegate() != nil {
+		cancelErr := s.agent.Delegate().CancelTask(record.ID, reason)
+		if cancelErr != nil {
+			// A task restored from disk may no longer have an in-memory
+			// goroutine. Keep the durable API useful by marking that record below;
+			// only reject errors for a task that is still resident but terminal.
+			if !strings.Contains(cancelErr.Error(), "task not found") {
+				s.sendError(w, "cancel delegated task failed", http.StatusConflict, cancelErr.Error())
+				return
+			}
+		} else {
+			// The delegate manager writes the terminal record and event itself.
+			if updated, found, getErr := store.Get(taskID); getErr == nil && found {
+				s.sendJSON(w, http.StatusOK, updated)
+				return
+			}
+		}
+	}
 	record.Status = taskstore.StatusCancelled
 	now := time.Now()
 	record.CompletedAt = now
@@ -333,11 +372,15 @@ func (s *Server) handleTaskCancel(w http.ResponseWriter, r *http.Request, store 
 		return
 	}
 	if err := store.AppendEvent(taskstore.Event{
-		Type:    taskstore.EventCancelled,
-		TaskID:  record.ID,
-		Time:    now,
-		Status:  taskstore.StatusCancelled,
-		Message: reason,
+		Type:               taskstore.EventCancelled,
+		TaskID:             record.ID,
+		ExecutionSessionID: record.ExecutionSessionID,
+		ParentSessionID:    record.ParentSessionID,
+		Role:               record.Role,
+		Mode:               record.Mode,
+		Time:               now,
+		Status:             taskstore.StatusCancelled,
+		Message:            reason,
 	}); err != nil {
 		s.sendError(w, "append task cancellation event failed", http.StatusInternalServerError, err.Error())
 		return

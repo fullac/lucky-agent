@@ -74,6 +74,7 @@ func (s *AutonomyToolService) RegisterTools(r *Registry) {
 			if err := authorizeAutonomyOperatorAction(exec, args); err != nil {
 				return ToolCallResult{}, err
 			}
+			args = autonomyArgsWithParentSession(args, exec.SessionID)
 			out, err := s.HandleAutonomy(args)
 			return ToolCallResult{Output: out}, err
 		},
@@ -96,6 +97,10 @@ func (s *AutonomyToolService) RegisterTools(r *Registry) {
 			"idempotency_key":     {Type: "string", Description: "Optional key for duplicate detection", Required: false},
 		},
 		Handler: s.HandleQueueAdd,
+		ContextDetailedHandler: func(exec ExecutionContext, args map[string]any) (ToolCallResult, error) {
+			out, err := s.HandleQueueAdd(autonomyArgsWithParentSession(args, exec.SessionID))
+			return ToolCallResult{Output: out}, err
+		},
 	})
 	r.Register(&Tool{
 		Name:            "autonomy_queue_list",
@@ -182,6 +187,12 @@ func (s *AutonomyToolService) RegisterTools(r *Registry) {
 		Parameters:      map[string]Param{},
 		Handler:         s.HandleStatus,
 	})
+}
+
+func autonomyArgsWithParentSession(args map[string]any, sessionID string) map[string]any {
+	next := cloneToolArgs(args)
+	next["_parent_session_id"] = strings.TrimSpace(sessionID)
+	return next
 }
 
 // Model-generated reconciliation cannot establish the outcome of an external

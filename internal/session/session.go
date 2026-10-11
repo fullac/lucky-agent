@@ -65,17 +65,21 @@ type CompactTrace struct {
 
 // Session 代表一次对话会话
 type Session struct {
-	mu        sync.RWMutex
-	saveMu    sync.Mutex
-	loadMu    sync.Mutex
-	ID        string
-	Title     string
-	Pinned    bool
-	Project   string
-	Messages  []provider.Message
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	dir       string
+	mu     sync.RWMutex
+	saveMu sync.Mutex
+	loadMu sync.Mutex
+	ID     string
+	Title  string
+	// AgentRole and AgentSystemPrompt identify a runtime-owned worker or
+	// sub-agent session and survive process restarts with the session metadata.
+	AgentRole         string
+	AgentSystemPrompt string
+	Pinned            bool
+	Project           string
+	Messages          []provider.Message
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	dir               string
 	// ShellContext 持久化 shell 环境（跨工具调用保持）
 	ShellContext ShellContext
 
@@ -176,6 +180,29 @@ func (s *Session) SetTitle(title string) {
 	defer s.mu.Unlock()
 	s.Title = strings.TrimSpace(title)
 	s.UpdatedAt = time.Now()
+}
+
+// SetAgentProfile assigns runtime-owned role instructions for this session.
+// User turns remain ordinary messages and cannot replace this profile.
+func (s *Session) SetAgentProfile(role, systemPrompt string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.AgentRole = strings.TrimSpace(role)
+	s.AgentSystemPrompt = strings.TrimSpace(systemPrompt)
+	s.UpdatedAt = time.Now()
+	s.mu.Unlock()
+}
+
+// AgentProfile returns the runtime-owned role and system instructions.
+func (s *Session) AgentProfile() (role, systemPrompt string) {
+	if s == nil {
+		return "", ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.AgentRole, s.AgentSystemPrompt
 }
 
 // SetPinned marks the session for list pinning without rewriting messages.
@@ -713,6 +740,8 @@ func (s *Session) Save() error {
 	persisted := s.persistedCount
 	needsRewrite := s.needsFullRewrite
 	title := s.Title
+	agentRole := s.AgentRole
+	agentSystemPrompt := s.AgentSystemPrompt
 	pinned := s.Pinned
 	project := s.Project
 	createdAt := s.CreatedAt
@@ -751,7 +780,7 @@ func (s *Session) Save() error {
 		legacyPath := filepath.Join(dir, id+".md")
 		_ = os.Remove(legacyPath)
 	default:
-		if err := s.saveLegacyMarkdown(dir, id, title, project, pinned, createdAt, updatedAt, shell, messages); err != nil {
+		if err := s.saveLegacyMarkdownWithProfile(dir, id, title, agentRole, agentSystemPrompt, project, pinned, createdAt, updatedAt, shell, messages); err != nil {
 			return err
 		}
 		byteSize = fileByteSize(filepath.Join(dir, id+".md"))
@@ -766,16 +795,18 @@ func (s *Session) Save() error {
 	s.mu.Unlock()
 
 	meta := sessionMetadata{
-		ID:           id,
-		Title:        title,
-		Pinned:       pinned,
-		Project:      project,
-		MessageCount: len(messages),
-		CreatedAt:    createdAt,
-		UpdatedAt:    updatedAt,
-		ByteSize:     byteSize,
-		Format:       format,
-		ShellContext: shell,
+		ID:                id,
+		Title:             title,
+		AgentRole:         agentRole,
+		AgentSystemPrompt: agentSystemPrompt,
+		Pinned:            pinned,
+		Project:           project,
+		MessageCount:      len(messages),
+		CreatedAt:         createdAt,
+		UpdatedAt:         updatedAt,
+		ByteSize:          byteSize,
+		Format:            format,
+		ShellContext:      shell,
 	}
 	metaData, err := json.Marshal(meta)
 	if err != nil {
@@ -787,16 +818,25 @@ func (s *Session) Save() error {
 	return nil
 }
 
+// saveLegacyMarkdown preserves the historical helper signature used by
+// package tests and older callers. Runtime profiles are written by the
+// profile-aware helper below.
 func (s *Session) saveLegacyMarkdown(dir, id, title, project string, pinned bool, createdAt, updatedAt time.Time, shell ShellContext, messages []provider.Message) error {
+	return s.saveLegacyMarkdownWithProfile(dir, id, title, "", "", project, pinned, createdAt, updatedAt, shell, messages)
+}
+
+func (s *Session) saveLegacyMarkdownWithProfile(dir, id, title, agentRole, agentSystemPrompt, project string, pinned bool, createdAt, updatedAt time.Time, shell ShellContext, messages []provider.Message) error {
 	data := sessionData{
-		ID:           id,
-		Title:        title,
-		Pinned:       pinned,
-		Project:      project,
-		Messages:     messages,
-		CreatedAt:    createdAt,
-		UpdatedAt:    updatedAt,
-		ShellContext: shell,
+		ID:                id,
+		Title:             title,
+		AgentRole:         agentRole,
+		AgentSystemPrompt: agentSystemPrompt,
+		Pinned:            pinned,
+		Project:           project,
+		Messages:          messages,
+		CreatedAt:         createdAt,
+		UpdatedAt:         updatedAt,
+		ShellContext:      shell,
 	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -815,27 +855,31 @@ func (s *Session) saveLegacyMarkdown(dir, id, title, project string, pinned bool
 
 // sessionData 是内部序列化格式
 type sessionData struct {
-	ID           string             `json:"id"`
-	Title        string             `json:"title"`
-	Pinned       bool               `json:"pinned,omitempty"`
-	Project      string             `json:"project,omitempty"`
-	Messages     []provider.Message `json:"messages"`
-	CreatedAt    time.Time          `json:"created_at"`
-	UpdatedAt    time.Time          `json:"updated_at"`
-	ShellContext ShellContext       `json:"shell_context"`
+	ID                string             `json:"id"`
+	Title             string             `json:"title"`
+	AgentRole         string             `json:"agent_role,omitempty"`
+	AgentSystemPrompt string             `json:"agent_system_prompt,omitempty"`
+	Pinned            bool               `json:"pinned,omitempty"`
+	Project           string             `json:"project,omitempty"`
+	Messages          []provider.Message `json:"messages"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	ShellContext      ShellContext       `json:"shell_context"`
 }
 
 type sessionMetadata struct {
-	ID           string       `json:"id"`
-	Title        string       `json:"title"`
-	Pinned       bool         `json:"pinned,omitempty"`
-	Project      string       `json:"project,omitempty"`
-	MessageCount int          `json:"message_count"`
-	CreatedAt    time.Time    `json:"created_at"`
-	UpdatedAt    time.Time    `json:"updated_at"`
-	ByteSize     int64        `json:"byte_size"`
-	Format       string       `json:"format"`
-	ShellContext ShellContext `json:"shell_context,omitempty"`
+	ID                string       `json:"id"`
+	Title             string       `json:"title"`
+	AgentRole         string       `json:"agent_role,omitempty"`
+	AgentSystemPrompt string       `json:"agent_system_prompt,omitempty"`
+	Pinned            bool         `json:"pinned,omitempty"`
+	Project           string       `json:"project,omitempty"`
+	MessageCount      int          `json:"message_count"`
+	CreatedAt         time.Time    `json:"created_at"`
+	UpdatedAt         time.Time    `json:"updated_at"`
+	ByteSize          int64        `json:"byte_size"`
+	Format            string       `json:"format"`
+	ShellContext      ShellContext `json:"shell_context,omitempty"`
 }
 
 func sessionMetadataPath(dir, id string) string {
@@ -846,6 +890,7 @@ func sessionMetadataPath(dir, id string) string {
 type SessionInfo struct {
 	ID           string    `json:"id"`
 	Title        string    `json:"title"`
+	AgentRole    string    `json:"agent_role,omitempty"`
 	Pinned       bool      `json:"pinned,omitempty"`
 	Project      string    `json:"project,omitempty"`
 	MessageCount int       `json:"message_count"`
@@ -1013,19 +1058,21 @@ func (m *Manager) newSessionStub(meta sessionMetadata, format string) *Session {
 		format = FormatLegacyMD
 	}
 	return &Session{
-		ID:             meta.ID,
-		Title:          meta.Title,
-		Pinned:         meta.Pinned,
-		Project:        meta.Project,
-		Messages:       nil,
-		CreatedAt:      meta.CreatedAt,
-		UpdatedAt:      meta.UpdatedAt,
-		dir:            m.dir,
-		ShellContext:   meta.ShellContext,
-		format:         format,
-		messagesLoaded: false,
-		messageCount:   meta.MessageCount,
-		persistedCount: meta.MessageCount,
+		ID:                meta.ID,
+		Title:             meta.Title,
+		AgentRole:         meta.AgentRole,
+		AgentSystemPrompt: meta.AgentSystemPrompt,
+		Pinned:            meta.Pinned,
+		Project:           meta.Project,
+		Messages:          nil,
+		CreatedAt:         meta.CreatedAt,
+		UpdatedAt:         meta.UpdatedAt,
+		dir:               m.dir,
+		ShellContext:      meta.ShellContext,
+		format:            format,
+		messagesLoaded:    false,
+		messageCount:      meta.MessageCount,
+		persistedCount:    meta.MessageCount,
 	}
 }
 
@@ -1060,6 +1107,7 @@ func (s *Session) loadMessagesLocked() error {
 
 	var messages []provider.Message
 	var title string
+	var agentRole, agentSystemPrompt string
 	var createdAt, updatedAt time.Time
 	var shell ShellContext
 
@@ -1081,6 +1129,8 @@ func (s *Session) loadMessagesLocked() error {
 		}
 		if meta, ok := readSessionMetadataLoose(s.dir, s.ID); ok {
 			title = meta.Title
+			agentRole = meta.AgentRole
+			agentSystemPrompt = meta.AgentSystemPrompt
 			createdAt = meta.CreatedAt
 			updatedAt = meta.UpdatedAt
 			shell = meta.ShellContext
@@ -1097,6 +1147,8 @@ func (s *Session) loadMessagesLocked() error {
 		} else {
 			messages = loaded
 			title = sd.Title
+			agentRole = sd.AgentRole
+			agentSystemPrompt = sd.AgentSystemPrompt
 			createdAt = sd.CreatedAt
 			updatedAt = sd.UpdatedAt
 			shell = sd.ShellContext
@@ -1106,6 +1158,12 @@ func (s *Session) loadMessagesLocked() error {
 	s.mu.Lock()
 	if title != "" {
 		s.Title = title
+	}
+	if agentRole != "" {
+		s.AgentRole = agentRole
+	}
+	if agentSystemPrompt != "" {
+		s.AgentSystemPrompt = agentSystemPrompt
 	}
 	if !createdAt.IsZero() {
 		s.CreatedAt = createdAt
@@ -1229,6 +1287,14 @@ func readSessionFile(path string, onMessage func(provider.Message) error) (sessi
 			}
 		case "title":
 			if err := decoder.Decode(&data.Title); err != nil {
+				return sessionData{}, 0, err
+			}
+		case "agent_role":
+			if err := decoder.Decode(&data.AgentRole); err != nil {
+				return sessionData{}, 0, err
+			}
+		case "agent_system_prompt":
+			if err := decoder.Decode(&data.AgentSystemPrompt); err != nil {
 				return sessionData{}, 0, err
 			}
 		case "created_at":
@@ -1429,7 +1495,7 @@ func (m *Manager) ListInfo() []SessionInfo {
 		if format == "" {
 			format = FormatLegacyMD
 		}
-		id, title, pinned, project, count := s.ID, s.Title, s.Pinned, s.Project, s.messageCountLocked()
+		id, title, agentRole, pinned, project, count := s.ID, s.Title, s.AgentRole, s.Pinned, s.Project, s.messageCountLocked()
 		created, updated, dir := s.CreatedAt, s.UpdatedAt, s.dir
 		s.mu.RUnlock()
 		byteSize := int64(0)
@@ -1442,6 +1508,7 @@ func (m *Manager) ListInfo() []SessionInfo {
 		infos = append(infos, SessionInfo{
 			ID:           id,
 			Title:        title,
+			AgentRole:    agentRole,
 			Pinned:       pinned,
 			Project:      project,
 			MessageCount: count,
@@ -1475,6 +1542,7 @@ func (m *Manager) Search(query string) []SessionInfo {
 		info := SessionInfo{
 			ID:           s.ID,
 			Title:        s.Title,
+			AgentRole:    s.AgentRole,
 			Pinned:       s.Pinned,
 			Project:      s.Project,
 			MessageCount: s.messageCountLocked(),

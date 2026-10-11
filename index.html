@@ -1148,7 +1148,8 @@
               '推荐复制 config.example.json 为 config.json，再按需替换示例值。',
               '模型 ID 只填写在 models.active，提供商、地址和密钥只填写在 models.endpoints。',
               '没有启用的功能可以保留默认值或留空；API 密钥不要提交到公共仓库。',
-              '修改配置后，已启用的服务通常需要执行 /api/v1/config/reload 或重启才能使用新值。'
+              '客户端可用 GET /api/v1/config 读取脱敏配置，用 PATCH /api/v1/config 局部修改；PUT /api/v1/config 是完整替换，/api/v1/config/schema 提供字段类型、默认值和重启提示。',
+              '修改配置后，PATCH 响应会区分 hot_reloaded 和 restart_required；监听地址、鉴权、网关和启动期服务通常需要重启。'
             ],
             related: ['config', 'runtime', 'opencli', 'api', 'telegram', 'napcat'],
             commands: [
@@ -1428,7 +1429,7 @@
                 description: '网关共有设置在顶部，各平台私有设置分别放在 telegram、qqofficial、napcat、feishu、weixin 和 openclawweixin。',
                 fields: [
                   { field: 'msg_gateway.platform', example: 'telegram', description: '默认启动的平台名称。单独启动时也可使用 --platform 覆盖。' },
-                  { field: 'msg_gateway.start_all', example: 'false', description: '是否同时启动所有已配置平台。' },
+                  { field: 'msg_gateway.start_all', example: 'false', description: '当前 lh serve 不会因该字段自动拉起网关；远程管理请使用 /api/v1/gateways/{name}/start。' },
                   { field: 'msg_gateway.api_addr', example: '127.0.0.1:9090', description: '网关使用的本地 API 地址，应与 server.addr 对齐。' },
                   { field: 'msg_gateway.telegram.token / proxy', example: 'your-bot-token / ""', description: 'Telegram Bot token 和可选 HTTP/SOCKS5 代理。' },
                   { field: 'msg_gateway.telegram.chat_timeout_seconds', example: '600', description: 'Telegram 单次对话总超时时间。' },

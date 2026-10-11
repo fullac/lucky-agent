@@ -59,3 +59,39 @@ func TestReduceObservationRecommendsAggregateForPartialFailure(t *testing.T) {
 		t.Fatalf("expected blocker, got %+v", obs.Blockers)
 	}
 }
+
+func TestReduceObservationUsesLatestChildProgressState(t *testing.T) {
+	record := Record{ID: "parent", Status: StatusRunning, Mode: ModeDebate}
+	events := []Event{
+		{Type: EventChildCreated, ChildID: "child-1"},
+		{Type: EventChildCreated, ChildID: "child-1"},
+		{Type: EventChildCreated, ChildID: "child-2"},
+		{Type: EventProgress, ChildID: "child-1", Status: StatusRunning},
+		{Type: EventProgress, ChildID: "child-1", Status: StatusFailed, Metadata: map[string]string{"error": "first attempt failed"}},
+		{Type: EventProgress, ChildID: "child-1", Status: StatusRunning},
+		{Type: EventProgress, ChildID: "child-1", Status: StatusCompleted},
+		{Type: EventProgress, ChildID: "child-1", Status: StatusCompleted},
+	}
+	obs := ReduceObservation(record, events)
+	if obs.RunningChildren != 1 || obs.CompletedChildren != 1 || obs.FailedChildren != 0 {
+		t.Fatalf("expected one completed child and one pending child, got %+v", obs)
+	}
+	if len(obs.Blockers) != 0 || obs.Progress != 0.5 {
+		t.Fatalf("retry should clear stale failure and progress should count unique children, got %+v", obs)
+	}
+	events = append(events, Event{Type: EventProgress, ChildID: "child-2", Status: StatusCancelled})
+	obs = ReduceObservation(record, events)
+	if obs.RunningChildren != 0 || obs.CompletedChildren != 1 || obs.Progress != 1 {
+		t.Fatalf("cancelled child must stop contributing to active count, got %+v", obs)
+	}
+}
+
+func TestReduceObservationReportsLatestChildProgressFailure(t *testing.T) {
+	obs := ReduceObservation(Record{ID: "parent", Status: StatusRunning}, []Event{
+		{Type: EventChildCreated, ChildID: "child"},
+		{Type: EventProgress, ChildID: "child", Status: StatusFailed, Metadata: map[string]string{"error": "step could not finish"}},
+	})
+	if obs.RunningChildren != 0 || obs.FailedChildren != 1 || len(obs.Blockers) != 1 || obs.Blockers[0] != "step could not finish" {
+		t.Fatalf("progress failure must be visible in the parent observation, got %+v", obs)
+	}
+}
