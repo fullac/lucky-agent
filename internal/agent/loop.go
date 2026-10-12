@@ -139,11 +139,8 @@ type loopRuntime interface {
 	runDurableLoop(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
 	useForeground(*session.Session, LoopConfig) bool
 	runForeground(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
-	StartAutonomy(context.Context) error
-	loopAutonomyEnabled() bool
 	getStreamMode() StreamMode
 	appendNaturalCitationsIfEnabled(string, []toolCallLog) string
-	appendRunningTaskNotice(string) string
 	loopHasRAG() bool
 	indexConversationTurn(string, string)
 	saveFinalAnswerDocument(string, string, string) error
@@ -163,10 +160,23 @@ type loopRuntime interface {
 // Agent remains the compatibility coordinator and constructs this facade.
 type Loop struct {
 	runtime loopRuntime
+	options LoopOptions
 }
 
-func NewLoop(runtime loopRuntime) *Loop {
-	return &Loop{runtime: runtime}
+// LoopOptions contains coordinator callbacks that sit outside the turn
+// execution core. They are optional so background callers can run a turn
+// without starting process-wide autonomy or appending coordinator notices.
+type LoopOptions struct {
+	EnsureAutonomy          func(context.Context) error
+	AppendRunningTaskNotice func(string) string
+}
+
+func NewLoop(runtime loopRuntime, options ...LoopOptions) *Loop {
+	var opts LoopOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	return &Loop{runtime: runtime, options: opts}
 }
 
 // Run executes one turn using the provider snapshot selected by the runtime.
@@ -378,13 +388,12 @@ func (a *Agent) loopRunner() *Loop {
 	a.loopMu.Lock()
 	defer a.loopMu.Unlock()
 	if a.loop == nil {
-		a.loop = NewLoop(a)
+		a.loop = NewLoop(a, LoopOptions{
+			EnsureAutonomy:          a.StartAutonomy,
+			AppendRunningTaskNotice: a.appendRunningTaskNotice,
+		})
 	}
 	return a.loop
-}
-
-func (a *Agent) loopAutonomyEnabled() bool {
-	return a != nil && a.autonomy != nil
 }
 
 func (a *Agent) loopHasRAG() bool {
@@ -453,8 +462,10 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	l.runtime.applyIntentToolGating(&loopCfg, routingText)
 	l.runtime.applyVisionToolPolicy(&loopCfg, turnProvider)
 
-	if startErr := l.runtime.StartAutonomy(ctx); startErr != nil && l.runtime.loopAutonomyEnabled() {
-		return nil, fmt.Errorf("start autonomy: %w", startErr)
+	if l.options.EnsureAutonomy != nil {
+		if startErr := l.options.EnsureAutonomy(ctx); startErr != nil {
+			return nil, fmt.Errorf("start autonomy: %w", startErr)
+		}
 	}
 
 	sessionID := ""
@@ -532,7 +543,9 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 		}
 		response = utils.SanitizeToolProtocolOutput(response)
 		response = l.runtime.appendNaturalCitationsIfEnabled(response, result.ToolCalls)
-		response = l.runtime.appendRunningTaskNotice(response)
+		if l.options.AppendRunningTaskNotice != nil {
+			response = l.options.AppendRunningTaskNotice(response)
+		}
 		result.Response = response
 		result.State = StateDone
 		createdAt := time.Now().UTC()
