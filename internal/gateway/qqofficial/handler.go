@@ -17,13 +17,19 @@ import (
 
 	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/cli/profile"
+	"github.com/yurika0211/luckyagent/internal/config"
+	"github.com/yurika0211/luckyagent/internal/contextx"
 	"github.com/yurika0211/luckyagent/internal/cron"
+	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	luckycollector "github.com/yurika0211/luckyagent/internal/gateway/collector"
 	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/metrics"
+	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
+	"github.com/yurika0211/luckyagent/internal/sandbox"
 	"github.com/yurika0211/luckyagent/internal/session"
+	"github.com/yurika0211/luckyagent/internal/soul"
 	"github.com/yurika0211/luckyagent/internal/tool"
 	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
@@ -66,9 +72,47 @@ type messageFeedbackSender interface {
 }
 
 // turnChatRuntime is the provider-independent chat boundary. The handler
-// still keeps Agent for legacy commands; only the message path uses this
-// narrow interface while those commands are migrated.
+// keeps the broader Runtime contract for legacy commands; only the message
+// path uses this narrow interface while those commands are migrated.
 type turnChatRuntime = turn.ChatRuntime
+
+// Runtime is the host contract consumed by the QQ-family handlers.
+//
+// Keeping this contract at the gateway boundary means constructors do not
+// require the concrete agent.Agent.  The message path only needs the neutral
+// turn.ChatRuntime methods; command handlers use the remaining state methods
+// until those commands are migrated to smaller contracts.
+type Runtime interface {
+	turn.ChatRuntime
+
+	ChatWithSessionStreamInput(context.Context, string, agent.UserTurnInput) (<-chan agent.ChatEvent, error)
+	ResolvePendingText(string, string) (tool.PendingApproval, bool, error)
+	RecordRecentChatTarget(string, string, string)
+
+	Config() *config.Manager
+	Sessions() *session.Manager
+	SetSandboxMode(string) error
+	SandboxMode() sandbox.Mode
+	Catalog() *provider.ModelCatalog
+	SwitchModel(string) error
+	Soul() *soul.Soul
+	Tools() *tool.Registry
+	Skills() []*tool.SkillInfo
+	ConnectMCPServer(string, string, string)
+	CronEngine() *cron.Engine
+	RAG() *rag.RAGManager
+	Memory() *memory.Store
+	Remember(string, string) error
+	RememberLongTerm(string, string) error
+	Recall(string) []memory.Entry
+	MemoryStats() map[memory.Tier]int
+	DecayMemory(float64) int
+	PromoteMemory(string) error
+	ContextWindow() *contextx.ContextWindow
+	ContextCacheStats() map[string]any
+	EmbedderRegistry() *embedder.Registry
+	Metrics() *metrics.Metrics
+}
 
 type HandlerOptions struct {
 	PlatformName     string
@@ -80,7 +124,7 @@ type HandlerOptions struct {
 
 type Handler struct {
 	adapter  sender
-	agent    *agent.Agent
+	agent    Runtime
 	chat     turnChatRuntime
 	commands map[string]commandHandler
 	watcher  *cron.Watcher
@@ -102,11 +146,11 @@ type Handler struct {
 	workerGeneration  uint64
 }
 
-func NewHandler(adapter sender, agentRuntime *agent.Agent) *Handler {
+func NewHandler(adapter sender, agentRuntime Runtime) *Handler {
 	return NewHandlerWithOptions(adapter, agentRuntime, HandlerOptions{})
 }
 
-func NewHandlerWithOptions(adapter sender, agentRuntime *agent.Agent, opts HandlerOptions) *Handler {
+func NewHandlerWithOptions(adapter sender, agentRuntime Runtime, opts HandlerOptions) *Handler {
 	platformName := strings.TrimSpace(opts.PlatformName)
 	if platformName == "" {
 		platformName = "qqofficial"
@@ -2826,7 +2870,7 @@ func (h *Handler) sessionManager() *session.Manager {
 	return h.agent.Sessions()
 }
 
-func resolveQQCronEngine(a *agent.Agent) *cron.Engine {
+func resolveQQCronEngine(a Runtime) *cron.Engine {
 	if a == nil {
 		return nil
 	}
