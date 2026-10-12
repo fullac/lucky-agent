@@ -9,13 +9,13 @@ import (
 	"unicode"
 
 	"github.com/yurika0211/luckyagent/internal/contextx"
-	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/logger"
 	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -309,7 +309,7 @@ func (p *contextPlanner) buildAttachmentMessages(ctx context.Context, input User
 		if p.supportsImageContentParts() {
 			attachments = nil
 			for _, att := range input.Attachments {
-				if att.Type != gateway.AttachmentImage {
+				if att.Type != turn.AttachmentImage {
 					attachments = append(attachments, att)
 				}
 			}
@@ -326,7 +326,7 @@ func (p *contextPlanner) buildAttachmentMessages(ctx context.Context, input User
 	return messages
 }
 
-func attachmentEvidenceManifest(attachments []gateway.Attachment) string {
+func attachmentEvidenceManifest(attachments []turn.Attachment) string {
 	if len(attachments) == 0 {
 		return ""
 	}
@@ -340,9 +340,6 @@ func attachmentEvidenceManifest(attachments []gateway.Attachment) string {
 		}
 		name := strings.TrimSpace(att.FileName)
 		if name == "" {
-			name = strings.TrimSpace(att.FileID)
-		}
-		if name == "" {
 			name = "unnamed"
 		}
 		fmt.Fprintf(&b, "%d. type=%s name=%s", i+1, label, name)
@@ -351,9 +348,6 @@ func attachmentEvidenceManifest(attachments []gateway.Attachment) string {
 		}
 		if strings.TrimSpace(att.FileURL) != "" {
 			fmt.Fprintf(&b, " url=%s", strings.TrimSpace(att.FileURL))
-		}
-		if strings.TrimSpace(att.FileID) != "" {
-			fmt.Fprintf(&b, " file_id=%s", strings.TrimSpace(att.FileID))
 		}
 		if strings.TrimSpace(att.MimeType) != "" {
 			fmt.Fprintf(&b, " mime=%s", strings.TrimSpace(att.MimeType))

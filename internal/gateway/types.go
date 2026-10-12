@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"time"
+
+	"github.com/yurika0211/luckyagent/internal/turn"
 )
 
 // ChatType represents the type of chat.
@@ -84,18 +86,10 @@ type Message struct {
 	TriggerType    string // 触发方式: "mention" | "reply"
 }
 
-// Attachment represents a media attachment in a message.
-type Attachment struct {
-	Type     AttachmentType    `json:"type,omitempty"`      // image, audio, video, document
-	FileID   string            `json:"file_id,omitempty"`   // platform-specific file ID
-	FileURL  string            `json:"file_url,omitempty"`  // download URL (if available)
-	FilePath string            `json:"file_path,omitempty"` // downloaded local file path (if available)
-	FileName string            `json:"file_name,omitempty"` // original filename
-	MimeType string            `json:"mime_type,omitempty"` // MIME type
-	FileSize int64             `json:"file_size,omitempty"` // file size in bytes
-	Data     []byte            `json:"data,omitempty"`      // downloaded file data (populated on demand)
-	Metadata map[string]string `json:"metadata,omitempty"`  // platform-specific attachment metadata
-}
+// Attachment is an alias kept for gateway-facing compatibility. The neutral
+// representation lives in internal/turn so provider code does not depend on
+// this package.
+type Attachment = turn.Attachment
 
 // ForwardedMediaItem represents one media node in a platform forwarded-message envelope.
 type ForwardedMediaItem struct {
@@ -104,14 +98,14 @@ type ForwardedMediaItem struct {
 	Caption string
 }
 
-// AttachmentType represents the type of media attachment.
-type AttachmentType string
+// AttachmentType is an alias kept for gateway-facing compatibility.
+type AttachmentType = turn.AttachmentType
 
 const (
-	AttachmentImage    AttachmentType = "image"
-	AttachmentAudio    AttachmentType = "audio"
-	AttachmentVideo    AttachmentType = "video"
-	AttachmentDocument AttachmentType = "document"
+	AttachmentImage    = turn.AttachmentImage
+	AttachmentAudio    = turn.AttachmentAudio
+	AttachmentVideo    = turn.AttachmentVideo
+	AttachmentDocument = turn.AttachmentDocument
 )
 
 // MessageHandler is the callback type for handling incoming messages.
