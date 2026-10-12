@@ -40,6 +40,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/soul"
 	taskstore "github.com/yurika0211/luckyagent/internal/task"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -1525,6 +1526,12 @@ func (a *Agent) ChatWithSessionInput(ctx context.Context, sessionID string, inpu
 	return a.chatWithSessionInput(ctx, sess, input)
 }
 
+// ChatWithSessionTurn accepts the provider-independent turn DTO used by edge
+// adapters. Conversion to provider.Message stays inside the agent runtime.
+func (a *Agent) ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error) {
+	return a.ChatWithSessionInput(ctx, sessionID, UserTurnInputFromTurn(input))
+}
+
 // ProgressFeedback generates a concise model-authored progress update for an unfinished round.
 func (a *Agent) ProgressFeedback(ctx context.Context, userInput string, round int, observations []string) (string, error) {
 	return a.ProgressFeedbackWithPrompt(ctx, userInput, round, observations, "")
@@ -2600,6 +2607,11 @@ func (a *Agent) ChatWithSessionStreamInput(ctx context.Context, sessionID string
 		loopCfg.Source = "cli"
 	}
 	return a.ChatWithSessionStreamInputWithLoopConfig(ctx, sessionID, input, loopCfg)
+}
+
+// ChatWithSessionStreamTurn is the stream counterpart to ChatWithSessionTurn.
+func (a *Agent) ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan ChatEvent, error) {
+	return a.ChatWithSessionStreamInput(ctx, sessionID, UserTurnInputFromTurn(input))
 }
 
 func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, sessionID string, input UserTurnInput, loopCfg LoopConfig) (<-chan ChatEvent, error) {

@@ -24,6 +24,48 @@ type UserTurnInput struct {
 	Scope        TurnScope
 }
 
+// TurnInput converts the runtime's provider-independent input into the DTO
+// exposed to edge adapters. It is the boundary used while gateway handlers are
+// being moved away from *agent.Agent.
+func TurnInput(input UserTurnInput) turn.Input {
+	return turn.Input{
+		OriginalText: input.OriginalText,
+		RoutingText:  input.RoutingText,
+		Attachments:  append([]turn.Attachment(nil), input.Attachments...),
+		Scope: turn.Scope{
+			Platform:    input.Scope.Platform,
+			ChatID:      input.Scope.ChatID,
+			ChatType:    input.Scope.ChatType,
+			SenderID:    input.Scope.SenderID,
+			SenderName:  input.Scope.SenderName,
+			DisplayName: input.Scope.DisplayName,
+		},
+	}
+}
+
+// UserTurnInputFromTurn restores the provider message at the runtime
+// boundary. Provider-specific content parts are built by Normalize after the
+// edge DTO has been accepted.
+func UserTurnInputFromTurn(input turn.Input) UserTurnInput {
+	routingText := strings.TrimSpace(input.RoutingText)
+	if routingText == "" {
+		routingText = strings.TrimSpace(input.OriginalText)
+	}
+	return UserTurnInput{
+		OriginalText: input.OriginalText,
+		RoutingText:  routingText,
+		Attachments:  append([]turn.Attachment(nil), input.Attachments...),
+		Scope: TurnScope{
+			Platform:    input.Scope.Platform,
+			ChatID:      input.Scope.ChatID,
+			ChatType:    input.Scope.ChatType,
+			SenderID:    input.Scope.SenderID,
+			SenderName:  input.Scope.SenderName,
+			DisplayName: input.Scope.DisplayName,
+		},
+	}
+}
+
 // TurnScope identifies the messaging scope for a user turn. It is intentionally
 // stored as tags on memory entries so older memory notes remain compatible.
 type TurnScope struct {

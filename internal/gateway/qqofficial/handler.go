@@ -25,6 +25,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/rag"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -64,6 +65,14 @@ type messageFeedbackSender interface {
 	AcknowledgeMessage(ctx context.Context, chatID string, messageID string) error
 }
 
+// turnChatRuntime is the provider-independent chat boundary. The handler
+// still keeps Agent for legacy commands; only the message path uses this
+// narrow interface while those commands are migrated.
+type turnChatRuntime interface {
+	ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error)
+	ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error)
+}
+
 type HandlerOptions struct {
 	PlatformName     string
 	DisplayName      string
@@ -75,6 +84,7 @@ type HandlerOptions struct {
 type Handler struct {
 	adapter  sender
 	agent    *agent.Agent
+	chat     turnChatRuntime
 	commands map[string]commandHandler
 	watcher  *cron.Watcher
 
@@ -120,6 +130,7 @@ func NewHandlerWithOptions(adapter sender, agentRuntime *agent.Agent, opts Handl
 	h := &Handler{
 		adapter:           adapter,
 		agent:             agentRuntime,
+		chat:              agentRuntime,
 		commands:          make(map[string]commandHandler),
 		watcher:           cron.NewWatcher(resolveQQCronEngine(agentRuntime)),
 		sessions:          make(map[string]string),
@@ -1209,7 +1220,7 @@ func (h *Handler) handleWatch(ctx context.Context, msg *gateway.Message) error {
 	}
 }
 
-	func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
+func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
 	parts := strings.Fields(strings.TrimSpace(msg.Args))
 	subcmd := "status"
 	if len(parts) > 0 {
@@ -2097,7 +2108,13 @@ func napcatSenderContextText(text string, sender gateway.User) string {
 }
 
 func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan agent.ChatEvent, error) {
-	events, err := h.agent.ChatWithSessionStreamInput(ctx, sessionID, input)
+	var events <-chan agent.ChatEvent
+	var err error
+	if h.chat != nil {
+		events, err = h.chat.ChatWithSessionStreamTurn(ctx, sessionID, agent.TurnInput(input))
+	} else {
+		events, err = h.agent.ChatWithSessionStreamInput(ctx, sessionID, input)
+	}
 	if err == nil {
 		return events, nil
 	}
@@ -2106,6 +2123,9 @@ func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input 
 	}
 	h.resetSession(chatID)
 	retrySessionID := h.getSessionID(chatID)
+	if h.chat != nil {
+		return h.chat.ChatWithSessionStreamTurn(ctx, retrySessionID, agent.TurnInput(input))
+	}
 	return h.agent.ChatWithSessionStreamInput(ctx, retrySessionID, input)
 }
 
@@ -2868,7 +2888,7 @@ func buildInfo() (version, commit, date string) {
 	return version, commit, date
 }
 
-	type sessionLookupStatus int
+type sessionLookupStatus int
 
 const (
 	sessionLookupNotFound sessionLookupStatus = iota

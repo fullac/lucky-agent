@@ -34,6 +34,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/soul"
 	taskstore "github.com/yurika0211/luckyagent/internal/task"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -45,6 +46,14 @@ type chatRuntime interface {
 	ChatWithSessionStreamInput(ctx context.Context, sessionID string, input agent.UserTurnInput) (<-chan agent.ChatEvent, error)
 	ProgressFeedback(ctx context.Context, userInput string, round int, observations []string) (string, error)
 	ProgressFeedbackWithPrompt(ctx context.Context, userInput string, round int, observations []string, presentationPrompt string) (string, error)
+}
+
+// turnChatRuntime is the narrow, provider-independent chat boundary. The
+// legacy methods remain in chatRuntime while adapters are migrated one path at
+// a time, so existing gateway test doubles and command handlers keep working.
+type turnChatRuntime interface {
+	ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error)
+	ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error)
 }
 
 type stateRuntime interface {
@@ -82,6 +91,20 @@ type unifiedModelRuntime interface {
 type agentProvider interface {
 	chatRuntime
 	stateRuntime
+}
+
+func chatWithSessionTurn(ctx context.Context, runtime chatRuntime, sessionID string, input agent.UserTurnInput) (string, error) {
+	if narrow, ok := runtime.(turnChatRuntime); ok {
+		return narrow.ChatWithSessionTurn(ctx, sessionID, agent.TurnInput(input))
+	}
+	return runtime.ChatWithSessionInput(ctx, sessionID, input)
+}
+
+func chatWithSessionStreamTurn(ctx context.Context, runtime chatRuntime, sessionID string, input agent.UserTurnInput) (<-chan agent.ChatEvent, error) {
+	if narrow, ok := runtime.(turnChatRuntime); ok {
+		return narrow.ChatWithSessionStreamTurn(ctx, sessionID, agent.TurnInput(input))
+	}
+	return runtime.ChatWithSessionStreamInput(ctx, sessionID, input)
 }
 
 type sandboxRuntime interface {
@@ -253,12 +276,20 @@ func (a agentProviderAdapter) ChatWithSessionInput(ctx context.Context, sessionI
 	return a.inner.ChatWithSessionInput(ctx, sessionID, input)
 }
 
+func (a agentProviderAdapter) ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error) {
+	return a.inner.ChatWithSessionTurn(ctx, sessionID, input)
+}
+
 func (a agentProviderAdapter) ChatWithSessionStream(ctx context.Context, sessionID, userInput string) (<-chan agent.ChatEvent, error) {
 	return a.inner.ChatWithSessionStream(ctx, sessionID, userInput)
 }
 
 func (a agentProviderAdapter) ChatWithSessionStreamInput(ctx context.Context, sessionID string, input agent.UserTurnInput) (<-chan agent.ChatEvent, error) {
 	return a.inner.ChatWithSessionStreamInput(ctx, sessionID, input)
+}
+
+func (a agentProviderAdapter) ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error) {
+	return a.inner.ChatWithSessionStreamTurn(ctx, sessionID, input)
 }
 
 func (a agentProviderAdapter) ProgressFeedback(ctx context.Context, userInput string, round int, observations []string) (string, error) {
@@ -2601,7 +2632,7 @@ func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input 
 	if chat == nil {
 		return nil, fmt.Errorf("chat runtime not available")
 	}
-	events, err := chat.ChatWithSessionStreamInput(ctx, sessionID, input)
+	events, err := chatWithSessionStreamTurn(ctx, chat, sessionID, input)
 	if err == nil {
 		return events, nil
 	}
@@ -2611,7 +2642,7 @@ func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input 
 
 	h.resetSession(chatID)
 	retrySessionID := h.getSessionID(chatID)
-	return chat.ChatWithSessionStreamInput(ctx, retrySessionID, input)
+	return chatWithSessionStreamTurn(ctx, chat, retrySessionID, input)
 }
 
 func runChatEventLoop(
@@ -3128,14 +3159,14 @@ func (h *Handler) handleChatSync(ctx context.Context, msg *gateway.Message, inpu
 	if chat == nil {
 		return h.adapter.Send(ctx, msg.Chat.ID, "❌ Chat runtime unavailable")
 	}
-	response, err := chat.ChatWithSessionInput(ctx, sessionID, input)
+	response, err := chatWithSessionTurn(ctx, chat, sessionID, input)
 	if err != nil {
 		// If session is broken, try with a fresh session
 		if strings.Contains(err.Error(), "session not found") {
 			scope := telegramConversationScope(msg)
 			h.resetSession(scope)
 			sessionID = h.getSessionID(scope)
-			response, err = chat.ChatWithSessionInput(ctx, sessionID, input)
+			response, err = chatWithSessionTurn(ctx, chat, sessionID, input)
 		}
 		if err != nil {
 			if isTaskTimeoutError(err) {
@@ -4202,7 +4233,7 @@ func (h *Handler) handleWatch(ctx context.Context, msg *gateway.Message) error {
 	}
 }
 
-	func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
+func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
 	parts := strings.Fields(strings.TrimSpace(msg.Args))
 	subcmd := "status"
 	if len(parts) > 0 {
