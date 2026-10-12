@@ -149,7 +149,7 @@ func (a *Agent) buildCronTask(id string, mode cronTaskMode, command string, meta
 			} else {
 				runCfg.Ephemeral = true
 			}
-			result, err := a.RunLoopWithSession(context.Background(), sess, command, runCfg)
+			result, err := a.loopRunner().Run(context.Background(), sess, TextUserTurnInput(command), runCfg)
 			if err != nil {
 				notificationErr := a.sendCronNotification(metadata, cronNotificationPayload{
 					JobID:     id,

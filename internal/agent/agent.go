@@ -1447,14 +1447,17 @@ func New(cfg *config.Manager) (*Agent, error) {
 		}
 		return sess.Save()
 	})
+	loop := a.loopRunner()
+	sessions := memoryRT.sessions
+	delegateMgr := supportRT.delegateMgr
 	supportRT.delegateMgr.SetAgentExecutorWithOptions(func(ctx context.Context, description, contextStr string, options tool.AgentExecutorOptions) (string, error) {
 		sessionID := tool.DelegateExecutionSessionID(ctx)
 		var sess *session.Session
 		if sessionID != "" {
-			sess = memoryRT.sessions.Ensure(sessionID)
+			sess = sessions.Ensure(sessionID)
 			sess.SetTitle("delegate-task")
 		} else {
-			sess = memoryRT.sessions.NewWithTitle("delegate-task")
+			sess = sessions.NewWithTitle("delegate-task")
 		}
 		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
 		if workspace := tool.ExtractDelegateWorkspace(contextStr); workspace != "" {
@@ -1467,13 +1470,13 @@ func New(cfg *config.Manager) (*Agent, error) {
 			prompt = fmt.Sprintf("%s\n\nContext: %s", description, contextStr)
 		}
 		loopCfg := buildDelegateChildLoopConfig(delegateCfg, options.AllowRecursiveDelegate)
-		result, err := a.RunLoopWithSession(ctx, sess, prompt, loopCfg)
+		result, err := loop.Run(ctx, sess, TextUserTurnInput(prompt), loopCfg)
 		if result != nil {
 			lastTool := ""
 			if n := len(result.ToolCalls); n > 0 {
 				lastTool = result.ToolCalls[n-1].Name
 			}
-			supportRT.delegateMgr.RecordExecutionMetrics(tool.DelegateTaskID(ctx), len(result.ToolCalls), lastTool)
+			delegateMgr.RecordExecutionMetrics(tool.DelegateTaskID(ctx), len(result.ToolCalls), lastTool)
 		}
 		if err != nil {
 			return "", err
@@ -1482,7 +1485,7 @@ func New(cfg *config.Manager) (*Agent, error) {
 	})
 
 	// v0.38.0: 将 executor 注入到已注册工具所绑定的 autonomy 实例，避免启动时替换实例。
-	a.autonomy.SetExecutor(&agentExecutorAdapter{agent: a})
+	a.autonomy.SetExecutor(&agentExecutorAdapter{loop: loop, sessions: sessions})
 
 	// Already queued work carries the original authorization across restarts.
 	// Operators can disable this separately from automatic worker startup.
@@ -4157,7 +4160,7 @@ func (a *Agent) startAutonomy(ctx context.Context, force bool) error {
 	}
 
 	// Create executor adapter that bridges Agent to AgentExecutor interface
-	executor := &agentExecutorAdapter{agent: a}
+	executor := &agentExecutorAdapter{loop: a.loopRunner(), sessions: a.sessions}
 	a.autonomy.SetExecutor(executor)
 
 	if a.autonomy.Status().Started {
@@ -4181,17 +4184,21 @@ func (a *Agent) startAutonomy(ctx context.Context, force bool) error {
 agentExecutorAdapter 将 Agent 适配为 autonomy 所需的执行器接口。
 */
 type agentExecutorAdapter struct {
-	agent *Agent
+	loop     *Loop
+	sessions *session.Manager
 }
 
 /*
 RunLoopWithSession 按 autonomy 接口要求在指定会话中执行一轮 Agent Loop。
 */
 func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID string, userInput string, cfg autonomy.LoopConfig) (*autonomy.LoopResult, error) {
+	if a == nil || a.loop == nil || a.sessions == nil {
+		return nil, fmt.Errorf("agent loop executor not initialized")
+	}
 	// Look up session by ID
-	sess, ok := a.agent.sessions.Get(sessionID)
+	sess, ok := a.sessions.Get(sessionID)
 	if !ok {
-		sess = a.agent.sessions.Ensure(sessionID)
+		sess = a.sessions.Ensure(sessionID)
 	}
 	profile := strings.TrimSpace(cfg.SystemPrompt)
 	if profile != "" {
@@ -4210,7 +4217,7 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 		DisabledTools:          append([]string(nil), cfg.DisabledTools...),
 	}
 
-	result, err := a.agent.RunLoopWithSession(ctx, sess, userInput, loopCfg)
+	result, err := a.loop.Run(ctx, sess, TextUserTurnInput(userInput), loopCfg)
 	if result == nil {
 		return nil, err
 	}
@@ -4227,7 +4234,10 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 NewSession 创建 autonomy 使用的新会话并返回其 ID。
 */
 func (a *agentExecutorAdapter) NewSession(title string) string {
-	sess := a.agent.sessions.NewWithTitle(title)
+	if a == nil || a.sessions == nil {
+		return ""
+	}
+	sess := a.sessions.NewWithTitle(title)
 	return sess.ID
 }
 
@@ -4235,10 +4245,10 @@ func (a *agentExecutorAdapter) NewSession(title string) string {
 // another runtime-owned actor. Existing history is preserved across process
 // restarts; a new session receives the supplied title.
 func (a *agentExecutorAdapter) EnsureSession(id, title string) string {
-	if a == nil || a.agent == nil {
+	if a == nil || a.sessions == nil {
 		return ""
 	}
-	sess := a.agent.sessions.Ensure(strings.TrimSpace(id))
+	sess := a.sessions.Ensure(strings.TrimSpace(id))
 	if strings.TrimSpace(sess.Title) == "" && strings.TrimSpace(title) != "" {
 		sess.SetTitle(strings.TrimSpace(title))
 	}

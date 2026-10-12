@@ -130,6 +130,7 @@ type LoopConfig struct {
 // runtime is deliberately an interface: Loop does not own or reference the
 // Agent coordinator, autonomy kit, or gateway manager.
 type loopRuntime interface {
+	providerSnapshotForTurn(string) providerSnapshot
 	sandboxSnapshot(*session.Session) (*sandbox.Snapshot, error)
 	SandboxMode() sandbox.Mode
 	applySandboxToolPolicy(*LoopConfig, *sandbox.Snapshot)
@@ -166,6 +167,17 @@ type Loop struct {
 
 func NewLoop(runtime loopRuntime) *Loop {
 	return &Loop{runtime: runtime}
+}
+
+// Run executes one turn using the provider snapshot selected by the runtime.
+// Callers such as autonomy and cron do not need to know provider selection or
+// Agent's model registry.
+func (l *Loop) Run(ctx context.Context, sess *session.Session, input UserTurnInput, cfg LoopConfig) (*LoopResult, error) {
+	if l == nil || l.runtime == nil {
+		return nil, fmt.Errorf("loop runtime not initialized")
+	}
+	input = input.Normalize()
+	return l.RunWithProviderSnapshot(ctx, sess, input, cfg, l.runtime.providerSnapshotForTurn(input.RoutingText))
 }
 
 // DefaultLoopConfig 返回默认 Loop 配置
