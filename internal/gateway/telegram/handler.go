@@ -98,6 +98,12 @@ type agentProvider interface {
 	stateRuntime
 }
 
+// Runtime is the gateway-facing contract used to build a Telegram handler.
+// The legacy NewHandler constructor still accepts *agent.Agent for source
+// compatibility; new assembly code can provide this contract directly via
+// NewHandlerWithRuntime.
+type Runtime = agentProvider
+
 func chatWithSessionTurn(ctx context.Context, runtime chatRuntime, sessionID string, input agent.UserTurnInput) (string, error) {
 	if narrow, ok := runtime.(turnEventChatRuntime); ok {
 		return narrow.ChatWithSessionTurn(ctx, sessionID, agent.TurnInput(input))
@@ -389,6 +395,10 @@ func (a agentProviderAdapter) ResolveExternalReplyAnchor(platform, chatID, messa
 	return a.inner.ResolveExternalReplyAnchor(platform, chatID, messageID)
 }
 
+func (a agentProviderAdapter) RecordRecentChatTarget(platform, chatID, replyToMsgID string) {
+	a.inner.RecordRecentChatTarget(platform, chatID, replyToMsgID)
+}
+
 // agentConfigWrapper 将 *config.Manager 适配为 agentConfigProvider 接口。
 type agentConfigWrapper struct {
 	mgr *config.Manager
@@ -558,15 +568,29 @@ type chatSessionsData struct {
 
 // NewHandler creates a new Telegram command handler.
 func NewHandler(adapter *Adapter, a *agent.Agent) *Handler {
-	var runtime agentProviderAdapter
+	if a == nil {
+		return NewHandlerWithRuntime(adapter, nil)
+	}
+	return newHandler(adapter, agentProviderAdapter{a}, a)
+}
+
+// NewHandlerWithRuntime creates a Telegram handler from the gateway runtime
+// contract. It lets embedding applications provide a focused runtime without
+// exposing the concrete agent.Agent to gateway assembly code.
+func NewHandlerWithRuntime(adapter *Adapter, runtime Runtime) *Handler {
+	var recorder activeRouteRecorder
+	if candidate, ok := runtime.(activeRouteRecorder); ok {
+		recorder = candidate
+	}
+	return newHandler(adapter, runtime, recorder)
+}
+
+func newHandler(adapter *Adapter, runtime Runtime, recorder activeRouteRecorder) *Handler {
 	var chat chatRuntime
 	var state stateRuntime
-	var recorder activeRouteRecorder
-	if a != nil {
-		runtime = agentProviderAdapter{a}
+	if runtime != nil {
 		chat = runtime
 		state = runtime
-		recorder = a
 	}
 	memeDir, memeProbability, memeCooldown := resolveRandomMemeConfig()
 	maxConcurrentChatWorkers := resolveMaxConcurrentChatWorkers(state)
