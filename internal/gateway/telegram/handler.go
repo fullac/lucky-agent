@@ -568,10 +568,16 @@ type chatSessionsData struct {
 
 // NewHandler creates a new Telegram command handler.
 func NewHandler(adapter *Adapter, a *agent.Agent) *Handler {
+	return newHandler(adapter, NewRuntime(a), a)
+}
+
+// NewRuntime adapts the legacy Agent to the gateway runtime contract. Keep
+// this conversion at the assembly boundary while handlers consume Runtime.
+func NewRuntime(a *agent.Agent) Runtime {
 	if a == nil {
-		return NewHandlerWithRuntime(adapter, nil)
+		return nil
 	}
-	return newHandler(adapter, agentProviderAdapter{a}, a)
+	return agentProviderAdapter{a}
 }
 
 // NewHandlerWithRuntime creates a Telegram handler from the gateway runtime
