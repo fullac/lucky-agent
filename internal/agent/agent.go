@@ -120,7 +120,8 @@ type Agent struct {
 	providerMu       sync.RWMutex           // protects the default provider/model selection
 	registry         *provider.Registry     // provider 注册表
 	catalog          *provider.ModelCatalog // 模型目录
-	tokenStore       *provider.TokenStore   // token 存储
+	modelDiscovery   *provider.ModelDiscovery
+	tokenStore       *provider.TokenStore // token 存储
 	memory           *memory.Store
 	// shortTerm is retained only for source compatibility with older in-package
 	// tests/callers. New agents leave it nil; production conversation state is
@@ -132,8 +133,10 @@ type Agent struct {
 	tools         *tool.Registry
 	toolServices  *tool.Services
 	gateway       *tool.Gateway           // 统一工具网关
+	hitl          *HITLGate               // 本地工具审批和 ask_user 等待
 	hooks         *hook.Runner            // 工具执行前后的 hook 运行器
 	msgGateway    *gateway.GatewayManager // 消息平台网关
+	sessionEvents func(sessionID, content string)
 	mcpClient     *tool.MCPClient         // MCP 客户端
 	delegate      *tool.DelegateManager   // 子代理委派管理器
 	contextWin    *contextx.ContextWindow // 上下文窗口管理器
@@ -249,6 +252,7 @@ func toProviderConfig(c *config.Config, modelOverride, apiBaseOverride string) p
 			Model:            model,
 			Protocol:         c.LlmProvider.Protocol,
 			ReasoningSummary: c.LlmProvider.ReasoningSummary,
+			ReasoningEffort:  c.LlmProvider.ReasoningEffort,
 			Temperature:      c.Temperature,
 		},
 		ExtraHeaders: c.ExtraHeaders,
@@ -437,6 +441,7 @@ func buildConfiguredProvider(c *config.Config, registry *provider.Registry) (pro
 			Model:            c.Model,
 			Protocol:         c.LlmProvider.Protocol,
 			ReasoningSummary: c.LlmProvider.ReasoningSummary,
+			ReasoningEffort:  c.LlmProvider.ReasoningEffort,
 		})
 		for _, fb := range c.Fallbacks {
 			fallbackConfigs = append(fallbackConfigs, provider.FallbackConfig{
@@ -446,6 +451,7 @@ func buildConfiguredProvider(c *config.Config, registry *provider.Registry) (pro
 				Model:            fb.Model,
 				Protocol:         fb.Protocol,
 				ReasoningSummary: fb.ReasoningSummary,
+				ReasoningEffort:  fb.ReasoningEffort,
 			})
 		}
 		chain, err := provider.NewFallbackChain(fallbackConfigs, registry)
@@ -733,7 +739,7 @@ func initSupportRuntime(c *config.Config, mem *memory.Store, ragMgr *rag.RAGMana
 
 	contextWin := contextx.NewContextWindow(contextx.WindowConfig{
 		MaxTokens:            c.MaxTokens,
-		ReservedTokens:       c.MaxTokens / 4,
+		ReservedTokens:       reservedTokensFor(c),
 		Strategy:             contextx.TrimLowPriority,
 		SlidingWindowSize:    10,
 		MaxConversationTurns: 50,
@@ -762,6 +768,29 @@ func initSupportRuntime(c *config.Config, mem *memory.Store, ragMgr *rag.RAGMana
 /**
  * buildAutonomyRuntimeConfig 构建 Autonomy 运行时配置，包括设置最大迭代次数、超时和自动审批等。
  */
+// reservedTokensFor 按 context_budget.reserved_ratio 从 max_tokens 里留出回复份额。
+// 缺省比例是 0.25，与改动前的 MaxTokens/4 一致。
+func reservedTokensFor(c *config.Config) int {
+	if c == nil || c.MaxTokens <= 0 {
+		return 0
+	}
+	ratio := c.ContextBudget.ReservedRatio
+	if ratio <= 0 || ratio >= 1 {
+		ratio = 0.25
+	}
+	reserved := int(float64(c.MaxTokens) * ratio)
+	if reserved < 1 {
+		reserved = 1
+	}
+	if reserved >= c.MaxTokens {
+		reserved = c.MaxTokens / 4
+		if reserved < 1 {
+			reserved = 1
+		}
+	}
+	return reserved
+}
+
 func buildAutonomyRuntimeConfig(c *config.Config) autonomy.AutonomyConfig {
 	cfg := autonomy.DefaultAutonomyConfig()
 	if c == nil {
@@ -982,6 +1011,11 @@ func (a *Agent) StartConfigWatch(interval time.Duration) (func(), error) {
 	})
 	w.OnChange(func(oldCfg, newCfg *config.Config) {
 		if err := a.ApplyRuntimeConfig(newCfg); err != nil {
+			if oldCfg != nil {
+				if restoreErr := a.cfg.Replace(oldCfg); restoreErr == nil {
+					_ = a.ApplyRuntimeConfig(oldCfg)
+				}
+			}
 			logger.Warn("configuration reload could not update provider runtime", "error", err)
 			return
 		}
@@ -1030,6 +1064,13 @@ func (a *Agent) ApplyRuntimeConfig(c *config.Config) error {
 		return err
 	}
 	nextCatalog := provider.NewModelCatalog()
+	if a.catalog != nil {
+		for _, model := range a.catalog.List() {
+			if model.Discovered {
+				nextCatalog.RegisterDiscovered(model)
+			}
+		}
+	}
 	for _, custom := range c.CustomModels {
 		if strings.TrimSpace(custom.ID) == "" {
 			continue
@@ -1067,6 +1108,15 @@ func (a *Agent) ReloadConfig() (config.ReloadResult, error) {
 		return result, err
 	}
 	if err := a.ApplyRuntimeConfig(result.New); err != nil {
+		// ReloadValidated swaps the manager snapshot before the runtime provider
+		// is rebuilt. Restore both the in-memory and persisted snapshots when
+		// applying the new provider fails, so callers can rely on the rejected
+		// configuration never becoming the active one.
+		if result.Old != nil {
+			if restoreErr := a.cfg.Replace(result.Old); restoreErr == nil {
+				_ = a.ApplyRuntimeConfig(result.Old)
+			}
+		}
 		return config.ReloadResult{}, err
 	}
 	return result, nil
@@ -1272,6 +1322,7 @@ func New(cfg *config.Manager) (*Agent, error) {
 		tools:               supportRT.tools,
 		toolServices:        supportRT.toolServices,
 		gateway:             supportRT.toolGateway,
+		hitl:                newHITLGate(),
 		hooks:               hook.NewRunner(buildHookRuntimeConfig(c)),
 		msgGateway:          gateway.NewGatewayManager(),
 		mcpClient:           supportRT.mcpClient,
@@ -1330,6 +1381,17 @@ func New(cfg *config.Manager) (*Agent, error) {
 	} else if restored > 0 {
 		fmt.Printf("[autonomy] restored %d queued tasks\n", restored)
 	}
+	if err := supportRT.autonomyKit.Queue().SetSessionInitializer(func(task *autonomy.QueueTask) (string, error) {
+		sess := memoryRT.sessions.Ensure("autonomy-" + task.ID)
+		sess.SetTitle(task.Title)
+		sess.SetAgentProfile("worker-task", "You are a LuckyAgent worker executing a queued task. Work on the assigned task, preserve evidence, and report blockers or unfinished work clearly.")
+		if err := sess.Save(); err != nil {
+			return "", err
+		}
+		return sess.ID, nil
+	}); err != nil {
+		fmt.Printf("[autonomy] initialize queued task sessions failed: %v\n", err)
+	}
 
 	supportRT.toolServices.Cron = tool.NewCronToolService(
 		supportRT.cronEngine,
@@ -1342,6 +1404,12 @@ func New(cfg *config.Manager) (*Agent, error) {
 		return a.StartAutonomyNow(context.Background())
 	})
 	supportRT.toolServices.Heartbeat = tool.NewHeartbeatToolService(a.handleHeartbeatTrigger, a.handleHeartbeatStatus)
+	if supportRT.toolServices.Ephemeral == nil {
+		supportRT.toolServices.Ephemeral = tool.NewEphemeralCredentialToolService(cfg.HomeDir())
+	}
+	if supportRT.toolServices.EphemeralTerminal == nil {
+		supportRT.toolServices.EphemeralTerminal = tool.NewEphemeralCredentialTerminalToolService(cfg.HomeDir())
+	}
 	supportRT.toolServices.RegisterCoreTools(supportRT.tools)
 
 	// v0.35.0: 自动加载 skills 目录
@@ -1367,8 +1435,25 @@ func New(cfg *config.Manager) (*Agent, error) {
 
 	// v0.38.0: 设置 delegate 的 Agent 执行器，让 delegate_task 真正走 Agent Loop
 	delegateCfg := supportRT.delegateMgr.Config()
+	supportRT.delegateMgr.SetSessionInitializer(func(task *tool.DelegateTask) error {
+		sess := memoryRT.sessions.Ensure(task.ExecutionSessionID)
+		sess.SetTitle("delegate-task")
+		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
+		if task.Workspace != "" {
+			sess.SetCwd(task.Workspace)
+		}
+		return sess.Save()
+	})
 	supportRT.delegateMgr.SetAgentExecutorWithOptions(func(ctx context.Context, description, contextStr string, options tool.AgentExecutorOptions) (string, error) {
-		sess := memoryRT.sessions.NewWithTitle("delegate-task")
+		sessionID := tool.DelegateExecutionSessionID(ctx)
+		var sess *session.Session
+		if sessionID != "" {
+			sess = memoryRT.sessions.Ensure(sessionID)
+			sess.SetTitle("delegate-task")
+		} else {
+			sess = memoryRT.sessions.NewWithTitle("delegate-task")
+		}
+		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
 		if workspace := tool.ExtractDelegateWorkspace(contextStr); workspace != "" {
 			if err := os.MkdirAll(workspace, 0o755); err == nil {
 				sess.SetCwd(workspace)
@@ -1406,6 +1491,11 @@ func New(cfg *config.Manager) (*Agent, error) {
 		}
 	}
 	return a, nil
+}
+
+func delegatedSubagentSystemPrompt() string {
+	profile := "You are a delegated sub-agent in LuckyAgent. Work only on the assigned task, use the available tools within their limits, preserve evidence, and return a concise result with blockers and unfinished work. Do not claim that work was completed without checking it."
+	return profile
 }
 
 // Chat 执行一次对话
@@ -1724,6 +1814,7 @@ func (a *Agent) chatStreamSimpleInputWithProvider(ctx context.Context, sess *ses
 
 	// 保存会话
 	_ = sess.Save()
+	a.maybeRollSession(sess)
 
 	// 自动记忆：将对话存为短期记忆（去重 + 智能分类 + 截断）。计数和
 	// 维护 cadence 由 memory runtime 持有。
@@ -1811,6 +1902,8 @@ type CompactSessionOptions struct {
 	DryRun            bool
 	RetainRecentTurns int
 	TargetTailTokens  int
+	// OnProgress reports compact phases to streaming clients (SSE/WebSocket).
+	OnProgress func(CompactProgress)
 }
 
 // CompactSession summarizes raw session history since the latest compact
@@ -1834,6 +1927,11 @@ func (a *Agent) compactSessionWithProvider(ctx context.Context, sess *session.Se
 	if strings.TrimSpace(trigger) == "" {
 		trigger = "manual"
 	}
+	// Shrink giant inline tool dumps before estimating or summarizing so the
+	// compact request itself does not re-send multi-megabyte bodies.
+	if err := sess.ExternalizeLargeMessages(); err != nil {
+		logger.Warn("compact session: externalize large messages", "session_id", sess.ID, "error", err)
+	}
 	all := sess.GetMessages()
 	if len(all) == 0 {
 		return nil, fmt.Errorf("compact session: no messages to compact")
@@ -1841,14 +1939,6 @@ func (a *Agent) compactSessionWithProvider(ctx context.Context, sess *session.Se
 	_, raw, covered := session.CompactSegments(all)
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("compact session: nothing to compact after latest boundary")
-	}
-	var backup *session.BackupInfo
-	if !opts.DryRun {
-		var err error
-		backup, err = sess.CreateBackup(trigger)
-		if err != nil {
-			return nil, fmt.Errorf("compact session: create pre-compaction backup: %w", err)
-		}
 	}
 
 	est := a.contextEst
@@ -1860,23 +1950,39 @@ func (a *Agent) compactSessionWithProvider(ctx context.Context, sess *session.Se
 		return nil, fmt.Errorf("compact session: retained tail leaves no complete messages to compact")
 	}
 	preTokens := estimateProviderMessages(est, compactInput)
+	emitCompactProgress(opts, CompactProgress{
+		Phase:            "start",
+		Trigger:          trigger,
+		Message:          fmt.Sprintf("Compressing conversation context… (%d messages, ~%d tokens)", len(compactInput), preTokens),
+		PreTokenEstimate: preTokens,
+		DroppedMessages:  len(compactInput),
+		RetainedMessages: len(retained),
+	})
 	summarySource := "llm"
 	var summary string
 	if opts.ForceLocal {
 		summarySource = "local"
 		summary = generateLocalCompactSummary(compactInput, est)
 		if strings.TrimSpace(summary) == "" {
-			return nil, fmt.Errorf("compact session: local summary is empty")
+			err := fmt.Errorf("compact session: local summary is empty")
+			emitCompactProgress(opts, CompactProgress{Phase: "failed", Trigger: trigger, Message: err.Error(), Error: err.Error()})
+			return nil, err
 		}
 	} else {
 		var err error
-		summary, err = a.generateCompactSummaryWithProvider(ctx, compactInput, turnProvider)
+		summary, summarySource, err = a.generateCompactSummaryWithProvider(ctx, compactInput, turnProvider, opts)
 		if err != nil {
+			emitCompactProgress(opts, CompactProgress{Phase: "failed", Trigger: trigger, Message: err.Error(), Error: err.Error(), PreTokenEstimate: preTokens})
 			return nil, err
+		}
+		if strings.TrimSpace(summarySource) == "" {
+			summarySource = "llm"
 		}
 	}
 	if validation := validateCompactSummary(summary, compactInput); !validation.Valid {
-		return nil, fmt.Errorf("compact session: invalid summary: %s", validation.Reason)
+		err := fmt.Errorf("compact session: invalid summary: %s", validation.Reason)
+		emitCompactProgress(opts, CompactProgress{Phase: "failed", Trigger: trigger, Message: err.Error(), Error: err.Error()})
+		return nil, err
 	}
 	postTokens := est.Estimate(summary)
 	attachments := buildPostCompactAttachments(sess, raw, est)
@@ -1905,13 +2011,25 @@ func (a *Agent) compactSessionWithProvider(ctx context.Context, sess *session.Se
 		"attachments": meta.Attachments,
 		"policy":      meta.PolicyVersion,
 	}))
+	// Backup only after a valid summary exists so timed-out LLM calls do not
+	// copy multi-megabyte sessions for a boundary that will never be written.
+	var backup *session.BackupInfo
 	if !opts.DryRun {
+		var err error
+		backup, err = sess.CreateBackup(trigger)
+		if err != nil {
+			err = fmt.Errorf("compact session: create pre-compaction backup: %w", err)
+			emitCompactProgress(opts, CompactProgress{Phase: "failed", Trigger: trigger, Message: err.Error(), Error: err.Error()})
+			return nil, err
+		}
 		sess.AddCompactBoundary(meta)
 		if err := sess.Save(); err != nil {
-			return nil, fmt.Errorf("compact session: save boundary: %w", err)
+			err = fmt.Errorf("compact session: save boundary: %w", err)
+			emitCompactProgress(opts, CompactProgress{Phase: "failed", Trigger: trigger, Message: err.Error(), Error: err.Error()})
+			return nil, err
 		}
 	}
-	return &CompactSessionResult{
+	result := &CompactSessionResult{
 		BoundaryID:          boundaryID,
 		Trigger:             trigger,
 		Summary:             summary,
@@ -1928,7 +2046,13 @@ func (a *Agent) compactSessionWithProvider(ctx context.Context, sess *session.Se
 		SummarySource:       summarySource,
 		DryRun:              opts.DryRun,
 		Backup:              backup,
-	}, nil
+	}
+	phase := "done"
+	if strings.Contains(summarySource, "local") && strings.Contains(trigger, "degraded") {
+		phase = "degraded"
+	}
+	emitCompactProgress(opts, compactProgressFromResult(phase, "", result))
+	return result, nil
 }
 
 func selectCompactSegmentInput(raw []provider.Message, est *contextx.TokenEstimator, retainTurns, targetTailTokens int) ([]provider.Message, []provider.Message) {
@@ -1990,70 +2114,15 @@ func selectCompactSegmentInput(raw []provider.Message, est *contextx.TokenEstima
 	return append([]provider.Message(nil), raw[:cut]...), append([]provider.Message(nil), raw[cut:]...)
 }
 
-func (a *Agent) generateCompactSummary(ctx context.Context, messages []provider.Message) (string, error) {
-	return a.generateCompactSummaryWithProvider(ctx, messages, a.providerSnapshotForTurn(""))
+func (a *Agent) generateCompactSummary(ctx context.Context, messages []provider.Message) (string, string, error) {
+	return a.generateCompactSummaryWithProvider(ctx, messages, a.providerSnapshotForTurn(""), CompactSessionOptions{})
 }
 
-func (a *Agent) generateCompactSummaryWithProvider(ctx context.Context, messages []provider.Message, turnProvider providerSnapshot) (string, error) {
-	transcript := compactTranscript(messages)
-	if strings.TrimSpace(transcript) == "" {
-		return "", fmt.Errorf("compact session: no textual content to summarize")
-	}
-	prompt := "Summarize the conversation below so another LuckyAgent instance can continue the current task.\n" +
-		"Output plain text only under these headings:\n" +
-		"Current user goal:\nCompleted work:\nPending work:\nKey files and functions:\nCommands and test results:\nUser constraints:\nUncertain facts:\n" +
-		"Rules:\n" +
-		"- Preserve exact file paths, commands, config keys, errors, decisions, and unresolved items.\n" +
-		"- Do not invent commands, test results, files, or user preferences.\n" +
-		"- Do not include generic advice or commentary.\n" +
-		"- Do not request or use tools; this compaction must only produce text.\n\n" +
-		"Conversation:\n" + transcript
-	sumCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	if !turnProvider.valid() {
-		return "", fmt.Errorf("compact session: provider is not initialized")
-	}
-	resp, err := turnProvider.provider.Chat(sumCtx, []provider.Message{
-		{Role: "system", Content: "You are a compaction agent. Tool use is not allowed. Produce only a factual text summary for future context."},
-		{Role: "user", Content: prompt},
-	})
-	if err != nil {
-		return "", fmt.Errorf("compact session: generate summary: %w", err)
-	}
-	if resp == nil || strings.TrimSpace(resp.Content) == "" {
-		return "", fmt.Errorf("compact session: empty summary")
-	}
-	return strings.TrimSpace(resp.Content), nil
-}
-
-func compactTranscript(messages []provider.Message) string {
-	var b strings.Builder
-	for _, msg := range messages {
-		if session.IsCompactBoundary(msg) {
-			continue
-		}
-		content := strings.TrimSpace(msg.Content)
-		if content == "" && len(msg.ToolCalls) == 0 {
-			continue
-		}
-		role := strings.ToUpper(strings.TrimSpace(msg.Role))
-		if role == "" {
-			role = "MESSAGE"
-		}
-		b.WriteString(role)
-		if msg.Name != "" {
-			b.WriteString("(" + msg.Name + ")")
-		}
-		b.WriteString(": ")
-		if content != "" {
-			b.WriteString(truncate(content, 1200))
-		}
-		if len(msg.ToolCalls) > 0 {
-			b.WriteString(fmt.Sprintf(" [tool_calls=%d]", len(msg.ToolCalls)))
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
+// generateCompactSummaryWithProvider summarizes compactInput. Long ranges are
+// sliced on user-turn boundaries, summarized concurrently, then merged.
+// context.compact_model selects the summarizer model when set.
+func (a *Agent) generateCompactSummaryWithProvider(ctx context.Context, messages []provider.Message, turnProvider providerSnapshot, opts CompactSessionOptions) (string, string, error) {
+	return a.generateMapReduceCompactSummary(ctx, messages, turnProvider, opts)
 }
 
 func estimateProviderMessages(est *contextx.TokenEstimator, messages []provider.Message) int {
@@ -2084,6 +2153,7 @@ type ChatEvent struct {
 	Round       int    // 所属轮次（Type=ChatEventReasoningContent 时使用）
 	Observation *ObservationEvent
 	Approval    *ApprovalEvent
+	Compact     *CompactProgress     // session compact progress (Type=ChatEventCompact)
 	Usage       *provider.TokenUsage // aggregate provider usage for ChatEventDone
 	CreatedAt   *time.Time           // server timestamp of the final assistant message
 	Err         error
@@ -2106,11 +2176,16 @@ type ObservationEvent struct {
 }
 
 type ApprovalEvent struct {
-	RequestID string `json:"request_id,omitempty"`
-	Tool      string `json:"tool,omitempty"`
-	Action    string `json:"action,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	FrameID   string `json:"frame_id,omitempty"`
+	RequestID string            `json:"request_id,omitempty"`
+	Tool      string            `json:"tool,omitempty"`
+	Action    string            `json:"action,omitempty"`
+	Reason    string            `json:"reason,omitempty"`
+	FrameID   string            `json:"frame_id,omitempty"`
+	Kind      string            `json:"kind,omitempty"`
+	Prompt    string            `json:"prompt,omitempty"`
+	SessionID string            `json:"session_id,omitempty"`
+	Secure    bool              `json:"secure,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"`
 }
 
 // ChatEventType 事件类型
@@ -2126,6 +2201,7 @@ const (
 	ChatEventObservation                           // 🖼️ computer observation
 	ChatEventApprovalRequired                      // 🔐 approval required
 	ChatEventReasoningContent                      // 🧠 真实推理摘要内容
+	ChatEventCompact                               // 📦 session context compact progress
 )
 
 // StreamMode 流式输出模式
@@ -2489,7 +2565,6 @@ func (a *Agent) ChatWithSessionStreamInput(ctx context.Context, sessionID string
 	if strings.TrimSpace(loopCfg.Source) == "" {
 		loopCfg.Source = "cli"
 	}
-	loopCfg.AutoApprove = true
 	return a.ChatWithSessionStreamInputWithLoopConfig(ctx, sessionID, input, loopCfg)
 }
 
@@ -2509,6 +2584,7 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 		return nil, fmt.Errorf("prepare %s sandbox: %w", a.SandboxMode(), snapshotErr)
 	}
 	loopCfg.Sandbox = snapshot
+	loopCfg.SessionID = strings.TrimSpace(sess.ID)
 	ctx = sandbox.WithSnapshot(ctx, snapshot)
 
 	events := make(chan ChatEvent, 64)
@@ -2519,8 +2595,10 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 
 		sanitizeLoopConfig(&loopCfg)
 		a.applySandboxToolPolicy(&loopCfg, snapshot)
+		// Stream path always exposes emit so auto-compact progress reaches clients.
+		loopCfg.emit = func(eventCtx context.Context, event ChatEvent) { sendForegroundEvent(eventCtx, events, event) }
+		loopCfg.eventContext = ctx
 		if a.useForeground(sess, loopCfg) {
-			loopCfg.emit = func(eventCtx context.Context, event ChatEvent) { sendForegroundEvent(eventCtx, events, event) }
 			result, err := a.runForeground(ctx, sess, input, loopCfg, turnProvider)
 			if err != nil {
 				sendForegroundEvent(ctx, events, ChatEvent{Type: ChatEventError, Err: err})
@@ -2532,6 +2610,9 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 		}
 		a.applyIntentToolGating(&loopCfg, routingText)
 		a.applyVisionToolPolicy(&loopCfg, turnProvider)
+		ctx = withHITLEmitter(ctx, func(event ChatEvent) {
+			sendForegroundEvent(ctx, events, event)
+		})
 		logger.Info("agent stream loop started",
 			"session_id", sessionID,
 			"provider", turnProvider.name(),
@@ -2555,7 +2636,7 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 
 		buildOpts := defaultContextBuildOptions()
 		buildOpts.DisabledTools = append([]string(nil), loopCfg.DisabledTools...)
-		a.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider)
+		a.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider, compactProgressEmitter(loopCfg))
 		messages := a.buildContextMessagesForInputWithProvider(ctx, sess, input, buildOpts, turnProvider)
 		sess.AddProviderMessage(input.Message)
 		callOpts := a.buildLoopCallOptions(routingText, loopCfg)
@@ -3027,6 +3108,7 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 	if sess != nil {
 		sessionID = sess.ID
 	}
+	callOpts = a.appendEphemeralToolSchemas(callOpts, sessionID)
 	if remaining <= 0 {
 		if message, blocked := state.pendingDelegateWaitMessage(); blocked {
 			a.finalizeStreamWithState(events, sess, turnInput, message, state)
@@ -3651,6 +3733,9 @@ func (a *Agent) ForgetShortTermSession(sessionID string) {
 	if a == nil {
 		return
 	}
+	if a.toolServices != nil {
+		a.toolServices.RevokeEphemeralSession(sessionID)
+	}
 	if a.shortTerms != nil {
 		a.shortTerms.Clear(sessionID)
 	}
@@ -3880,6 +3965,56 @@ func (a *Agent) Tools() *tool.Registry {
 	return a.tools
 }
 
+// PendingApprovals returns runtime HITL waits plus external coding-agent
+// permission requests in a provider-neutral shape for HTTP/mobile/GUI surfaces.
+func (a *Agent) PendingApprovals() []tool.PendingApproval {
+	if a == nil {
+		return nil
+	}
+	var out []tool.PendingApproval
+	if a.hitl != nil {
+		out = append(out, a.hitl.list()...)
+	}
+	if a.toolServices != nil {
+		out = append(out, a.toolServices.PendingApprovals()...)
+	}
+	return out
+}
+
+// RespondApproval resolves a pending approval. provider "runtime" (or empty)
+// targets the local agent HITL gate; "codex"/"grok" target external bridges.
+func (a *Agent) RespondApproval(ctx context.Context, providerName, approvalID, decision string) (tool.PendingApproval, error) {
+	return a.RespondApprovalWithInput(ctx, providerName, approvalID, decision, "")
+}
+
+// ResolvePendingText matches a chat reply to a pending runtime HITL request.
+// handled is false when the text should continue as a normal user turn.
+func (a *Agent) ResolvePendingText(sessionID, text string) (tool.PendingApproval, bool, error) {
+	if a == nil || a.hitl == nil {
+		return tool.PendingApproval{}, false, nil
+	}
+	return a.hitl.ResolveText(sessionID, text)
+}
+
+// RespondApprovalWithInput resolves a pending approval or user-input request.
+func (a *Agent) RespondApprovalWithInput(ctx context.Context, providerName, approvalID, decision, input string) (tool.PendingApproval, error) {
+	if a == nil {
+		return tool.PendingApproval{}, fmt.Errorf("approval services are unavailable")
+	}
+	_ = ctx
+	providerName = strings.ToLower(strings.TrimSpace(providerName))
+	if providerName == "" || providerName == hitlProviderRuntime || providerName == "agent" || providerName == "local" {
+		if a.hitl == nil {
+			return tool.PendingApproval{}, fmt.Errorf("runtime hitl gate is unavailable")
+		}
+		return a.hitl.Resolve(approvalID, decision, input)
+	}
+	if a.toolServices == nil {
+		return tool.PendingApproval{}, fmt.Errorf("approval services are unavailable")
+	}
+	return a.toolServices.RespondApproval(ctx, providerName, approvalID, decision)
+}
+
 // Catalog 返回模型目录
 func (a *Agent) Catalog() *provider.ModelCatalog {
 	if a == nil {
@@ -3999,6 +4134,10 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 	if !ok {
 		sess = a.agent.sessions.Ensure(sessionID)
 	}
+	profile := strings.TrimSpace(cfg.SystemPrompt)
+	if profile != "" {
+		sess.SetAgentProfile("worker", profile)
+	}
 
 	loopCfg := LoopConfig{
 		Execution:              cfg.Execution,
@@ -4033,6 +4172,27 @@ func (a *agentExecutorAdapter) NewSession(title string) string {
 	return sess.ID
 }
 
+// EnsureSession returns a deterministic session for a long-lived worker or
+// another runtime-owned actor. Existing history is preserved across process
+// restarts; a new session receives the supplied title.
+func (a *agentExecutorAdapter) EnsureSession(id, title string) string {
+	if a == nil || a.agent == nil {
+		return ""
+	}
+	sess := a.agent.sessions.Ensure(strings.TrimSpace(id))
+	if strings.TrimSpace(sess.Title) == "" && strings.TrimSpace(title) != "" {
+		sess.SetTitle(strings.TrimSpace(title))
+	}
+	if strings.HasPrefix(strings.TrimSpace(id), "worker-") {
+		sess.SetAgentProfile("worker", "You are a long-lived LuckyAgent worker. Process queued work within the assigned limits, preserve evidence, and report blockers or unfinished work clearly.")
+	}
+	// Worker sessions are UI entry points and may have no task messages of
+	// their own (work runs in isolated task sessions). Persist their metadata
+	// now so the deterministic id and role survive a process restart.
+	_ = sess.Save()
+	return sess.ID
+}
+
 // Gateway 返回统一工具网关
 func (a *Agent) Gateway() *tool.Gateway {
 	return a.gateway
@@ -4041,6 +4201,20 @@ func (a *Agent) Gateway() *tool.Gateway {
 // MsgGateway 返回消息平台网关管理器 (v0.6.0)
 func (a *Agent) MsgGateway() *gateway.GatewayManager {
 	return a.msgGateway
+}
+
+// LoadSkills 从目录加载 Skill 插件。
+//
+// The whole body runs under skillLoadMu so two concurrent reloads cannot
+// interleave. skillMu is taken only for the final field swap and is never held
+// across a call into SkillRegistry or tool.Registry.
+// SetSessionEventSink receives assistant text that should appear in a chat
+// session even when no WebSocket client started the run. Cron delivery uses it.
+func (a *Agent) SetSessionEventSink(sink func(sessionID, content string)) {
+	if a == nil {
+		return
+	}
+	a.sessionEvents = sink
 }
 
 // LoadSkills 从目录加载 Skill 插件。
@@ -4362,6 +4536,29 @@ func (a *Agent) StreamIndexer() *rag.StreamIndexer {
 // EmbedderRegistry 返回嵌入模型注册表
 func (a *Agent) EmbedderRegistry() *embedder.Registry {
 	return a.embedderReg
+}
+
+// SwitchEmbedder changes the active embedding provider and rebinds the RAG
+// pipeline. A populated index cannot change embedding identity or dimensions;
+// callers must rebuild it first.
+func (a *Agent) SwitchEmbedder(id string) error {
+	if a.embedderReg == nil {
+		return fmt.Errorf("embedder registry not available")
+	}
+	next, ok := a.embedderReg.Get(id)
+	if !ok {
+		return fmt.Errorf("embedder not found: %s", id)
+	}
+	if a.ragManager != nil {
+		cached := embedder.NewCachedEmbedder(next, 512)
+		if err := a.ragManager.ReconfigureEmbedder(cached); err != nil {
+			return err
+		}
+	}
+	if !a.embedderReg.Switch(id) {
+		return fmt.Errorf("embedder not found: %s", id)
+	}
+	return nil
 }
 
 // AgentRegistry 返回 Agent 协作注册表 (v0.22.0)

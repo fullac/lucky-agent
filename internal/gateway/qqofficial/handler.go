@@ -157,8 +157,81 @@ func (h *Handler) HandleMessage(ctx context.Context, msg *gateway.Message) error
 	if text == "" && len(msg.Attachments) == 0 {
 		return nil
 	}
+	if handled, err := h.tryResolvePendingApproval(ctx, msg); handled || err != nil {
+		return err
+	}
 	input := h.buildUserTurnInput(ctx, text, msg.Attachments)
 	return h.dispatchChatAsync(ctx, msg, input)
+}
+
+func formatQQApprovalPrompt(evt agent.ChatEvent) string {
+	kind := "approval"
+	requestID := ""
+	prompt := strings.TrimSpace(evt.Content)
+	toolName := strings.TrimSpace(evt.Name)
+	if evt.Approval != nil {
+		if evt.Approval.Kind != "" {
+			kind = evt.Approval.Kind
+		}
+		requestID = strings.TrimSpace(evt.Approval.RequestID)
+		if text := strings.TrimSpace(evt.Approval.Prompt); text != "" {
+			prompt = text
+		} else if text := strings.TrimSpace(evt.Approval.Reason); text != "" {
+			prompt = text
+		}
+		if toolName == "" {
+			toolName = strings.TrimSpace(evt.Approval.Tool)
+		}
+	}
+	if prompt == "" {
+		prompt = "需要你确认后才能继续"
+	}
+	var b strings.Builder
+	if kind == "credential" {
+		b.WriteString("需要填写凭据，但这个聊天通道不能安全接收密钥。\n")
+		b.WriteString("请在本机 CLI、GUI 或安卓客户端的掩码表单里填写。不要把密钥回复到聊天里。")
+		if requestID != "" {
+			b.WriteString("\n编号: ")
+			b.WriteString(requestID)
+		}
+		return b.String()
+	}
+	if kind == "input" {
+		b.WriteString("📝 需要你补充信息\n")
+		b.WriteString(prompt)
+		b.WriteString("\n\n直接回复内容即可。")
+	} else {
+		b.WriteString("🔐 需要你确认后才能继续\n")
+		if toolName != "" {
+			b.WriteString("工具: ")
+			b.WriteString(toolName)
+			b.WriteString("\n")
+		}
+		b.WriteString(prompt)
+		b.WriteString("\n\n回复「允许」或「拒绝」。")
+	}
+	if requestID != "" {
+		b.WriteString("\n编号: ")
+		b.WriteString(requestID)
+	}
+	return b.String()
+}
+
+func (h *Handler) tryResolvePendingApproval(ctx context.Context, msg *gateway.Message) (bool, error) {
+	if h == nil || msg == nil || strings.TrimSpace(msg.Text) == "" || len(msg.Attachments) > 0 {
+		return false, nil
+	}
+	if h.agent == nil {
+		return false, nil
+	}
+	resolved, handled, err := h.agent.ResolvePendingText(h.getSessionID(msg.Chat.ID), msg.Text)
+	if !handled {
+		return false, nil
+	}
+	if err != nil {
+		return true, h.reply(ctx, msg, "没能处理这次确认："+err.Error())
+	}
+	return true, h.reply(ctx, msg, "已收到："+resolved.Summary)
 }
 
 func (h *Handler) buildCommandRegistry() map[string]commandHandler {
@@ -2299,6 +2372,8 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 				}
 				trace.AddThinking(evt.Content, currentRound)
 				h.sendProgress(context.Background(), msg, qqThinkingMessage(evt.Content, currentRound))
+			case agent.ChatEventApprovalRequired:
+				h.sendProgress(context.Background(), msg, formatQQApprovalPrompt(evt))
 			case agent.ChatEventToolCall:
 				if h.finalAnswerOnly {
 					continue
@@ -2396,6 +2471,12 @@ func (h *Handler) handleChatEventStreamWithSender(chatCtx context.Context, msg *
 			case agent.ChatEventThinking:
 				if streamHealthy {
 					if err := stream.SetThinking(evt.Content); err != nil {
+						failStream(err)
+					}
+				}
+			case agent.ChatEventApprovalRequired:
+				if streamHealthy {
+					if err := stream.SetThinking(formatQQApprovalPrompt(evt)); err != nil {
 						failStream(err)
 					}
 				}

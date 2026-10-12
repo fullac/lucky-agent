@@ -50,30 +50,33 @@ type autonomyHeartbeatEvent struct {
 }
 
 type autonomyTaskSummaryView struct {
-	ID                string             `json:"id"`
-	Title             string             `json:"title"`
-	Description       string             `json:"description,omitempty"`
-	Priority          string             `json:"priority"`
-	State             autonomy.TaskState `json:"state"`
-	AssignedTo        string             `json:"assigned_to,omitempty"`
-	Tags              []string           `json:"tags,omitempty"`
-	SessionID         string             `json:"session_id,omitempty"`
-	Attempts          int                `json:"attempts"`
-	Retries           int                `json:"retries"`
-	Continuations     int                `json:"continuations"`
-	Verified          bool               `json:"verified"`
-	Verification      string             `json:"verification,omitempty"`
-	BlockReason       string             `json:"block_reason,omitempty"`
-	ResultPreview     string             `json:"result_preview,omitempty"`
-	Error             string             `json:"error,omitempty"`
-	CreatedAt         *time.Time         `json:"created_at,omitempty"`
-	UpdatedAt         *time.Time         `json:"updated_at,omitempty"`
-	StartedAt         *time.Time         `json:"started_at,omitempty"`
-	CompletedAt       *time.Time         `json:"completed_at,omitempty"`
-	NextRunAt         *time.Time         `json:"next_run_at,omitempty"`
-	CheckpointAt      *time.Time         `json:"checkpoint_at,omitempty"`
-	CheckpointPresent bool               `json:"checkpoint_present"`
-	LastActivityAt    *time.Time         `json:"last_activity_at,omitempty"`
+	ID                 string             `json:"id"`
+	Title              string             `json:"title"`
+	Description        string             `json:"description,omitempty"`
+	Priority           string             `json:"priority"`
+	State              autonomy.TaskState `json:"state"`
+	AssignedTo         string             `json:"assigned_to,omitempty"`
+	Tags               []string           `json:"tags,omitempty"`
+	SessionID          string             `json:"session_id,omitempty"`
+	ExecutionSessionID string             `json:"execution_session_id,omitempty"`
+	ParentSessionID    string             `json:"parent_session_id,omitempty"`
+	Role               string             `json:"role,omitempty"`
+	Attempts           int                `json:"attempts"`
+	Retries            int                `json:"retries"`
+	Continuations      int                `json:"continuations"`
+	Verified           bool               `json:"verified"`
+	Verification       string             `json:"verification,omitempty"`
+	BlockReason        string             `json:"block_reason,omitempty"`
+	ResultPreview      string             `json:"result_preview,omitempty"`
+	Error              string             `json:"error,omitempty"`
+	CreatedAt          *time.Time         `json:"created_at,omitempty"`
+	UpdatedAt          *time.Time         `json:"updated_at,omitempty"`
+	StartedAt          *time.Time         `json:"started_at,omitempty"`
+	CompletedAt        *time.Time         `json:"completed_at,omitempty"`
+	NextRunAt          *time.Time         `json:"next_run_at,omitempty"`
+	CheckpointAt       *time.Time         `json:"checkpoint_at,omitempty"`
+	CheckpointPresent  bool               `json:"checkpoint_present"`
+	LastActivityAt     *time.Time         `json:"last_activity_at,omitempty"`
 }
 
 type autonomyOperationView struct {
@@ -221,31 +224,38 @@ func autonomyTasks(kit *autonomy.AutonomyKit, rawState string, limit int) ([]aut
 }
 
 func autonomyTaskSummary(task *autonomy.QueueTask) autonomyTaskSummaryView {
+	role := strings.TrimSpace(task.Metadata["role"])
+	if role == "" {
+		role = "worker-task"
+	}
 	return autonomyTaskSummaryView{
-		ID:                task.ID,
-		Title:             task.Title,
-		Description:       task.Description,
-		Priority:          task.Priority.String(),
-		State:             task.State,
-		AssignedTo:        task.AssignedTo,
-		Tags:              append([]string(nil), task.Tags...),
-		SessionID:         task.SessionID,
-		Attempts:          task.Attempts,
-		Retries:           task.Retries,
-		Continuations:     task.Continuations,
-		Verified:          task.Verified,
-		Verification:      task.Verification,
-		BlockReason:       task.BlockReason,
-		ResultPreview:     truncateAutonomyText(task.Result, 320),
-		Error:             task.Error,
-		CreatedAt:         autonomyTime(task.CreatedAt),
-		UpdatedAt:         autonomyTime(task.UpdatedAt),
-		StartedAt:         autonomyTime(task.StartedAt),
-		CompletedAt:       autonomyTime(task.CompletedAt),
-		NextRunAt:         autonomyTime(task.NextRunAt),
-		CheckpointAt:      autonomyTime(task.CheckpointAt),
-		CheckpointPresent: len(task.Checkpoint) > 0,
-		LastActivityAt:    autonomyTime(taskActivity(task)),
+		ID:                 task.ID,
+		Title:              task.Title,
+		Description:        task.Description,
+		Priority:           task.Priority.String(),
+		State:              task.State,
+		AssignedTo:         task.AssignedTo,
+		Tags:               append([]string(nil), task.Tags...),
+		SessionID:          task.SessionID,
+		ExecutionSessionID: task.SessionID,
+		ParentSessionID:    strings.TrimSpace(task.Metadata["parent_session_id"]),
+		Role:               role,
+		Attempts:           task.Attempts,
+		Retries:            task.Retries,
+		Continuations:      task.Continuations,
+		Verified:           task.Verified,
+		Verification:       task.Verification,
+		BlockReason:        task.BlockReason,
+		ResultPreview:      truncateAutonomyText(task.Result, 320),
+		Error:              task.Error,
+		CreatedAt:          autonomyTime(task.CreatedAt),
+		UpdatedAt:          autonomyTime(task.UpdatedAt),
+		StartedAt:          autonomyTime(task.StartedAt),
+		CompletedAt:        autonomyTime(task.CompletedAt),
+		NextRunAt:          autonomyTime(task.NextRunAt),
+		CheckpointAt:       autonomyTime(task.CheckpointAt),
+		CheckpointPresent:  len(task.Checkpoint) > 0,
+		LastActivityAt:     autonomyTime(taskActivity(task)),
 	}
 }
 

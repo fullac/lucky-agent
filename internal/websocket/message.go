@@ -15,11 +15,13 @@ type MessageType string
 
 const (
 	// 客户端 → 服务端
-	TypeChat      MessageType = "chat"       // 聊天消息
-	TypeCancel    MessageType = "cancel"     // 取消进行中的 agent run
-	TypeStreamAck MessageType = "stream_ack" // 流式确认
-	TypePing      MessageType = "ping"       // 心跳 ping
-	TypeReconnect MessageType = "reconnect"  // 断线重连
+	TypeChat             MessageType = "chat"              // 聊天消息
+	TypeLucky            MessageType = "lucky"             // 多段消息收集：on/off/status/cancel
+	TypeCancel           MessageType = "cancel"            // 取消进行中的 agent run
+	TypeApprovalResponse MessageType = "approval_response" // 批准/拒绝/补充输入
+	TypeStreamAck        MessageType = "stream_ack"        // 流式确认
+	TypePing             MessageType = "ping"              // 心跳 ping
+	TypeReconnect        MessageType = "reconnect"         // 断线重连
 
 	// 服务端 → 客户端
 	TypeStreamChunk MessageType = "stream_chunk" // 流式输出块
@@ -27,7 +29,10 @@ const (
 	TypeReasoning   MessageType = "reasoning"    // 推理/思考摘要
 	TypeToolCall    MessageType = "tool_call"    // 工具调用通知
 	TypeToolResult  MessageType = "tool_result"  // 工具调用结果
+	TypeCompact     MessageType = "compact"      // 会话上下文压缩进度
+	TypeApproval    MessageType = "approval"     // 需要用户批准或补充输入
 	TypeStatus      MessageType = "status"       // 状态更新
+	TypeTaskEvent   MessageType = "task_event"   // 子代理和后台任务进度
 	TypeError       MessageType = "error"        // 错误消息
 	TypePong        MessageType = "pong"         // 心跳 pong
 )
@@ -53,9 +58,36 @@ type ChatData struct {
 	Attachments []gateway.Attachment `json:"attachments,omitempty"`
 }
 
+// LuckyData 控制当前 session 的多段消息收集。
+type LuckyData struct {
+	Action string `json:"action"`
+}
+
 // CancelData 取消进行中的 agent run。空 session_id 表示当前连接绑定的 session。
 type CancelData struct {
 	SessionID string `json:"session_id,omitempty"`
+}
+
+// ApprovalResponseData is the client's decision for a pending HITL request.
+type ApprovalResponseData struct {
+	RequestID string `json:"request_id"`
+	Provider  string `json:"provider,omitempty"` // runtime | codex | grok
+	Decision  string `json:"decision"`           // allow | deny | cancel | submit
+	Input     string `json:"input,omitempty"`
+}
+
+// ApprovalRequestData is pushed when the agent is waiting on the user.
+type ApprovalRequestData struct {
+	RequestID string            `json:"request_id"`
+	Provider  string            `json:"provider,omitempty"`
+	Kind      string            `json:"kind,omitempty"` // approval | input | credential
+	Tool      string            `json:"tool,omitempty"`
+	Action    string            `json:"action,omitempty"`
+	Reason    string            `json:"reason,omitempty"`
+	Prompt    string            `json:"prompt,omitempty"`
+	Summary   string            `json:"summary,omitempty"`
+	Secure    bool              `json:"secure,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"`
 }
 
 // StreamChunkData 流式输出块数据
@@ -107,10 +139,48 @@ type ToolResultData struct {
 	Attachments []gateway.Attachment `json:"attachments,omitempty"`
 }
 
+// CompactData is session context compaction progress for client UI.
+// phase: start | progress | done | failed | degraded
+type CompactData struct {
+	Phase               string `json:"phase"`
+	Trigger             string `json:"trigger,omitempty"`
+	Message             string `json:"message,omitempty"`
+	BoundaryID          string `json:"boundary_id,omitempty"`
+	SummarySource       string `json:"summary_source,omitempty"`
+	Chunk               int    `json:"chunk,omitempty"`
+	Chunks              int    `json:"chunks,omitempty"`
+	PreTokenEstimate    int    `json:"pre_token_estimate,omitempty"`
+	PostTokenEstimate   int    `json:"post_token_estimate,omitempty"`
+	DroppedMessages     int    `json:"dropped_messages,omitempty"`
+	RetainedMessages    int    `json:"retained_messages,omitempty"`
+	RestoredAttachments int    `json:"restored_attachments,omitempty"`
+	Model               string `json:"model,omitempty"`
+	Error               string `json:"error,omitempty"`
+}
+
 // StatusData 状态更新数据
 type StatusData struct {
 	State   string `json:"state"` // "thinking" | "executing" | "idle" | "error"
 	Message string `json:"message,omitempty"`
+}
+
+// TaskEventData is a stored task event pushed to connected clients.
+type TaskEventData struct {
+	Type               string            `json:"type"`
+	TaskID             string            `json:"task_id"`
+	ParentID           string            `json:"parent_id,omitempty"`
+	ExecutionSessionID string            `json:"execution_session_id,omitempty"`
+	ParentSessionID    string            `json:"parent_session_id,omitempty"`
+	Role               string            `json:"role,omitempty"`
+	Status             string            `json:"status,omitempty"`
+	Mode               string            `json:"mode,omitempty"`
+	Message            string            `json:"message,omitempty"`
+	Progress           float64           `json:"progress,omitempty"`
+	ChildID            string            `json:"child_id,omitempty"`
+	Error              string            `json:"error,omitempty"`
+	SessionID          string            `json:"session_id,omitempty"`
+	Description        string            `json:"description,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
 }
 
 // ErrorData 错误消息数据

@@ -28,17 +28,19 @@ type BackupInfo struct {
 }
 
 type sessionBackup struct {
-	FormatVersion    int                `json:"format_version"`
-	ID               string             `json:"id"`
-	SessionID        string             `json:"session_id"`
-	Trigger          string             `json:"trigger,omitempty"`
-	CreatedAt        time.Time          `json:"created_at"`
-	SessionCreatedAt time.Time          `json:"session_created_at"`
-	SessionUpdatedAt time.Time          `json:"session_updated_at"`
-	Title            string             `json:"title"`
-	Messages         []provider.Message `json:"messages"`
-	ShellContext     ShellContext       `json:"shell_context"`
-	ContentHash      string             `json:"content_hash"`
+	FormatVersion     int                `json:"format_version"`
+	ID                string             `json:"id"`
+	SessionID         string             `json:"session_id"`
+	Trigger           string             `json:"trigger,omitempty"`
+	CreatedAt         time.Time          `json:"created_at"`
+	SessionCreatedAt  time.Time          `json:"session_created_at"`
+	SessionUpdatedAt  time.Time          `json:"session_updated_at"`
+	Title             string             `json:"title"`
+	AgentRole         string             `json:"agent_role,omitempty"`
+	AgentSystemPrompt string             `json:"agent_system_prompt,omitempty"`
+	Messages          []provider.Message `json:"messages"`
+	ShellContext      ShellContext       `json:"shell_context"`
+	ContentHash       string             `json:"content_hash"`
 }
 
 // CreateBackup writes an immutable, standalone copy of the complete session.
@@ -57,15 +59,17 @@ func (s *Session) CreateBackup(trigger string) (*BackupInfo, error) {
 
 	s.mu.RLock()
 	backup := sessionBackup{
-		FormatVersion:    sessionBackupFormatVersion,
-		ID:               fmt.Sprintf("backup-%d", time.Now().UnixNano()),
-		SessionID:        s.ID,
-		Trigger:          trigger,
-		CreatedAt:        time.Now().UTC(),
-		SessionCreatedAt: s.CreatedAt,
-		SessionUpdatedAt: s.UpdatedAt,
-		Title:            s.Title,
-		Messages:         append([]provider.Message(nil), s.Messages...),
+		FormatVersion:     sessionBackupFormatVersion,
+		ID:                fmt.Sprintf("backup-%d", time.Now().UnixNano()),
+		SessionID:         s.ID,
+		Trigger:           trigger,
+		CreatedAt:         time.Now().UTC(),
+		SessionCreatedAt:  s.CreatedAt,
+		SessionUpdatedAt:  s.UpdatedAt,
+		Title:             s.Title,
+		AgentRole:         s.AgentRole,
+		AgentSystemPrompt: s.AgentSystemPrompt,
+		Messages:          append([]provider.Message(nil), s.Messages...),
 		ShellContext: ShellContext{
 			Cwd: s.ShellContext.Cwd,
 			Env: cloneEnv(s.ShellContext.Env),
@@ -157,6 +161,8 @@ func (s *Session) RestoreBackup(backupID string) (*BackupInfo, error) {
 
 	s.mu.Lock()
 	s.Title = backup.Title
+	s.AgentRole = backup.AgentRole
+	s.AgentSystemPrompt = backup.AgentSystemPrompt
 	s.Messages = append([]provider.Message(nil), backup.Messages...)
 	s.CreatedAt = backup.SessionCreatedAt
 	s.UpdatedAt = time.Now()

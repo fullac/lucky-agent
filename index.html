@@ -1148,7 +1148,8 @@
               '推荐复制 config.example.json 为 config.json，再按需替换示例值。',
               '模型 ID 只填写在 models.active，提供商、地址和密钥只填写在 models.endpoints。',
               '没有启用的功能可以保留默认值或留空；API 密钥不要提交到公共仓库。',
-              '修改配置后，已启用的服务通常需要执行 /api/v1/config/reload 或重启才能使用新值。'
+              '客户端可用 GET /api/v1/config 读取脱敏配置，用 PATCH /api/v1/config 局部修改；PUT /api/v1/config 是完整替换，/api/v1/config/schema 提供字段类型、默认值和重启提示。',
+              '修改配置后，PATCH 响应会区分 hot_reloaded 和 restart_required；监听地址、鉴权、网关和启动期服务通常需要重启。'
             ],
             related: ['config', 'runtime', 'opencli', 'api', 'telegram', 'napcat'],
             commands: [
@@ -1315,6 +1316,9 @@
                   { field: 'context.auto_compact_cooldown_turns', example: '8', description: '两次自动压缩之间至少间隔的轮数。' },
                   { field: 'context.auto_compact_retain_turns', example: '6', description: '压缩时始终保留最近的对话轮数。' },
                   { field: 'context.auto_compact_reserved_summary_tokens', example: '1200', description: '给压缩摘要预留的 token 数。' },
+                  { field: 'context.compact_model', example: 'gpt-4.1-mini', description: '仅用于 session compact 的模型 ID；空则用当前对话模型。' },
+                  { field: 'context.compact_max_chunk_tokens', example: '12000', description: '长历史切片 compact 时，每个并发分片的最大估 token。' },
+                  { field: 'context.compact_max_parallel', example: '4', description: '分片 compact 时最大并发 LLM 调用数。' },
                   { field: 'context.memory_hygiene_before_context', example: 'false', description: '组装上下文前是否检查记忆卫生问题。' },
                   { field: 'context.memory_hygiene_action', example: 'quarantine', description: '发现问题记忆后的处理方式，例如 quarantine。' },
                   { field: 'context.memory_hygiene_min_severity', example: 'high', description: '达到何种严重级别才处理。' },
@@ -1424,7 +1428,7 @@
                 description: '网关共有设置在顶部，各平台私有设置分别放在 telegram、qqofficial、napcat、feishu、weixin 和 openclawweixin。',
                 fields: [
                   { field: 'msg_gateway.platform', example: 'telegram', description: '默认启动的平台名称。单独启动时也可使用 --platform 覆盖。' },
-                  { field: 'msg_gateway.start_all', example: 'false', description: '是否同时启动所有已配置平台。' },
+                  { field: 'msg_gateway.start_all', example: 'false', description: '当前 lh serve 不会因该字段自动拉起网关；远程管理请使用 /api/v1/gateways/{name}/start。' },
                   { field: 'msg_gateway.api_addr', example: '127.0.0.1:9090', description: '网关使用的本地 API 地址，应与 server.addr 对齐。' },
                   { field: 'msg_gateway.telegram.token / proxy', example: 'your-bot-token / ""', description: 'Telegram Bot token 和可选 HTTP/SOCKS5 代理。' },
                   { field: 'msg_gateway.telegram.chat_timeout_seconds', example: '600', description: 'Telegram 单次对话总超时时间。' },
@@ -1612,7 +1616,7 @@
             kind: 'core',
             x: 50,
             y: 48,
-            summary: 'lh serve 启动 HTTP API 服务。部署是否成功，先看 /api/v1/health。',
+            summary: 'lh serve 启动 HTTP API 服务。lh qr 会同时签发一把 24 小时临时 key，并在终端显示手机扫码用的二维码。API 重启后这把 key 立即失效。部署是否成功，先看 /api/v1/health。',
             points: [
               '本机调试可监听 127.0.0.1:9090。',
               '容器或外部访问通常要监听 0.0.0.0:9090。',
@@ -1813,7 +1817,7 @@
             ],
             related: ['overview', 'source', 'api', 'telegram', 'napcat'],
             commands: [
-              { label: '常用命令', body: 'lh init\nlh config list\nlh config get provider\nlh config set model gpt-5.4-mini\nlh chat\nlh chat "Summarize this repository"\nlh serve\nlh msg-gateway start --platform telegram\nlh msg-gateway start --platform qqofficial\nlh msg-gateway start --platform napcat\nlh rag index ./docs\nlh rag search "deployment"' }
+              { label: '常用命令', body: 'lh init\nlh config list\nlh config get provider\nlh config set model gpt-5.4-mini\nlh chat\nlh chat "Summarize this repository"\nlh serve\nlh qr\nlh msg-gateway start --platform telegram\nlh msg-gateway start --platform qqofficial\nlh msg-gateway start --platform napcat\nlh rag index ./docs\nlh rag search "deployment"' }
             ]
           }
         ],

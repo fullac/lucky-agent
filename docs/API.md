@@ -54,7 +54,7 @@ Authorization: Bearer <key>
 
 Query-string API keys are not accepted.
 
-If `server.api_keys` is empty, authentication is disabled.
+If `server.api_keys` is empty, only localhost is accepted. A key issued by `lh qr` is also accepted. That key lives in the API process memory, defaults to 24 hours, and expires immediately when the API process restarts. It is not written to `config.json`.
 
 ## Common Response Shape
 
@@ -83,6 +83,28 @@ Common status codes:
 | `429` | Rate limit exceeded |
 | `500` | Internal error |
 | `503` | Service not initialized |
+
+## Models
+
+### `GET /api/v1/models/effort`
+
+Returns the active chat model's reasoning effort setting and the stable option
+list (`auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`).
+`auto` omits the upstream parameter and uses the model service default.
+`supported` is false when the active provider/protocol is not an OpenAI or
+OpenAI-compatible endpoint.
+
+### `PUT /api/v1/models/effort`
+
+Persists and hot-applies the setting for subsequent requests. Body:
+
+```json
+{"effort":"high"}
+```
+
+Explicit values are rejected when the active provider does not support the
+OpenAI reasoning parameter. Model-dependent availability is still enforced by
+the upstream model service.
 
 ## Chat
 
@@ -147,7 +169,10 @@ curl http://127.0.0.1:9090/api/v1/chat/sync \
 | --- | --- | --- |
 | `GET` | `/api/v1/sessions` | List sessions |
 | `POST` | `/api/v1/sessions` | Create a session |
-| `GET` | `/api/v1/sessions/{id}` | Get a session |
+| `GET` | `/api/v1/sessions/{id}` | Get a session (paged history + optional truncation) |
+| `PATCH` | `/api/v1/sessions/{id}` | Rename, pin, or set the project |
+| `DELETE` | `/api/v1/sessions/{id}` | Delete the session and its files |
+| `GET` | `/api/v1/sessions/{id}/tools` | Get a bounded, paged tool trace for a session |
 | `POST` | `/api/v1/sessions/{id}/compact` | Compact a session |
 | `GET` | `/api/v1/sessions/{id}/compact/latest` | Get latest compact trace |
 
@@ -158,6 +183,38 @@ List query parameters:
 | `q` | Search sessions |
 | `limit` | Maximum results, capped by server |
 | `offset` | Pagination offset |
+
+List items include `format` (`legacy_md` or `segment_v1`) and `byte_size` when known. `pinned` is true for pinned sessions. `project` is the display group; empty means ungrouped. Pinned sessions sort before the rest. Search `q` also matches title, id, and project.
+
+Patch body fields are optional, but at least one is required:
+
+```json
+{"title":"新名字","pinned":true,"project":"luckyagent"}
+```
+
+An empty `title` is rejected. An empty `project` clears the group. Delete returns `{"id":"...","deleted":true}`.
+
+Get-session query parameters:
+
+| Parameter | Description |
+| --- | --- |
+| `limit` | Page size (newest-first paging). Without `limit`, full message list is returned. |
+| `offset` | Messages skipped from the newest end |
+| `include=full` or `full=1` | Return full message bodies. Default truncates each body to `context.history_preview_chars` (default 4000 runes). |
+| `all=1` | Legacy full history helper used by some clients |
+
+Response extras: `format`, `byte_size`, `content_truncated` (true when bodies were capped).
+
+Tool-trace query parameters:
+
+| Parameter | Description |
+| --- | --- |
+| `limit` | Number of newest tool calls to return; defaults to 100 and is capped at 200 |
+| `offset` | Tool calls skipped from the newest end |
+
+Tool trace responses include `total_calls`, `returned`, `has_more`, `limit`, and
+`offset`. Arguments, results, annotations, and errors are truncated before
+serialization so a single tool output cannot create an unbounded response.
 
 Create request body:
 
@@ -175,6 +232,48 @@ Compact request body:
   "force_local": true
 }
 ```
+
+Compact response includes token estimates, `summary_source`, and a client-oriented
+`display` object (`title`, `subtitle`, `message`).
+
+During streaming chat (`POST /api/v1/chat` SSE or WebSocket), automatic compact
+emits events with `type: "compact"` and a payload:
+
+```json
+{
+  "phase": "start|progress|done|failed|degraded",
+  "trigger": "auto",
+  "message": "Compressing conversation context…",
+  "pre_token_estimate": 12000,
+  "post_token_estimate": 900,
+  "dropped_messages": 40,
+  "retained_messages": 12,
+  "summary_source": "llm-mapreduce",
+  "boundary_id": "compact-…"
+}
+```
+
+WebSocket message type is also `"compact"` with the same fields under `data`.
+
+### Session storage CLI
+
+Runtime session hygiene (not HTTP):
+
+```bash
+lh session list
+lh session migrate <id>          # segment_v1 + blob externalize
+lh session migrate --all
+lh session gc <id>               # drop unreferenced blobs
+lh session gc --all
+lh session export <id> -o out.md # human-readable markdown
+lh session roll <id> [--force]   # archive older turns, keep recent
+lh session compact <id>
+```
+
+Related config keys under `context`:
+
+- `session_auto_roll`, `session_max_messages`, `session_max_bytes`, `session_roll_retain_turns`
+- `history_preview_chars`
 
 ## Tasks
 
@@ -256,6 +355,62 @@ curl "http://127.0.0.1:9090/api/v1/memory/recall?q=project"
 
 ## Configuration
 
+Configuration routes use the normal API authentication middleware. When
+`server.api_keys` is empty, they are available only from localhost or with a
+process-local pairing key; otherwise send `X-API-Key` or `Authorization:
+Bearer ...`.
+
+### `GET /api/v1/config`
+
+Returns the canonical configuration snapshot used by the runtime. API keys,
+tokens, passwords and extra headers are redacted. The response includes an
+`ETag` that can be sent as `If-Match` with a later PATCH.
+
+### `PUT /api/v1/config`
+
+Replaces the complete configuration. The body is limited to 2 MiB and is
+validated before it is persisted and applied. Clients should GET the current
+snapshot, modify it, and then PUT the complete document; PUT is not a partial
+update. Empty redacted secrets keep their existing value, so use PATCH with
+`clear_secrets` when a credential must be removed.
+
+### `PATCH /api/v1/config`
+
+Applies a JSON Merge Patch to the current configuration. The body can be the
+patch object directly:
+
+```json
+{
+  "agent": {"max_iterations": 20},
+  "context": {"max_history_turns": 80}
+}
+```
+
+For a dry run, optimistic concurrency, or explicit secret removal, use the
+envelope form:
+
+```json
+{
+  "patch": {"server": {"progress_summary_with_llm": true}},
+  "if_match": "<etag>",
+  "clear_secrets": ["models.endpoints.chat.api_key"],
+  "dry_run": false
+}
+```
+
+The response contains the redacted `config`, changed paths, `hot_reloaded`,
+`restart_required`, `applied`, `persisted`, and a new `version`. A stale
+`If-Match` returns `409`. Changes to server listening/authentication, gateways,
+and startup-created services are persisted but require a restart or service
+rebuild; the response reports those groups.
+
+### `GET /api/v1/config/schema`
+
+Returns field metadata for configuration clients: JSON path, type, default,
+whether the field is sensitive, and whether it is hot-reloadable or requires a
+restart. Sensitive defaults are always `null`. The response also groups paths
+under `hot`, `restart`, and `unknown`.
+
 ### `POST /api/v1/config/reload`
 
 Reload the active configuration without interrupting in-flight requests. The
@@ -271,7 +426,7 @@ Sensitive values, including API keys, are never returned.
 | --- | --- | --- |
 | `GET` | `/api/v1/tools` | List available tools |
 | `GET` | `/api/v1/stats` | Server statistics |
-| `GET` | `/api/v1/soul` | Current SOUL information |
+| `GET` | `/api/v1/soul` | Current SOUL information. `name` is the persona display name parsed from the Identity `Name:` line, then from the first bold name. `system_prompt` is the full SOUL text. |
 | `GET` | `/api/v1/proactive/status?limit=5` | Proactive runtime status |
 | `GET` | `/api/v1/health/live` | Liveness check |
 | `GET` | `/api/v1/health/ready` | Readiness check |
@@ -282,14 +437,19 @@ Sensitive values, including API keys, are never returned.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/v1/context` | Context window configuration |
-| `POST` | `/api/v1/context/fit` | Fit messages into context window |
+| `GET` | `/api/v1/context` | Context window configuration. `inspect=1` adds the assembled composition and a local token estimate |
+| `POST` | `/api/v1/context/fit` | Fit caller-supplied messages into the context window. This does not assemble the live planner context |
 
 `GET /api/v1/context` accepts:
 
 | Parameter | Description |
 | --- | --- |
-| `session_id` | Include latest compact trace for the session when available |
+| `session_id` | Use this session's history and include its latest compact trace. Unknown ids return 404 and do not create a session |
+| `inspect` | `1`, `true`, or `yes` adds `usage` and `sections`. Omitted responses stay config-only |
+| `message` | Hypothetical next user message. Empty inspects the context already on hand and does not append a user turn |
+| `include_messages` | `1` copies full section text into `sections[].content`. The default returns a 160-character `preview` |
+
+`usage` is a local planner estimate, not billed provider usage. `usage.ratio` is `total_tokens / available_tokens`. Buckets are `system`, `history`, `memory`, `rag`, `tool_result`, and `user`. Inspection does not write memory, session messages, or the context cache.
 
 Fit request body:
 
@@ -440,6 +600,18 @@ WebSocket URL:
 ws://127.0.0.1:9090/api/v1/ws?session=<session-id>
 ```
 
+Client message `type: "lucky"` collects several chat messages for one session
+and submits them as a single turn. `data.action` is `on`, `off`, `status`, or
+`cancel`. While collection is active, ordinary `chat` messages are stored
+instead of starting a run. The server replies with `type: "status"` and
+`data.state: "lucky"`. `off` enqueues one chat run built from the collected
+segments. Collection state is in memory for the current server process.
+
+Server push `type: "task_event"` is sent to every connected client when a task
+event is stored. `data` carries `type`, `task_id`, `parent_id`, `status`,
+`mode`, `message`, `progress`, `session_id`, and `description`. A scheduled
+message delivered into a session is still `type: "stream_end"` with no run id.
+
 ## Soul Templates
 
 | Method | Path | Description |
@@ -468,7 +640,7 @@ Render accepts query parameters prefixed with `var_`, for example:
 | `GET` | `/api/v1/embedders` | List embedders |
 | `GET` | `/api/v1/embedders/{id}` | Get embedder |
 | `POST` | `/api/v1/embedders/register` | Register embedder |
-| `POST` | `/api/v1/embedders/switch` | Switch active embedder |
+| `POST` | `/api/v1/embedders/switch` | Switch active embedder and rebind the RAG pipeline; a populated index must keep the same embedder identity and vector dimension |
 | `POST` | `/api/v1/embedders/{id}/test` | Test embedder |
 
 Switch request body:
@@ -511,6 +683,11 @@ Test request body:
 | `GET` | `/api/v1/agents/task?id=...` | Get delegated task |
 | `GET` | `/api/v1/agents/tasks` | List delegated tasks |
 | `POST` | `/api/v1/agents/cancel?id=...` | Cancel delegated task |
+| `GET` | `/api/v1/agents/blackboard?task_id=...` | Read shared collaboration notes |
+| `PUT` | `/api/v1/agents/blackboard` | Write a task collaboration note |
+| `DELETE` | `/api/v1/agents/blackboard?task_id=...&key=...` | Delete a collaboration note |
+| `GET` | `/api/v1/agents/messages?task_id=...&from=...&to=...` | Read A2A collaboration messages |
+| `POST` | `/api/v1/agents/messages` | Publish an A2A collaboration message |
 
 Delegate request example:
 
@@ -530,6 +707,14 @@ execution mode: it is the internal decision mechanism used by `auto` and is
 rejected with `400 Bad Request`. `cost_budget` is optional and normalized to
 the `0..1` range; `0` leaves planning cost unconstrained. `timeout` follows
 the Go JSON duration representation used by this handler (nanoseconds).
+
+Every delegated task and sub-task includes an `execution_session_id` when the
+runtime can execute it. `parent_session_id` identifies the requesting session
+and `role` identifies the runtime actor (for example `subagent` or
+`orchestrator`). Open `GET /api/v1/sessions/{execution_session_id}` to inspect
+the same transcript while the task is running and continue the conversation
+after it completes. `GET /api/v1/sessions/{id}?profile=1` also returns the
+runtime-owned `agent_role` and `agent_system_prompt` for that session.
 
 See [the collaboration guide](multi-agent/collaboration.md) for selection
 criteria and MDP learning behavior.
@@ -572,11 +757,18 @@ Start workflow request body:
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/v1/gateways` | List gateway statuses |
-| `POST` | `/api/v1/gateways/telegram/start` | Start Telegram gateway |
+| `POST` | `/api/v1/gateways/{name}/start` | Start a configured gateway in the `lh serve` process |
 | `POST` | `/api/v1/gateways/{name}/stop` | Stop gateway |
 | `GET` | `/api/v1/gateways/{name}/status` | Gateway status |
 
-Telegram start request body:
+The start endpoint accepts an optional JSON body. Credentials and listener
+settings are read from `msg_gateway.<name>` in the host configuration; fields
+sent by the caller override the matching values. This lets a remote client
+start a configured QQ, NapCat, Feishu, Weixin, or OpenClaw Weixin gateway
+without starting a second CLI process.
+
+Telegram start request body (the token may be omitted when it is already in
+the host configuration):
 
 ```json
 {
@@ -585,6 +777,13 @@ Telegram start request body:
   "admin_ids": ["123456"]
 }
 ```
+
+For the other channels, send `{}` to use the host configuration. The gateway
+instance belongs to the `lh serve` process and is stopped automatically when
+that process shuts down. Do not run the same channel in a separate
+`lh msg-gateway start` process at the same time; the Telegram API start is
+guarded by the same local lease used by the CLI. The endpoint returns `409`
+when the named gateway is already running.
 
 ## pprof
 

@@ -17,6 +17,8 @@ Primary entry points:
 - `lh serve`: HTTP API server.
 - `lh msg-gateway start`: external chat gateways.
 - `lh rag`: RAG index/search/stats commands.
+- `lh session`: list/migrate/gc/export/roll/compact session storage.
+- `lh qr`: start the API and show a temporary phone-pairing QR code.
 - `lh config` and `lh soul`: runtime management surfaces.
 
 Desktop GUI, TUI, and Electron are not part of this repository. Session,
@@ -77,7 +79,9 @@ Common routes include:
   `GET /api/v1/rag/stats`, `/api/v1/rag/store`.
 - `/api/v1/rag/stream/*` for stream indexer watch, scan, start, stop, queue,
   status, and process operations.
-- `/api/v1/context` and `/api/v1/context/fit` for context inspection.
+- `GET /api/v1/context` for the context window. `inspect=1` adds the
+  assembled composition and local token length. `POST /api/v1/context/fit`
+  trims caller-supplied messages.
 - `POST /api/v1/config/reload` to safely reload configuration for later requests.
 - `/api/v1/health/live`, `/ready`, `/detail`, and `/api/v1/metrics`.
 - `/api/v1/ws` and `/api/v1/ws/stats`.

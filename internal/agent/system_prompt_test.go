@@ -65,13 +65,19 @@ func TestBuildSystemPromptIncludesSoulSkillsAndPlatformHints(t *testing.T) {
 		t.Fatalf("expected skills block in prompt, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "svg-export") {
-		t.Fatalf("expected skill summary in prompt, got %q", prompt)
+		t.Fatalf("expected skill name in prompt, got %q", prompt)
+	}
+	if strings.Contains(prompt, "generated SVG artifact") {
+		t.Fatalf("skill summary should stay out of the standing prompt, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "Telegram") {
 		t.Fatalf("expected telegram platform hint in prompt, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "Project operating rules.") {
 		t.Fatalf("expected AGENTS.md content in prompt, got %q", prompt)
+	}
+	if strings.Contains(prompt, "LuckyAgent manual (AGENTS.md):\n") && !strings.Contains(prompt, "excerpt") {
+		t.Fatalf("standing manual should be an excerpt, got %q", prompt)
 	}
 	for _, want := range []string{
 		"Computer-use execution protocol",
@@ -84,6 +90,20 @@ func TestBuildSystemPromptIncludesSoulSkillsAndPlatformHints(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Model: gpt-5.4-mini") || !strings.Contains(prompt, "Provider: openai") {
 		t.Fatalf("expected model/provider metadata in prompt, got %q", prompt)
+	}
+}
+
+func TestBuildSystemPromptIncludesSessionAgentProfile(t *testing.T) {
+	mgr, err := config.NewManagerWithDir(filepath.Join(t.TempDir(), ".luckyagent"))
+	if err != nil {
+		t.Fatalf("NewManagerWithDir: %v", err)
+	}
+	sess := session.NewSession("subagent-test", t.TempDir())
+	sess.SetAgentProfile("researcher", "Keep source evidence and report uncertainty.")
+	a := &Agent{cfg: mgr, soul: &soul.Soul{}, tools: tool.NewRegistry()}
+	prompt := a.buildSystemPrompt(sess)
+	if !strings.Contains(prompt, "【执行角色：researcher】") || !strings.Contains(prompt, "Keep source evidence") {
+		t.Fatalf("expected session agent profile in prompt, got %q", prompt)
 	}
 }
 
@@ -207,7 +227,7 @@ func TestBuildSystemPromptIncludesLuckyAgentManual(t *testing.T) {
 	}
 
 	prompt := a.buildSystemPrompt(sess)
-	if !strings.Contains(prompt, "LuckyAgent manual (AGENTS.md):") {
+	if !strings.Contains(prompt, "LuckyAgent manual (AGENTS.md, excerpt):") {
 		t.Fatalf("expected manual marker in prompt, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "Convergence rule: stop once the success condition is satisfied.") {
@@ -257,7 +277,7 @@ func TestBuildSystemPromptIncludesLowercaseAgentsContext(t *testing.T) {
 	}
 
 	prompt := a.buildSystemPrompt(sess)
-	if !strings.Contains(prompt, "Context file (agents.md):") {
+	if !strings.Contains(prompt, "Project context (agents.md, excerpt):") {
 		t.Fatalf("expected lowercase agents.md marker in prompt, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "Lowercase project operating rules.") {

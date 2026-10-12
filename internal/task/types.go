@@ -86,39 +86,53 @@ type Outcome struct {
 }
 
 type Record struct {
-	ID          string            `json:"id"`
-	ParentID    string            `json:"parent_id,omitempty"`
-	Source      Source            `json:"source"`
-	Mode        Mode              `json:"mode"`
-	Status      Status            `json:"status"`
-	Description string            `json:"description"`
-	Input       string            `json:"input,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	StartedAt   time.Time         `json:"started_at,omitempty"`
-	CompletedAt time.Time         `json:"completed_at,omitempty"`
-	Runtime     RuntimeRef        `json:"runtime,omitempty"`
-	Budget      Budget            `json:"budget,omitempty"`
-	Outcome     Outcome           `json:"outcome,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	ID       string `json:"id"`
+	ParentID string `json:"parent_id,omitempty"`
+	// ExecutionSessionID is the durable session that owns the task's work.
+	// ParentSessionID points at the session that requested/delegated it. Keeping
+	// both IDs on the record lets clients open the exact execution transcript
+	// without guessing from task metadata.
+	ExecutionSessionID string            `json:"execution_session_id,omitempty"`
+	ParentSessionID    string            `json:"parent_session_id,omitempty"`
+	Role               string            `json:"role,omitempty"`
+	Source             Source            `json:"source"`
+	Mode               Mode              `json:"mode"`
+	Status             Status            `json:"status"`
+	Description        string            `json:"description"`
+	Input              string            `json:"input,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	StartedAt          time.Time         `json:"started_at,omitempty"`
+	CompletedAt        time.Time         `json:"completed_at,omitempty"`
+	Runtime            RuntimeRef        `json:"runtime,omitempty"`
+	Budget             Budget            `json:"budget,omitempty"`
+	Outcome            Outcome           `json:"outcome,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
 }
 
 type Event struct {
-	Type     EventType         `json:"type"`
-	TaskID   string            `json:"task_id"`
-	ParentID string            `json:"parent_id,omitempty"`
-	Time     time.Time         `json:"time"`
-	Message  string            `json:"message,omitempty"`
-	Status   Status            `json:"status,omitempty"`
-	Mode     Mode              `json:"mode,omitempty"`
-	Progress float64           `json:"progress,omitempty"`
-	ChildID  string            `json:"child_id,omitempty"`
-	Error    string            `json:"error,omitempty"`
-	Evidence []string          `json:"evidence,omitempty"`
-	Files    []string          `json:"files,omitempty"`
-	Tests    []string          `json:"tests,omitempty"`
-	Cost     CostSnapshot      `json:"cost,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Type               EventType         `json:"type"`
+	TaskID             string            `json:"task_id"`
+	ParentID           string            `json:"parent_id,omitempty"`
+	ExecutionSessionID string            `json:"execution_session_id,omitempty"`
+	ParentSessionID    string            `json:"parent_session_id,omitempty"`
+	Role               string            `json:"role,omitempty"`
+	Time               time.Time         `json:"time"`
+	Message            string            `json:"message,omitempty"`
+	Status             Status            `json:"status,omitempty"`
+	Mode               Mode              `json:"mode,omitempty"`
+	Progress           float64           `json:"progress,omitempty"`
+	ChildID            string            `json:"child_id,omitempty"`
+	Error              string            `json:"error,omitempty"`
+	Evidence           []string          `json:"evidence,omitempty"`
+	Files              []string          `json:"files,omitempty"`
+	Tests              []string          `json:"tests,omitempty"`
+	Cost               CostSnapshot      `json:"cost,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
 }
+
+// EventObserver receives a task event after it is stored. Implementations must
+// not block the writer and must not call back into the store.
+type EventObserver func(event Event)
 
 type Store interface {
 	Create(record Record) (Record, error)

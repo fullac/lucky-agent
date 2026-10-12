@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,9 +24,30 @@ type AgentExecutor interface {
 	NewSession(title string) string
 }
 
+// StableSessionExecutor is an optional extension used by long-lived workers.
+// Older executors can still implement AgentExecutor and will receive a
+// process-local session; the runtime adapter implements this to persist a
+// deterministic worker conversation ID across restarts.
+type StableSessionExecutor interface {
+	EnsureSession(id, title string) string
+}
+
+func ensureWorkerSession(executor AgentExecutor, workerID string) string {
+	workerID = strings.TrimSpace(workerID)
+	preferred := workerID
+	if !strings.HasPrefix(preferred, "worker-") {
+		preferred = "worker-" + preferred
+	}
+	if stable, ok := executor.(StableSessionExecutor); ok {
+		return stable.EnsureSession(preferred, "Worker "+workerID)
+	}
+	return executor.NewSession("Worker " + workerID)
+}
+
 // LoopConfig carries agent loop limits without importing the agent package.
 type LoopConfig struct {
 	Execution              *Execution
+	SystemPrompt           string
 	MaxIterations          int
 	Timeout                time.Duration
 	AutoApprove            bool
@@ -118,12 +140,16 @@ type WorkerResult struct {
 // Each worker has its own session for context isolation, but shares the
 // parent Agent's provider and tool registry through the AgentExecutor interface.
 type Worker struct {
-	ID          string
-	State       WorkerState
-	Executor    AgentExecutor
-	SessionID   string
-	CurrentTask *QueueTask
-	LoopConfig  LoopConfig
+	ID       string
+	State    WorkerState
+	Executor AgentExecutor
+	// SessionID is the durable conversation entry point for this worker. It is
+	// kept separate from a task's execution session so each task remains
+	// isolated while the worker still has a stable UI entry point.
+	SessionID     string
+	TaskSessionID string
+	CurrentTask   *QueueTask
+	LoopConfig    LoopConfig
 
 	mu        sync.RWMutex
 	startedAt time.Time
@@ -141,14 +167,26 @@ type WorkerConfig struct {
 	LoopConfig   LoopConfig
 }
 
+const defaultWorkerSystemPrompt = "You are a long-lived LuckyAgent worker. Process queued work within the assigned limits, preserve evidence, and report blockers or unfinished work clearly."
+
 // NewWorker creates a new worker bound to an agent executor.
 func NewWorker(cfg WorkerConfig, executor AgentExecutor) *Worker {
+	loopConfig := cfg.LoopConfig
+	if loopConfig.SystemPrompt == "" {
+		loopConfig.SystemPrompt = cfg.SystemPrompt
+	}
+	if loopConfig.SystemPrompt == "" {
+		loopConfig.SystemPrompt = defaultWorkerSystemPrompt
+	}
 	w := &Worker{
 		ID:         cfg.ID,
 		State:      WorkerIdle,
 		Executor:   executor,
 		queue:      cfg.Queue,
-		LoopConfig: normalizeWorkerLoopConfig(cfg.LoopConfig),
+		LoopConfig: normalizeWorkerLoopConfig(loopConfig),
+	}
+	if executor != nil {
+		w.SessionID = ensureWorkerSession(executor, cfg.ID)
 	}
 
 	return w
@@ -210,7 +248,7 @@ func (w *Worker) Execute(ctx context.Context, task *QueueTask) *WorkerResult {
 		}
 	}
 	w.mu.Lock()
-	w.SessionID = sessionID
+	w.TaskSessionID = sessionID
 	w.mu.Unlock()
 	result, err := executor.RunLoopWithSession(ctx, sessionID, prompt, loopCfg)
 
@@ -249,6 +287,7 @@ func (w *Worker) Info() WorkerInfo {
 	info := WorkerInfo{
 		ID:        w.ID,
 		State:     w.State,
+		SessionID: w.SessionID,
 		TaskCount: w.taskCount.Load(),
 		StartedAt: w.startedAt,
 	}
@@ -265,6 +304,7 @@ func (w *Worker) Info() WorkerInfo {
 type WorkerInfo struct {
 	ID               string      `json:"id"`
 	State            WorkerState `json:"state"`
+	SessionID        string      `json:"session_id,omitempty"`
 	CurrentTaskID    string      `json:"current_task_id,omitempty"`
 	CurrentTaskTitle string      `json:"current_task_title,omitempty"`
 	TaskCount        int64       `json:"task_count"`
@@ -460,6 +500,9 @@ func (p *WorkerPool) SetExecutor(executor AgentExecutor) {
 	for _, worker := range p.workers {
 		worker.mu.Lock()
 		worker.Executor = executor
+		if worker.SessionID == "" && executor != nil {
+			worker.SessionID = ensureWorkerSession(executor, worker.ID)
+		}
 		worker.mu.Unlock()
 	}
 }

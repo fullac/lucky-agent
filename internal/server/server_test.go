@@ -336,6 +336,16 @@ func TestHandleSoul(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode soul: %v", err)
+	}
+	if _, ok := resp["name"]; !ok {
+		t.Fatal("expected name in soul response")
+	}
+	if _, ok := resp["system_prompt"]; !ok {
+		t.Fatal("expected system_prompt in soul response")
+	}
 }
 
 func TestHandleSessions(t *testing.T) {
@@ -1073,6 +1083,24 @@ func TestServerStats(t *testing.T) {
 	}
 }
 
+func TestChatRequestTracksExplicitAutoApprove(t *testing.T) {
+	var omitted ChatRequest
+	if err := jsonAPI.Unmarshal([]byte(`{"message":"hello"}`), &omitted); err != nil {
+		t.Fatal(err)
+	}
+	if omitted.autoApproveSet {
+		t.Fatal("auto_approve should be unset when omitted")
+	}
+
+	var explicit ChatRequest
+	if err := jsonAPI.Unmarshal([]byte(`{"message":"hello","auto_approve":false}`), &explicit); err != nil {
+		t.Fatal(err)
+	}
+	if !explicit.autoApproveSet {
+		t.Fatal("auto_approve should be marked as explicitly supplied")
+	}
+}
+
 func TestChatEventTypeString(t *testing.T) {
 	tests := []struct {
 		input    agent.ChatEventType
@@ -1084,6 +1112,7 @@ func TestChatEventTypeString(t *testing.T) {
 		{agent.ChatEventContent, "content"},
 		{agent.ChatEventDone, "done"},
 		{agent.ChatEventError, "error"},
+		{agent.ChatEventCompact, "compact"},
 		{99, "unknown"}, // Unknown
 	}
 

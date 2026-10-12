@@ -16,6 +16,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/gateway"
+	luckycollector "github.com/yurika0211/luckyagent/internal/gateway/collector"
 	"github.com/yurika0211/luckyagent/internal/logger"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/session"
@@ -30,6 +31,7 @@ type agentRuntime interface {
 	ChatWithSessionStreamInput(ctx context.Context, sessionID string, input agent.UserTurnInput) (<-chan agent.ChatEvent, error)
 	Sessions() *session.Manager
 	Tools() *tool.Registry
+	RespondApprovalWithInput(ctx context.Context, providerName, approvalID, decision, input string) (tool.PendingApproval, error)
 }
 
 type runtimeConfigProvider interface {
@@ -63,6 +65,8 @@ type AgentHandler struct {
 	runners   map[string]*sessionRunner
 	store     *runStore
 	eventSink func(string, *Message)
+	lucky     *luckycollector.Lucky
+	started   bool
 	mu        sync.Mutex
 }
 
@@ -78,6 +82,7 @@ func NewAgentHandler(a agentRuntime) *AgentHandler {
 		done:    make(map[string]chan struct{}),
 		runners: make(map[string]*sessionRunner),
 		store:   newRunStore(storeRoot),
+		lucky:   luckycollector.NewLucky(),
 	}
 }
 
@@ -92,6 +97,14 @@ func (h *AgentHandler) SetEventSink(sink func(string, *Message)) {
 
 // Start restores queued and interrupted runs after the runtime process starts.
 func (h *AgentHandler) Start() {
+	h.mu.Lock()
+	if h.started {
+		h.mu.Unlock()
+		return
+	}
+	h.started = true
+	h.mu.Unlock()
+
 	for _, persisted := range h.store.restoreable() {
 		data := ChatData{
 			Message:     persisted.Message,
@@ -124,8 +137,12 @@ func (h *AgentHandler) HandleMessage(client *Client, msg *Message) {
 	switch msg.Type {
 	case TypeChat:
 		h.handleChat(client, msg)
+	case TypeLucky:
+		h.handleLucky(client, msg)
 	case TypeCancel:
 		h.handleCancel(client, msg)
+	case TypeApprovalResponse:
+		h.handleApprovalResponse(client, msg)
 	case TypeReconnect:
 		h.HandleReconnect(client, msg)
 	case TypeStreamAck:
@@ -134,6 +151,40 @@ func (h *AgentHandler) HandleMessage(client *Client, msg *Message) {
 	default:
 		logger.Warn("unknown message type", "type", msg.Type, "client_id", client.ID)
 	}
+}
+
+func (h *AgentHandler) handleApprovalResponse(client *Client, msg *Message) {
+	var data ApprovalResponseData
+	if err := msg.ParseData(&data); err != nil {
+		errMsg, _ := NewMessage(TypeError, client.SessionID, ErrorData{Code: "INVALID_DATA", Message: "invalid approval response: " + err.Error()})
+		client.TrySend(errMsg)
+		return
+	}
+	if h.agent == nil {
+		errMsg, _ := NewMessage(TypeError, client.SessionID, ErrorData{Code: "UNAVAILABLE", Message: "agent unavailable"})
+		client.TrySend(errMsg)
+		return
+	}
+	resolved, err := h.agent.RespondApprovalWithInput(context.Background(), data.Provider, data.RequestID, data.Decision, data.Input)
+	if err != nil {
+		errMsg, _ := NewMessage(TypeError, client.SessionID, ErrorData{Code: "APPROVAL_FAILED", Message: "resolve approval failed: " + err.Error()})
+		client.TrySend(errMsg)
+		return
+	}
+	status, _ := NewMessage(TypeStatus, client.SessionID, StatusData{
+		State:   "approval_resolved",
+		Message: resolved.Summary,
+	})
+	client.TrySend(status)
+}
+
+func firstNonEmptyWS(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // HandleReconnect replays events after the supplied cursor. Without a usable
@@ -226,6 +277,113 @@ func (h *AgentHandler) handleCancel(client *Client, msg *Message) {
 }
 
 // handleChat 处理聊天消息
+func (h *AgentHandler) luckyCollector() *luckycollector.Lucky {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.lucky == nil {
+		h.lucky = luckycollector.NewLucky()
+	}
+	return h.lucky
+}
+
+func luckySessionKey(sessionID string) string {
+	return "websocket|session:" + strings.TrimSpace(sessionID)
+}
+
+func (h *AgentHandler) emitLucky(client *Client, parentID, text string) {
+	status, _ := NewMessage(TypeStatus, client.SessionID, StatusData{State: "lucky", Message: text})
+	status.ParentID = parentID
+	status.ID = ""
+	status.EventID = ""
+	h.emit(client, client.SessionID, "", status)
+}
+
+func (h *AgentHandler) handleLucky(client *Client, msg *Message) {
+	var data LuckyData
+	if len(msg.Data) > 0 {
+		if err := msg.ParseData(&data); err != nil {
+			errMsg, _ := NewMessage(TypeError, client.SessionID, ErrorData{Code: "INVALID_DATA", Message: fmt.Sprintf("invalid lucky data: %v", err)})
+			client.TrySend(errMsg)
+			return
+		}
+	}
+	sessionID := strings.TrimSpace(msg.SessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(client.SessionID)
+	}
+	if sessionID == "" {
+		errMsg, _ := NewMessage(TypeError, client.SessionID, ErrorData{Code: "INVALID_DATA", Message: "lucky requires a session id"})
+		client.TrySend(errMsg)
+		return
+	}
+	key := luckySessionKey(sessionID)
+	collector := h.luckyCollector()
+	switch luckycollector.ParseLuckyAction(data.Action) {
+	case luckycollector.LuckyActionOn:
+		status, err := collector.Start(key)
+		if errors.Is(err, luckycollector.ErrAlreadyActive) {
+			h.emitLucky(client, msg.ID, fmt.Sprintf("Lucky 已经在收集中：当前 %d 段，附件 %d 个。发送 /lucky off 提交，/lucky cancel 放弃。", status.SegmentCount, status.AttachmentCount))
+			return
+		}
+		if err != nil {
+			h.emitLucky(client, msg.ID, "Lucky 开启失败："+err.Error())
+			return
+		}
+		h.emitLucky(client, msg.ID, "Lucky 已开启。接下来发送的多段消息会先被收集；发送 /lucky off 后再统一交给 agent。")
+	case luckycollector.LuckyActionStatus:
+		status := collector.Status(key)
+		if !status.Active {
+			h.emitLucky(client, msg.ID, "Lucky 未开启。发送 /lucky on 开始收集多段消息。")
+			return
+		}
+		h.emitLucky(client, msg.ID, fmt.Sprintf("Lucky 正在收集：%d 段，附件 %d 个。发送 /lucky off 提交，/lucky cancel 放弃。", status.SegmentCount, status.AttachmentCount))
+	case luckycollector.LuckyActionCancel:
+		status, ok := collector.Cancel(key)
+		if !ok {
+			h.emitLucky(client, msg.ID, "当前没有正在进行的 Lucky 收集。")
+			return
+		}
+		h.emitLucky(client, msg.ID, fmt.Sprintf("已取消 Lucky 收集，丢弃 %d 段消息和 %d 个附件。", status.SegmentCount, status.AttachmentCount))
+	case luckycollector.LuckyActionOff:
+		batch, err := collector.Finish(key)
+		if errors.Is(err, luckycollector.ErrInactive) {
+			h.emitLucky(client, msg.ID, "当前没有正在进行的 Lucky 收集。发送 /lucky on 开始。")
+			return
+		}
+		if errors.Is(err, luckycollector.ErrEmptyBatch) {
+			h.emitLucky(client, msg.ID, "没有收集到消息，已退出 Lucky 收集模式。")
+			return
+		}
+		if err != nil {
+			h.emitLucky(client, msg.ID, "Lucky 提交失败："+err.Error())
+			return
+		}
+		h.emitLucky(client, msg.ID, fmt.Sprintf("Lucky 已提交 %d 段消息。", len(batch.Segments)))
+		input := batch.UserTurnInput()
+		chat := &Message{
+			Type:      TypeChat,
+			SessionID: sessionID,
+			ID:        msg.ID,
+			Data: mustChatData(ChatData{
+				Message:     input.RoutingText,
+				Stream:      true,
+				Attachments: batch.Attachments(),
+			}),
+		}
+		h.handleChat(client, chat)
+	default:
+		h.emitLucky(client, msg.ID, "用法：/lucky on | /lucky off | /lucky status | /lucky cancel")
+	}
+}
+
+func mustChatData(data ChatData) json.RawMessage {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return raw
+}
+
 func (h *AgentHandler) handleChat(client *Client, msg *Message) {
 	var data ChatData
 	if err := msg.ParseData(&data); err != nil {
@@ -246,6 +404,9 @@ func (h *AgentHandler) handleChat(client *Client, msg *Message) {
 	if run.id == "" {
 		run.id = generateID()
 		run.parentID = run.id
+	}
+	if h.collectLuckyChat(client, msg, data) {
+		return
 	}
 	persisted := persistedRun{
 		ID:          run.id,
@@ -281,6 +442,31 @@ func (h *AgentHandler) handleChat(client *Client, msg *Message) {
 	if !wasBusy {
 		h.startNext(client.SessionID)
 	}
+}
+
+func (h *AgentHandler) collectLuckyChat(client *Client, msg *Message, data ChatData) bool {
+	sessionID := strings.TrimSpace(client.SessionID)
+	if sessionID == "" {
+		return false
+	}
+	collector := h.luckyCollector()
+	key := luckySessionKey(sessionID)
+	if !collector.Status(key).Active {
+		return false
+	}
+	segment := &gateway.Message{
+		ID:          msg.ID,
+		Text:        data.Message,
+		Chat:        gateway.Chat{ID: sessionID, Type: gateway.ChatPrivate},
+		Attachments: data.Attachments,
+	}
+	status, err := collector.Append(key, segment)
+	if err != nil {
+		h.emitLucky(client, msg.ID, "这段没有送进 Lucky 收集："+err.Error())
+		return true
+	}
+	h.emitLucky(client, msg.ID, fmt.Sprintf("已收集第 %d 段，附件 %d 个。发送 /lucky off 后一次提交。", status.SegmentCount, status.AttachmentCount))
+	return true
 }
 
 func (h *AgentHandler) startNext(sessionID string) {
@@ -563,6 +749,29 @@ func (h *AgentHandler) streamChatRun(ctx context.Context, client *Client, data C
 			msg.ParentID = parentID
 			h.emit(client, client.SessionID, runID, msg)
 
+		case agent.ChatEventApprovalRequired:
+			data := ApprovalRequestData{
+				Provider: "runtime",
+				Summary:  evt.Content,
+				Tool:     evt.Name,
+				Kind:     "approval",
+			}
+			if evt.Approval != nil {
+				data.RequestID = evt.Approval.RequestID
+				data.Tool = firstNonEmptyWS(evt.Approval.Tool, evt.Name)
+				data.Action = evt.Approval.Action
+				data.Reason = evt.Approval.Reason
+				data.Prompt = evt.Approval.Prompt
+				data.Secure = evt.Approval.Secure
+				data.Fields = evt.Approval.Fields
+				if evt.Approval.Kind != "" {
+					data.Kind = evt.Approval.Kind
+				}
+			}
+			msg, _ := NewMessage(TypeApproval, client.SessionID, data)
+			msg.ParentID = parentID
+			h.emit(client, client.SessionID, runID, msg)
+
 		case agent.ChatEventToolCall:
 			if currentRound == 0 {
 				currentRound = 1
@@ -627,6 +836,39 @@ func (h *AgentHandler) streamChatRun(ctx context.Context, client *Client, data C
 				Content: evt.Content,
 				Done:    false,
 			})
+			msg.ParentID = parentID
+			h.emit(client, client.SessionID, runID, msg)
+
+		case agent.ChatEventCompact:
+			data := CompactData{Phase: "progress", Message: evt.Content}
+			if evt.Compact != nil {
+				data = CompactData{
+					Phase:               evt.Compact.Phase,
+					Trigger:             evt.Compact.Trigger,
+					Message:             evt.Compact.Message,
+					BoundaryID:          evt.Compact.BoundaryID,
+					SummarySource:       evt.Compact.SummarySource,
+					Chunk:               evt.Compact.Chunk,
+					Chunks:              evt.Compact.Chunks,
+					PreTokenEstimate:    evt.Compact.PreTokenEstimate,
+					PostTokenEstimate:   evt.Compact.PostTokenEstimate,
+					DroppedMessages:     evt.Compact.DroppedMessages,
+					RetainedMessages:    evt.Compact.RetainedMessages,
+					RestoredAttachments: evt.Compact.RestoredAttachments,
+					Model:               evt.Compact.Model,
+					Error:               evt.Compact.Error,
+				}
+				if data.Message == "" {
+					data.Message = evt.Content
+				}
+				if data.Phase == "" {
+					data.Phase = evt.Name
+				}
+			}
+			if data.Phase == "" {
+				data.Phase = "progress"
+			}
+			msg, _ := NewMessage(TypeCompact, client.SessionID, data)
 			msg.ParentID = parentID
 			h.emit(client, client.SessionID, runID, msg)
 
@@ -1112,6 +1354,8 @@ func classifyToolVisibility(reg *tool.Registry, name string) string {
 
 	lower := strings.ToLower(name)
 	switch {
+	case lower == "request_credential":
+		return "hidden"
 	case lower == "skill_read",
 		lower == "remember",
 		lower == "recall",

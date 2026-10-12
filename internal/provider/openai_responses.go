@@ -51,6 +51,7 @@ type responsesRequest struct {
 }
 
 type responsesReasoning struct {
+	Effort  string `json:"effort,omitempty"`
 	Summary string `json:"summary,omitempty"`
 }
 
@@ -131,8 +132,10 @@ func buildResponsesRequest(cfg Config, messages []Message, opts CallOptions, str
 			req.ToolChoice = "auto"
 		}
 	}
-	if summary := strings.TrimSpace(cfg.LlmProvider.ReasoningSummary); summary != "" {
-		req.Reasoning = &responsesReasoning{Summary: summary}
+	effort := normalizedReasoningEffort(cfg.LlmProvider.ReasoningEffort)
+	summary := strings.TrimSpace(cfg.LlmProvider.ReasoningSummary)
+	if effort != "" || summary != "" {
+		req.Reasoning = &responsesReasoning{Effort: effort, Summary: summary}
 	}
 	return req, nil
 }

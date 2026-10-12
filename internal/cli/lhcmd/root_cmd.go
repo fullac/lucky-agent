@@ -231,6 +231,8 @@ func newRootCmd() *cobra.Command {
 	}
 	serveCmd.Flags().StringP("addr", "a", "", "监听地址，默认使用 config.json 中的 server.addr")
 
+	qrCmd := newQRCmd()
+
 	msgGatewayCmd := &cobra.Command{
 		Use:     "msg-gateway",
 		Aliases: []string{"gw", "gateway"},
@@ -390,7 +392,7 @@ func newRootCmd() *cobra.Command {
 	proactiveKernelsCmd.Flags().Int("limit", 20, "最多显示的 kernel 权重数量")
 	proactiveCmd.AddCommand(proactiveStatusCmd, proactiveSampleCmd, proactiveDryRunCmd, proactiveActCmd, proactiveFeedbackCmd, proactiveEventsCmd, proactiveExecutionsCmd, proactiveKernelsCmd)
 
-	rootCmd.AddCommand(initCmd, chatCmd, configCmd, credentialCmd, diagCmd, soulCmd, versionCmd, newUpdateCmd(), serveCmd, msgGatewayCmd, ragCmd, memoryCmd, proactiveCmd, newSessionCmd())
+	rootCmd.AddCommand(initCmd, chatCmd, configCmd, credentialCmd, diagCmd, soulCmd, versionCmd, newUpdateCmd(), serveCmd, qrCmd, msgGatewayCmd, ragCmd, memoryCmd, proactiveCmd, newSessionCmd())
 
 	return rootCmd
 }

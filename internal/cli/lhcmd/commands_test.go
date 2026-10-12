@@ -243,8 +243,8 @@ func TestShortCommandAliases(t *testing.T) {
 		{"kb", "s"},
 		{"mem", "td", "st"},
 		{"sess", "c"},
-		{"web", "s"},
 		{"api"},
+		{"qr"},
 		{"v"},
 	} {
 		cmd, _, err := root.Find(path)

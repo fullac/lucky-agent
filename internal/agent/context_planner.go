@@ -28,6 +28,12 @@ type contextBuildOptions struct {
 	HistoryRecent  int
 	HistoryMiddle  int
 	DisabledTools  []string
+	// ReadOnly skips memory hygiene, activation feedback, and the context
+	// cache. Inspection must not change durable state or poison a later turn.
+	ReadOnly bool
+	// OmitUserMessage keeps an empty inspect from appending the placeholder
+	// user turn that Normalize invents when no text was supplied.
+	OmitUserMessage bool
 }
 
 /*
@@ -67,6 +73,68 @@ type contextPlanner struct {
 /*
 newContextPlanner 创建一个新的上下文规划器。
 */
+
+// contextBudgetShare 是规划器实际使用的比例和地板。
+// 配置缺失时回落到改动前的硬编码值。
+type contextBudgetShare struct {
+	System, Memory, RAG, History, ToolResult                          float64
+	SystemFloor, MemoryFloor, RAGFloor, HistoryFloor, ToolResultFloor int
+}
+
+// computeContextBudget 按可用窗口和比例切出各类预算，并套用地板值。
+func computeContextBudget(maxTokens, reserved int, ratios contextBudgetShare) contextBudget {
+	available := maxTokens - reserved
+	if available <= 0 {
+		available = maxTokens / 2
+	}
+	if available <= 0 {
+		available = 2048
+	}
+	budget := contextBudget{
+		System:     int(float64(available) * ratios.System),
+		Memory:     int(float64(available) * ratios.Memory),
+		RAG:        int(float64(available) * ratios.RAG),
+		History:    int(float64(available) * ratios.History),
+		ToolResult: int(float64(available) * ratios.ToolResult),
+	}
+	if budget.System < ratios.SystemFloor {
+		budget.System = ratios.SystemFloor
+	}
+	if budget.Memory < ratios.MemoryFloor {
+		budget.Memory = ratios.MemoryFloor
+	}
+	if budget.RAG < ratios.RAGFloor {
+		budget.RAG = ratios.RAGFloor
+	}
+	if budget.History < ratios.HistoryFloor {
+		budget.History = ratios.HistoryFloor
+	}
+	if budget.ToolResult < ratios.ToolResultFloor {
+		budget.ToolResult = ratios.ToolResultFloor
+	}
+	return budget
+}
+
+func contextBudgetShareFor(a *Agent) contextBudgetShare {
+	fallback := contextBudgetShare{
+		System: 0.15, Memory: 0.10, RAG: 0.20, History: 0.25, ToolResult: 0.30,
+		SystemFloor: 256, MemoryFloor: 128, RAGFloor: 256, HistoryFloor: 256, ToolResultFloor: 256,
+	}
+	if a == nil || a.cfg == nil {
+		return fallback
+	}
+	cfg := a.cfg.Get().ContextBudget
+	if cfg.SystemRatio <= 0 && cfg.MemoryRatio <= 0 && cfg.RAGRatio <= 0 && cfg.HistoryRatio <= 0 && cfg.ToolResultRatio <= 0 {
+		return fallback
+	}
+	return contextBudgetShare{
+		System: cfg.SystemRatio, Memory: cfg.MemoryRatio, RAG: cfg.RAGRatio,
+		History: cfg.HistoryRatio, ToolResult: cfg.ToolResultRatio,
+		SystemFloor: cfg.SystemFloor, MemoryFloor: cfg.MemoryFloor, RAGFloor: cfg.RAGFloor,
+		HistoryFloor: cfg.HistoryFloor, ToolResultFloor: cfg.ToolResultFloor,
+	}
+}
+
 func newContextPlanner(a *Agent, options contextBuildOptions) *contextPlanner {
 	var turnProvider providerSnapshot
 	if a != nil {
@@ -84,37 +152,7 @@ func newContextPlannerWithProvider(a *Agent, options contextBuildOptions, turnPr
 	if a != nil && a.contextWin != nil {
 		cfg = a.contextWin.Config()
 	}
-	available := cfg.MaxTokens - cfg.ReservedTokens
-	if available <= 0 {
-		available = cfg.MaxTokens / 2
-	}
-	if available <= 0 {
-		available = 2048
-	}
-
-	budget := contextBudget{
-		System:     int(float64(available) * 0.15),
-		Memory:     int(float64(available) * 0.10),
-		RAG:        int(float64(available) * 0.20),
-		History:    int(float64(available) * 0.25),
-		ToolResult: int(float64(available) * 0.30),
-	}
-
-	if budget.System < 256 {
-		budget.System = 256
-	}
-	if budget.Memory < 128 {
-		budget.Memory = 128
-	}
-	if budget.RAG < 256 {
-		budget.RAG = 256
-	}
-	if budget.History < 256 {
-		budget.History = 256
-	}
-	if budget.ToolResult < 256 {
-		budget.ToolResult = 256
-	}
+	budget := computeContextBudget(cfg.MaxTokens, cfg.ReservedTokens, contextBudgetShareFor(a))
 
 	return &contextPlanner{
 		agent:        a,
@@ -138,14 +176,14 @@ BuildInput 根据结构化用户输入、会话和预算生成最终上下文消
 func (p *contextPlanner) BuildInput(ctx context.Context, sess *session.Session, input UserTurnInput) []provider.Message {
 	input = input.Normalize()
 	routingText := input.RoutingText
-	if p.agent != nil {
+	if p.agent != nil && !p.options.ReadOnly {
 		p.agent.runContextMemoryHygieneHook()
 	}
 	hasStructuredParts := len(input.Message.ContentParts) > 0
 	if hasStructuredParts && !p.supportsImageContentParts() {
 		input.Message = stripContentParts(input.Message)
 	}
-	allowCache := !hasStructuredParts
+	allowCache := !hasStructuredParts && !p.options.ReadOnly && !p.options.OmitUserMessage
 
 	if allowCache {
 		if key, ok := p.cacheKey(sess, routingText); ok && p.agent != nil && p.agent.contextCache != nil {
@@ -204,24 +242,34 @@ func (p *contextPlanner) BuildInput(ctx context.Context, sess *session.Session, 
 	}
 
 	if p.agent == nil {
-		return append(messages, p.buildAttachmentMessages(ctx, input)...)
+		messages = append(messages, p.buildAttachmentMessages(ctx, input)...)
+		if !p.options.OmitUserMessage {
+			messages = append(messages, input.Message)
+		}
+		return messages
 	}
 
 	// 拼接附件解析完成后的内容
 	attachmentMsgs := p.buildAttachmentMessages(ctx, input)
 	provisional := append(append([]provider.Message(nil), messages...), attachmentMsgs...)
-	provisional = append(provisional, provider.Message{
-		Role:    "user",
-		Content: routingText,
-	})
-	provisional = p.agent.fitContextWindow(provisional)
-	if n := len(provisional); n > 0 {
-		last := provisional[n-1]
-		if last.Role == "user" && strings.TrimSpace(last.Content) == routingText {
-			provisional = provisional[:n-1]
-		}
+	if !p.options.OmitUserMessage {
+		provisional = append(provisional, provider.Message{
+			Role:    "user",
+			Content: routingText,
+		})
 	}
-	messages = append(provisional, input.Message)
+	provisional = p.agent.fitContextWindow(provisional)
+	if !p.options.OmitUserMessage {
+		if n := len(provisional); n > 0 {
+			last := provisional[n-1]
+			if last.Role == "user" && strings.TrimSpace(last.Content) == routingText {
+				provisional = provisional[:n-1]
+			}
+		}
+		messages = append(provisional, input.Message)
+	} else {
+		messages = provisional
+	}
 
 	report := p.buildContextReport(messages)
 	if allowCache {
@@ -696,6 +744,9 @@ func (p *contextPlanner) buildRelevantMemoryMessage(query string, scope TurnScop
 }
 
 func (p *contextPlanner) recordMemoryContextFeedback(query string, results []memory.Entry) {
+	if p == nil || p.options.ReadOnly {
+		return
+	}
 	if p.agent == nil || p.agent.memory == nil || len(results) == 0 {
 		return
 	}

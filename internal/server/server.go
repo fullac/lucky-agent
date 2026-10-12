@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/server/health"
 	"github.com/yurika0211/luckyagent/internal/session"
+	taskstore "github.com/yurika0211/luckyagent/internal/task"
 	"github.com/yurika0211/luckyagent/internal/telemetry"
 	"github.com/yurika0211/luckyagent/internal/tool"
 	"github.com/yurika0211/luckyagent/internal/websocket"
@@ -35,19 +37,36 @@ import (
 var jsonAPI = jsoniter.ConfigCompatibleWithStandardLibrary
 
 const (
-	defaultSessionsLimit = 50
-	maxSessionsLimit     = 200
-	defaultHistoryLimit  = 60
-	maxHistoryLimit      = 500
+	defaultSessionsLimit  = 50
+	maxSessionsLimit      = 200
+	defaultHistoryLimit   = 60
+	maxHistoryLimit       = 500
+	defaultToolTraceLimit = 100
+	maxToolTraceLimit     = 200
 )
 
 // Server 是 LuckyAgent 的 HTTP API Server
 type Server struct {
-	mu      sync.RWMutex
-	server  *http.Server
-	agent   *agent.Agent
-	config  ServerConfig
-	running bool
+	mu sync.RWMutex
+	// configUpdateMu serializes configuration read-modify-write operations so
+	// two clients cannot overwrite each other's PATCH/PUT changes.
+	configUpdateMu sync.Mutex
+	server         *http.Server
+	agent          *agent.Agent
+	config         ServerConfig
+	running        bool
+	// gatewayCtx is owned by the API server, rather than an individual HTTP
+	// request.  Gateway adapters keep polling/listening after the start request
+	// has returned and are stopped when the server is stopped.
+	gatewayCtx    context.Context
+	gatewayCancel context.CancelFunc
+	// gatewayReleases holds process-wide channel leases acquired for API-
+	// started gateways. Telegram uses a lease because Telegram only permits
+	// one long-polling consumer for a bot token.
+	gatewayReleases map[string]func()
+	statsMu         sync.RWMutex
+	chatCancelMu    sync.Mutex
+	chatCancels     map[string]*chatCancellation
 
 	// 限流
 	rateLimiter *rateLimiter
@@ -70,6 +89,9 @@ type Server struct {
 	workflowEngine *workflow.WorkflowEngine
 	telemetryOn    bool
 	telemetryStop  func(context.Context) error
+
+	// QR pairing keys live only in this process. A restart drops them.
+	pairing *pairingStore
 }
 
 // ServerConfig API Server 配置
@@ -98,7 +120,6 @@ func DefaultServerConfig() ServerConfig {
 
 // ServerStats 服务器统计
 type ServerStats struct {
-	mu          sync.RWMutex
 	TotalReqs   int64
 	ChatReqs    int64
 	ErrorReqs   int64
@@ -106,15 +127,38 @@ type ServerStats struct {
 	LastReqTime time.Time
 }
 
+type chatCancellation struct {
+	cancel context.CancelFunc
+}
+
 // ChatRequest 聊天请求
 type ChatRequest struct {
-	Message     string               `json:"message"`
-	SessionID   string               `json:"session_id,omitempty"`
-	Stream      bool                 `json:"stream,omitempty"`
-	MaxIter     int                  `json:"max_iterations,omitempty"`
-	AutoApprove bool                 `json:"auto_approve,omitempty"`
-	Metadata    map[string]string    `json:"metadata,omitempty"`
-	Attachments []gateway.Attachment `json:"attachments,omitempty"`
+	Message        string               `json:"message"`
+	SessionID      string               `json:"session_id,omitempty"`
+	Stream         bool                 `json:"stream,omitempty"`
+	MaxIter        int                  `json:"max_iterations,omitempty"`
+	AutoApprove    bool                 `json:"auto_approve,omitempty"`
+	Metadata       map[string]string    `json:"metadata,omitempty"`
+	Attachments    []gateway.Attachment `json:"attachments,omitempty"`
+	autoApproveSet bool
+}
+
+// UnmarshalJSON keeps the legacy bool field while remembering whether the
+// caller explicitly supplied auto_approve. This lets the agent config remain
+// effective when the request omits the optional override.
+func (r *ChatRequest) UnmarshalJSON(data []byte) error {
+	type alias ChatRequest
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*r = ChatRequest(decoded)
+	_, r.autoApproveSet = fields["auto_approve"]
+	return nil
 }
 
 // ChatResponse 聊天响应
@@ -246,14 +290,51 @@ func New(a *agent.Agent, cfg ServerConfig) *Server {
 	wsHandler := websocket.NewAgentHandler(a)
 	wsHub := websocket.NewHub(wsHandler, websocket.DefaultHubConfig())
 	wsHandler.SetEventSink(wsHub.SendToSession)
+	if a != nil {
+		if store, ok := a.TaskStore().(*taskstore.FileStore); ok {
+			store.Observe(func(event taskstore.Event) {
+				broadcastTaskEvent(wsHub, event)
+			})
+		}
+		a.SetSessionEventSink(func(sessionID, content string) {
+			msg, err := websocket.NewMessage(websocket.TypeStreamEnd, sessionID, websocket.StreamEndData{
+				FullResponse: content,
+				Iterations:   1,
+			})
+			if err != nil {
+				return
+			}
+			wsHub.SendToSession(sessionID, msg)
+		})
+	}
 	wsHandler.Start()
 	go wsHub.Run()
 
 	// v0.22.0: 多 Agent 协作
 	collabRegistry := collab.NewRegistry()
 	delegateManager := collab.NewDelegateManager(collabRegistry, collab.TaskHandlerFunc(func(ctx context.Context, task *collab.SubTask) (string, error) {
-		// 默认处理器：调用 Agent Chat
-		return a.Chat(ctx, task.Input)
+		// Keep one durable transcript per delegated sub-agent. The execution
+		// session IDs are assigned by DelegateManager before the goroutine starts,
+		// so the task detail page can open the same conversation while it runs.
+		if a == nil {
+			return "", fmt.Errorf("agent runtime is not initialized")
+		}
+		sessionID := strings.TrimSpace(task.ExecutionSessionID)
+		if sessionID == "" {
+			return a.Chat(ctx, task.Input)
+		}
+		if _, ok := a.Sessions().Get(sessionID); !ok {
+			a.Sessions().Ensure(sessionID)
+		}
+		if sess, ok := a.Sessions().Get(sessionID); ok {
+			role := "subagent"
+			if strings.TrimSpace(task.AgentID) != "" {
+				role += ":" + strings.TrimSpace(task.AgentID)
+			}
+			profile := "You are a delegated collaboration sub-agent in LuckyAgent. Follow the assigned role, keep evidence for your result, and report blockers or unfinished work clearly."
+			sess.SetAgentProfile(role, profile)
+		}
+		return a.ChatWithSession(ctx, sessionID, task.Input)
 	}))
 	if a != nil && a.TaskStore() != nil {
 		delegateManager.SetTaskStore(a.TaskStore())
@@ -275,6 +356,8 @@ func New(a *agent.Agent, cfg ServerConfig) *Server {
 		stats: ServerStats{
 			StartTime: time.Now(),
 		},
+		chatCancels:     make(map[string]*chatCancellation),
+		gatewayReleases: make(map[string]func()),
 		metrics:         m,
 		healthCheck:     hc,
 		wsHub:           wsHub,
@@ -283,7 +366,50 @@ func New(a *agent.Agent, cfg ServerConfig) *Server {
 		workflowEngine:  workflowEngine,
 		telemetryOn:     telemetryOn,
 		telemetryStop:   telemetryStop,
+		pairing:         newPairingStore(),
 	}
+}
+
+func broadcastTaskEvent(hub *websocket.Hub, event taskstore.Event) {
+	if hub == nil || event.TaskID == "" {
+		return
+	}
+	sessionID := ""
+	description := ""
+	if event.Metadata != nil {
+		sessionID = strings.TrimSpace(event.Metadata["session_id"])
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(event.Metadata["owner_session_id"])
+		}
+		description = strings.TrimSpace(event.Metadata["description"])
+		if description == "" {
+			description = strings.TrimSpace(event.Metadata["title"])
+		}
+	}
+	msg, err := websocket.NewMessage(websocket.TypeTaskEvent, sessionID, websocket.TaskEventData{
+		Type:               string(event.Type),
+		TaskID:             event.TaskID,
+		ParentID:           event.ParentID,
+		ExecutionSessionID: event.ExecutionSessionID,
+		ParentSessionID:    event.ParentSessionID,
+		Role:               event.Role,
+		Status:             string(event.Status),
+		Mode:               string(event.Mode),
+		Message:            event.Message,
+		Progress:           event.Progress,
+		ChildID:            event.ChildID,
+		Error:              event.Error,
+		SessionID:          sessionID,
+		Description:        description,
+		Metadata:           event.Metadata,
+	})
+	if err != nil {
+		return
+	}
+	// Task progress is not bound to one chat socket. Every connected app
+	// should see it, then decide whether to notify.
+	msg.SessionID = ""
+	hub.Broadcast(msg)
 }
 
 func setupTelemetryFromEnv() (bool, func(context.Context) error) {
@@ -321,6 +447,10 @@ func (s *Server) Start() error {
 		s.mu.Unlock()
 		return fmt.Errorf("server already running")
 	}
+	// Gateway adapters are long-lived server resources. Never pass an HTTP
+	// request context to them: net/http cancels that context when the handler
+	// returns, which would stop a gateway immediately after a successful start.
+	s.gatewayCtx, s.gatewayCancel = context.WithCancel(context.Background())
 
 	mux := http.NewServeMux()
 
@@ -331,10 +461,14 @@ func (s *Server) Start() error {
 		{path: "/api/v1/health/detail", handler: s.handleHealthDetail},
 		{path: "/api/v1/metrics", handler: s.handleMetrics},
 		{path: "/api/v1/config/reload", handler: s.handleConfigReload},
+		{path: "/api/v1/config/schema", handler: s.handleConfigSchema},
 		{path: "/api/v1/config", handler: s.handleConfig},
 		{path: "/api/v1/models", handler: s.handleModels},
+		{path: "/api/v1/models/effort", handler: s.handleModelEffort},
 		{path: "/api/v1/models/switch", handler: s.handleModelSwitch},
 		{path: "/api/v1/models/profiles", handler: s.handleModelProfiles},
+		{path: "/api/v1/approvals", handler: s.handleApprovals},
+		{path: "/api/v1/approvals/resolve", handler: s.handleApprovals},
 		{path: "/api/v1/chat", handler: s.handleChat},
 		{path: "/api/v1/chat/sync", handler: s.handleChatSync},
 		{path: "/api/v1/sessions", handler: s.handleSessions},
@@ -390,6 +524,8 @@ func (s *Server) Start() error {
 		{path: "/api/v1/agents/task", handler: s.handleAgentsTask},
 		{path: "/api/v1/agents/tasks", handler: s.handleAgentsTasks},
 		{path: "/api/v1/agents/cancel", handler: s.handleAgentsCancel},
+		{path: "/api/v1/agents/blackboard", handler: s.handleAgentsBlackboard},
+		{path: "/api/v1/agents/messages", handler: s.handleAgentsMessages},
 		{path: "/api/v1/workflows", handler: s.handleWorkflows},
 		{path: "/api/v1/workflows/", handler: s.handleWorkflowByID},
 		{path: "/api/v1/workflow-instances", handler: s.handleWorkflowInstances},
@@ -417,6 +553,11 @@ func (s *Server) Start() error {
 
 	ln, err := net.Listen("tcp", s.config.Addr)
 	if err != nil {
+		if s.gatewayCancel != nil {
+			s.gatewayCancel()
+		}
+		s.gatewayCtx = nil
+		s.gatewayCancel = nil
 		s.mu.Unlock()
 		return fmt.Errorf("listen %s: %w", s.config.Addr, err)
 	}
@@ -478,10 +619,32 @@ func publicServerURL(addr string) string {
 // Stop 停止 API Server
 func (s *Server) Stop() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	running := s.running
+	httpServer := s.server
+	gatewayCancel := s.gatewayCancel
+	s.gatewayCancel = nil
+	s.gatewayCtx = nil
+	s.mu.Unlock()
 
-	if !s.running || s.server == nil {
-		return nil
+	if gatewayCancel != nil {
+		gatewayCancel()
+	}
+	var gatewayErr error
+	if s.agent != nil && s.agent.MsgGateway() != nil {
+		gatewayErr = s.agent.MsgGateway().StopAll()
+	}
+	s.releaseAllGatewayLeases()
+
+	// These components are started by New, so they must also be stopped when
+	// Stop is called before Start (or after Serve exits unexpectedly).
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
+	if s.wsHub != nil {
+		s.wsHub.Stop()
+	}
+	if !running || httpServer == nil {
+		return gatewayErr
 	}
 
 	logger.Info("api server stopping", "addr", s.config.Addr)
@@ -489,12 +652,7 @@ func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// v0.18.0: 停止 WebSocket Hub
-	if s.wsHub != nil {
-		s.wsHub.Stop()
-	}
-
-	if err := s.server.Shutdown(ctx); err != nil {
+	if err := httpServer.Shutdown(ctx); err != nil {
 		return fmt.Errorf("shutdown server: %w", err)
 	}
 	if s.telemetryStop != nil {
@@ -503,9 +661,11 @@ func (s *Server) Stop() error {
 		}
 	}
 
+	s.mu.Lock()
 	s.running = false
+	s.mu.Unlock()
 	logger.Info("api server stopped", "addr", s.config.Addr)
-	return nil
+	return gatewayErr
 }
 
 // IsRunning 返回是否运行中
@@ -517,8 +677,8 @@ func (s *Server) IsRunning() bool {
 
 // Stats 返回服务器统计
 func (s *Server) Stats() ServerStats {
-	s.stats.mu.RLock()
-	defer s.stats.mu.RUnlock()
+	s.statsMu.RLock()
+	defer s.statsMu.RUnlock()
 	return s.stats
 }
 
@@ -609,11 +769,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.stats.mu.Lock()
+	s.statsMu.Lock()
 	s.stats.ChatReqs++
 	s.stats.TotalReqs++
 	s.stats.LastReqTime = time.Now()
-	s.stats.mu.Unlock()
+	s.statsMu.Unlock()
 
 	// v0.17.0: 记录 metrics
 	s.metrics.RecordChatRequest()
@@ -639,17 +799,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if req.MaxIter > 0 {
 		loopCfg.MaxIterations = req.MaxIter
 	}
-	loopCfg.AutoApprove = req.AutoApprove
+	if req.autoApproveSet {
+		loopCfg.AutoApprove = req.AutoApprove
+	}
 	loopCfg.Source = "http"
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	parentCtx := r.Context()
 
 	// SSE 流式响应
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		// 不支持 SSE，降级为同步
-		s.doChatSync(w, r, req, loopCfg, ctx, start)
+		s.doChatSync(w, r, req, loopCfg, parentCtx, start)
 		return
 	}
 
@@ -668,6 +828,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			sessionID = sess.ID
 		}
 	}
+	ctx, cancel := s.registerChatCancellation(parentCtx, sessionID)
+	defer cancel()
 	turn := agent.MultimodalUserTurnInput(req.Message, req.Attachments)
 	events, err := s.agent.ChatWithSessionStreamInputWithLoopConfig(ctx, sessionID, turn, loopCfg)
 	if err != nil {
@@ -714,7 +876,7 @@ chatEvents:
 			}
 			event = next
 		}
-		data, _ := jsonAPI.Marshal(map[string]interface{}{
+		frame := map[string]interface{}{
 			"type":        chatEventTypeString(event.Type),
 			"content":     event.Content,
 			"session_id":  sessionID,
@@ -724,7 +886,11 @@ chatEvents:
 			"observation": event.Observation,
 			"approval":    event.Approval,
 			"error":       event.Err,
-		})
+		}
+		if event.Compact != nil {
+			frame["compact"] = event.Compact
+		}
+		data, _ := jsonAPI.Marshal(frame)
 
 		if err := writeFrame(fmt.Sprintf("data: %s\n\n", data)); err != nil {
 			return
@@ -750,11 +916,11 @@ func (s *Server) handleChatSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.stats.mu.Lock()
+	s.statsMu.Lock()
 	s.stats.ChatReqs++
 	s.stats.TotalReqs++
 	s.stats.LastReqTime = time.Now()
-	s.stats.mu.Unlock()
+	s.statsMu.Unlock()
 
 	// v0.17.0: 记录 metrics
 	s.metrics.RecordChatRequest()
@@ -773,10 +939,16 @@ func (s *Server) handleChatSync(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	loopCfg := agent.DefaultLoopConfig()
+	if s.agent != nil && s.agent.Config() != nil {
+		cfg := s.agent.Config().Get()
+		agent.ApplyAgentLoopConfig(&loopCfg, cfg.Agent)
+	}
 	if req.MaxIter > 0 {
 		loopCfg.MaxIterations = req.MaxIter
 	}
-	loopCfg.AutoApprove = req.AutoApprove
+	if req.autoApproveSet {
+		loopCfg.AutoApprove = req.AutoApprove
+	}
 	loopCfg.Source = "http"
 
 	ctx := r.Context()
@@ -837,8 +1009,13 @@ func (s *Server) doChatSync(w http.ResponseWriter, r *http.Request, req ChatRequ
 			})
 			return
 		case "stop":
+			if strings.TrimSpace(req.SessionID) == "" || !s.cancelChat(strings.TrimSpace(req.SessionID)) {
+				s.sendError(w, "no active chat for session", http.StatusNotFound, "provide the session_id of a running chat")
+				return
+			}
 			s.sendJSON(w, http.StatusOK, ChatResponse{
-				Response: "ℹ️ Stop command received. Task cancellation not yet implemented.",
+				Response:  "✅ Stop requested for the active chat.",
+				SessionID: strings.TrimSpace(req.SessionID),
 			})
 			return
 		case "restart":
@@ -879,6 +1056,8 @@ func (s *Server) doChatSync(w http.ResponseWriter, r *http.Request, req ChatRequ
 			sess = s
 		}
 	}
+	ctx, cancel := s.registerChatCancellation(ctx, sessionID)
+	defer cancel()
 
 	// 使用 RunLoopWithSession 确保消息被保存；无法创建/获取会话时降级为无会话 RunLoop
 	var (
@@ -892,9 +1071,9 @@ func (s *Server) doChatSync(w http.ResponseWriter, r *http.Request, req ChatRequ
 		result, err = s.agent.RunLoopWithSessionInput(ctx, nil, turn, loopCfg)
 	}
 	if err != nil {
-		s.stats.mu.Lock()
+		s.statsMu.Lock()
 		s.stats.ErrorReqs++
-		s.stats.mu.Unlock()
+		s.statsMu.Unlock()
 		s.sendError(w, "chat failed", http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -919,6 +1098,44 @@ func (s *Server) doChatSync(w http.ResponseWriter, r *http.Request, req ChatRequ
 	}
 
 	s.sendJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) registerChatCancellation(parent context.Context, sessionID string) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	if strings.TrimSpace(sessionID) == "" {
+		return ctx, cancel
+	}
+	entry := &chatCancellation{cancel: cancel}
+	s.chatCancelMu.Lock()
+	if s.chatCancels == nil {
+		s.chatCancels = make(map[string]*chatCancellation)
+	}
+	previous := s.chatCancels[sessionID]
+	s.chatCancels[sessionID] = entry
+	s.chatCancelMu.Unlock()
+	if previous != nil {
+		previous.cancel()
+	}
+
+	return ctx, func() {
+		cancel()
+		s.chatCancelMu.Lock()
+		if s.chatCancels[sessionID] == entry {
+			delete(s.chatCancels, sessionID)
+		}
+		s.chatCancelMu.Unlock()
+	}
+}
+
+func (s *Server) cancelChat(sessionID string) bool {
+	s.chatCancelMu.Lock()
+	entry := s.chatCancels[sessionID]
+	s.chatCancelMu.Unlock()
+	if entry == nil {
+		return false
+	}
+	entry.cancel()
+	return true
 }
 
 func boundedQueryInt(r *http.Request, name string, fallback, minValue, maxValue int) int {
@@ -962,7 +1179,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		type sessionInfo struct {
 			ID           string `json:"id"`
 			Title        string `json:"title"`
+			AgentRole    string `json:"agent_role,omitempty"`
+			Pinned       bool   `json:"pinned,omitempty"`
+			Project      string `json:"project,omitempty"`
 			MessageCount int    `json:"message_count"`
+			ByteSize     int64  `json:"byte_size,omitempty"`
+			Format       string `json:"format,omitempty"`
 			CreatedAt    string `json:"created_at"`
 			UpdatedAt    string `json:"updated_at"`
 		}
@@ -976,7 +1198,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			infos = append(infos, sessionInfo{
 				ID:           sess.ID,
 				Title:        sess.Title,
+				AgentRole:    sess.AgentRole,
+				Pinned:       sess.Pinned,
+				Project:      sess.Project,
 				MessageCount: sess.MessageCount,
+				ByteSize:     sess.ByteSize,
+				Format:       sess.Format,
 				CreatedAt:    sess.CreatedAt.Format(time.RFC3339),
 				UpdatedAt:    sess.UpdatedAt.Format(time.RFC3339),
 			})
@@ -1009,10 +1236,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			sess.SetTitle(body.Title)
 			_ = sess.Save()
 		}
+		role, _ := sess.AgentProfile()
 
 		s.sendJSON(w, http.StatusCreated, map[string]interface{}{
 			"id":            sess.ID,
 			"title":         sess.Title,
+			"agent_role":    role,
 			"message_count": sess.MessageCount(),
 			"created_at":    sess.CreatedAt.Format(time.RFC3339),
 			"updated_at":    sess.UpdatedAt.Format(time.RFC3339),
@@ -1047,21 +1276,75 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		s.handleSessionSubresource(w, r, sess, parts[1:])
 		return
 	}
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodPatch:
+		s.patchSession(w, r, sess)
+		return
+	case http.MethodDelete:
+		if err := s.agent.Sessions().Delete(sess.ID); err != nil {
+			s.sendError(w, "delete session failed", http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.agent.ForgetShortTermSession(sess.ID)
+		s.sendJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
+		return
+	case http.MethodGet:
+	default:
 		s.sendError(w, "method not allowed", http.StatusMethodNotAllowed, "")
 		return
 	}
 
-	messages := s.historyMessages(sess.GetMessages())
-	total := len(messages)
+	hasLimit := r.URL.Query().Has("limit")
+	var rawMessages []provider.Message
+	var total int
+	var hasMore bool
+	var limit, offset int
+	if hasLimit {
+		limit = boundedQueryInt(r, "limit", defaultHistoryLimit, 1, maxHistoryLimit)
+		offset = boundedQueryInt(r, "offset", 0, 0, 1_000_000)
+		var err error
+		rawMessages, total, hasMore, err = sess.GetMessagesPage(limit, offset)
+		if err != nil {
+			s.sendError(w, "load session history failed", http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		rawMessages = sess.GetMessages()
+		total = len(rawMessages)
+	}
+	includeFull := false
+	if v := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("include"))); v == "full" || strings.Contains(v, "full") {
+		includeFull = true
+	}
+	if v := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("full"))); v == "1" || v == "true" || v == "yes" {
+		includeFull = true
+	}
+	previewChars := 4000
+	if s.agent != nil && s.agent.Config() != nil {
+		if n := s.agent.Config().Get().Context.HistoryPreviewChars; n > 0 {
+			previewChars = n
+		}
+	}
+	messages := s.historyMessagesWithOptions(rawMessages, includeFull, previewChars)
 
+	pinned, project := sess.Organization()
+	role, systemPrompt := sess.AgentProfile()
 	payload := map[string]interface{}{
-		"id":            sess.ID,
-		"title":         sess.Title,
-		"message_count": total,
-		"created_at":    sess.CreatedAt.Format(time.RFC3339),
-		"updated_at":    sess.UpdatedAt.Format(time.RFC3339),
-		"messages":      messages,
+		"id":                sess.ID,
+		"title":             sess.Title,
+		"agent_role":        role,
+		"pinned":            pinned,
+		"project":           project,
+		"message_count":     total,
+		"format":            sess.Format(),
+		"byte_size":         sess.ByteSize(),
+		"created_at":        sess.CreatedAt.Format(time.RFC3339),
+		"updated_at":        sess.UpdatedAt.Format(time.RFC3339),
+		"messages":          messages,
+		"content_truncated": !includeFull,
+	}
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("profile")), "1") || strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("profile")), "true") {
+		payload["agent_system_prompt"] = systemPrompt
 	}
 
 	// Without a limit the whole history is returned, as before. With one, page
@@ -1069,27 +1352,59 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	// the end, so a client walks into older history by growing the offset.
 	// Long sessions run to thousands of messages and megabytes of JSON, which
 	// no interactive client wants in a single response.
-	if r.URL.Query().Has("limit") {
-		limit := boundedQueryInt(r, "limit", defaultHistoryLimit, 1, maxHistoryLimit)
-		offset := boundedQueryInt(r, "offset", 0, 0, 1_000_000)
-
-		end := total - offset
-		if end < 0 {
-			end = 0
-		}
-		start := end - limit
-		if start < 0 {
-			start = 0
-		}
-
-		payload["messages"] = messages[start:end]
+	if hasLimit {
 		payload["limit"] = limit
 		payload["offset"] = offset
-		payload["returned"] = end - start
-		payload["has_more"] = start > 0
+		payload["returned"] = len(messages)
+		payload["has_more"] = hasMore
+		payload["messages"] = messages
 	}
 
 	s.sendJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) patchSession(w http.ResponseWriter, r *http.Request, sess *session.Session) {
+	var body struct {
+		Title   *string `json:"title"`
+		Pinned  *bool   `json:"pinned"`
+		Project *string `json:"project"`
+	}
+	if err := jsonAPI.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.sendError(w, "invalid request body", http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.Title == nil && body.Pinned == nil && body.Project == nil {
+		s.sendError(w, "no session fields to update", http.StatusBadRequest, "")
+		return
+	}
+	if body.Title != nil {
+		title := strings.TrimSpace(*body.Title)
+		if title == "" {
+			s.sendError(w, "title is required", http.StatusBadRequest, "")
+			return
+		}
+		sess.SetTitle(title)
+	}
+	if body.Pinned != nil {
+		sess.SetPinned(*body.Pinned)
+	}
+	if body.Project != nil {
+		sess.SetProject(*body.Project)
+	}
+	if err := sess.SaveMetadata(); err != nil {
+		s.sendError(w, "save session failed", http.StatusInternalServerError, err.Error())
+		return
+	}
+	pinned, project := sess.Organization()
+	s.sendJSON(w, http.StatusOK, map[string]any{
+		"id":            sess.ID,
+		"title":         sess.Title,
+		"pinned":        pinned,
+		"project":       project,
+		"message_count": sess.MessageCount(),
+		"created_at":    sess.CreatedAt.Format(time.RFC3339),
+		"updated_at":    sess.UpdatedAt.Format(time.RFC3339),
+	})
 }
 
 func (s *Server) handleSessionSubresource(w http.ResponseWriter, r *http.Request, sess *session.Session, parts []string) {
@@ -1195,6 +1510,7 @@ func compactSessionAPIResponse(result *agent.CompactSessionResult) map[string]in
 		"summary_source":       result.SummarySource,
 		"dry_run":              result.DryRun,
 		"backup":               result.Backup,
+		"display":              agent.CompactDisplay(result),
 	}
 }
 
@@ -1426,6 +1742,7 @@ func (s *Server) handleSoul(w http.ResponseWriter, r *http.Request) {
 
 	soul := s.agent.Soul()
 	s.sendJSON(w, http.StatusOK, map[string]interface{}{
+		"name":          soul.DisplayName(),
 		"system_prompt": soul.SystemPrompt(),
 	})
 }
@@ -1479,13 +1796,19 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"endpoints": []string{
 			"POST /api/v1/chat       — 流式聊天 (SSE)",
 			"POST /api/v1/chat/sync  — 同步聊天",
-			"POST /api/v1/config/reload — 重载后续请求的配置",
-			"GET|PUT /api/v1/config — 读取或更新脱敏配置",
-			"GET /api/v1/models — 按类型或 provider 列出模型",
+			"GET|PUT|PATCH /api/v1/config — 读取或更新脱敏配置",
+			"GET /api/v1/config/schema — 配置字段元数据",
+			"POST /api/v1/config/reload — 从磁盘重载配置",
+			"GET /api/v1/models — 列出模型。refresh=1 用当前 chat key 查询供应商",
+			"GET|PUT /api/v1/models/effort — 读取或设置模型思维强度",
 			"POST /api/v1/models/switch — 切换并保存指定类型模型",
 			"GET  /api/v1/ws         — WebSocket 实时通信",
 			"GET  /api/v1/ws/stats   — WebSocket 统计",
 			"GET  /api/v1/sessions   — 会话列表",
+			"GET  /api/v1/gateways   — 消息网关状态",
+			"POST /api/v1/gateways/{name}/start|stop — 启停消息网关",
+			"GET  /api/v1/gateways/{name}/status — 单个网关状态",
+			"GET|POST /api/v1/approvals — 外部编码代理审批列表与回执",
 			"GET  /api/v1/memory     — 记忆统计",
 			"POST /api/v1/memory     — 保存记忆",
 			"GET  /api/v1/memory/recall?q= — 搜索记忆",
@@ -1564,26 +1887,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// 无配置 API Key 则仅允许本地访问
-		if len(s.config.APIKeys) == 0 {
-			ip := r.RemoteAddr
-			if idx := strings.LastIndex(ip, ":"); idx != -1 {
-				ip = ip[:idx]
-			}
-			if ip != "127.0.0.1" && ip != "::1" && ip != "localhost" {
-				logger.Warn("auth rejected non-local request without api keys",
-					"path", r.URL.Path,
-					"method", r.Method,
-					"remote_addr", r.RemoteAddr,
-				)
-				s.sendError(w, "api key required (no keys configured, localhost only)", http.StatusUnauthorized,
-					"configure api_keys in server config or access from localhost")
-				return
-			}
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		// 从 Header 获取 API Key（不再支持 query string，防止日志泄露）
 		apiKey := r.Header.Get("X-API-Key")
 		if apiKey == "" {
@@ -1591,6 +1894,27 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			if strings.HasPrefix(apiKey, "Bearer ") {
 				apiKey = strings.TrimPrefix(apiKey, "Bearer ")
 			}
+		}
+
+		// 无配置 API Key 则仅允许本地访问。扫码签发的临时 key 仍可从局域网进入。
+		if len(s.config.APIKeys) == 0 {
+			if s.pairingKeyValid(apiKey) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ip := requestRemoteIP(r.RemoteAddr)
+			if ip != "127.0.0.1" && ip != "::1" && ip != "localhost" {
+				logger.Warn("auth rejected non-local request without api keys",
+					"path", r.URL.Path,
+					"method", r.Method,
+					"remote_addr", r.RemoteAddr,
+				)
+				s.sendError(w, "api key required (no keys configured, localhost only)", http.StatusUnauthorized,
+					"configure api_keys in server config, scan lh qr, or access from localhost")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
 		}
 
 		if apiKey == "" {
@@ -1604,7 +1928,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		// 常量时间比较，防止 timing attack
-		valid := false
+		valid := s.pairingKeyValid(apiKey)
 		for _, k := range s.config.APIKeys {
 			if subtle.ConstantTimeCompare([]byte(k), []byte(apiKey)) == 1 {
 				valid = true
@@ -1629,7 +1953,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 // rateLimitMiddleware 限流中间件
 func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
+		ip := requestRemoteIP(r.RemoteAddr)
 		if !s.rateLimiter.Allow(ip) {
 			logger.Warn("rate limit exceeded",
 				"path", r.URL.Path,
@@ -1643,6 +1967,16 @@ func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requestRemoteIP strips the transport port from RemoteAddr and handles both
+// bracketed and unbracketed IPv6 addresses.
+func requestRemoteIP(remoteAddr string) string {
+	remoteAddr = strings.TrimSpace(remoteAddr)
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return strings.Trim(host, "[]")
+	}
+	return strings.Trim(remoteAddr, "[]")
 }
 
 // loggingMiddleware 日志中间件
@@ -1693,9 +2027,9 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				s.stats.mu.Lock()
+				s.statsMu.Lock()
 				s.stats.ErrorReqs++
-				s.stats.mu.Unlock()
+				s.statsMu.Unlock()
 				// 内部错误详情只写日志，不返回给客户端
 				logger.Error("panic recovered",
 					"path", r.URL.Path,
@@ -1770,6 +2104,8 @@ func chatEventTypeString(t agent.ChatEventType) string {
 		return "observation"
 	case agent.ChatEventApprovalRequired:
 		return "approval_required"
+	case agent.ChatEventCompact:
+		return "compact"
 	default:
 		return "unknown"
 	}
@@ -1791,9 +2127,11 @@ func permString(p tool.PermissionLevel) string {
 // ===== 限流器 =====
 
 type rateLimiter struct {
-	mu      sync.RWMutex
-	limit   int
-	clients map[string]*clientBucket
+	mu       sync.RWMutex
+	limit    int
+	clients  map[string]*clientBucket
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 type clientBucket struct {
@@ -1805,18 +2143,31 @@ func newRateLimiter(limit int) *rateLimiter {
 	rl := &rateLimiter{
 		limit:   limit,
 		clients: make(map[string]*clientBucket),
+		stopCh:  make(chan struct{}),
 	}
 
 	// 后台清理过期桶
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			rl.cleanup()
+		for {
+			select {
+			case <-ticker.C:
+				rl.cleanup()
+			case <-rl.stopCh:
+				return
+			}
 		}
 	}()
 
 	return rl
+}
+
+func (rl *rateLimiter) Stop() {
+	if rl == nil || rl.stopCh == nil {
+		return
+	}
+	rl.stopOnce.Do(func() { close(rl.stopCh) })
 }
 
 func (rl *rateLimiter) Allow(ip string) bool {

@@ -121,6 +121,7 @@ type LoopConfig struct {
 	DisabledTools          []string            // 本轮对模型隐藏的工具名
 	Ephemeral              bool                // 临时后台执行，不写会话外持久化上下文
 	Source                 string              // 调用入口，例如 cli、tui、http、telegram
+	SessionID              string              // 当前回合的会话作用域（临时工具使用）
 	Sandbox                *sandbox.Snapshot   // task-scoped execution boundary
 }
 
@@ -342,9 +343,18 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		defer snapshot.Close()
 	}
 	ctx = sandbox.WithSnapshot(ctx, snapshot)
+	if loopCfg.emit != nil {
+		emit := loopCfg.emit
+		ctx = withHITLEmitter(ctx, func(event ChatEvent) {
+			emit(ctx, event)
+		})
+	}
 	a.applySandboxToolPolicy(&loopCfg, snapshot)
 	if strings.TrimSpace(loopCfg.Source) == "" {
 		loopCfg.Source = "cli"
+	}
+	if sess != nil {
+		loopCfg.SessionID = strings.TrimSpace(sess.ID)
 	}
 	if loopCfg.Execution != nil {
 		a.applyIntentToolGating(&loopCfg, routingText)
@@ -469,6 +479,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 			if saveErr := sess.Save(); saveErr != nil {
 				logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
 			}
+			a.maybeRollSession(sess)
 		}
 	}
 	loopState := newLoopRuntimeState()
@@ -478,7 +489,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	memoryGate := a.buildMemoryToolGate(routingText, turnInput.Scope, loopCfg.DisabledTools)
 
 	// 构建初始消息
-	a.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider)
+	a.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider, compactProgressEmitter(loopCfg))
 	buildOpts := defaultContextBuildOptions()
 	buildOpts.DisabledTools = append([]string(nil), loopCfg.DisabledTools...)
 	messages := a.buildContextMessagesForInputWithProvider(ctx, sess, turnInput, buildOpts, turnProvider)
@@ -496,6 +507,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	)
 
 	for i := 0; i < loopCfg.MaxIterations; i++ {
+		callOpts = a.appendEphemeralToolSchemas(callOpts, loopCfg.SessionID)
 		result.Iterations = i + 1
 		result.State = StateReason
 		logger.Debug("agent loop iteration started",
@@ -589,6 +601,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 			if saveErr := sess.Save(); saveErr != nil {
 				logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
 			}
+			a.maybeRollSession(sess)
 		}
 		return result, fmt.Errorf("memory gate did not produce final synthesis")
 	}
@@ -602,6 +615,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		if saveErr := sess.Save(); saveErr != nil {
 			logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
 		}
+		a.maybeRollSession(sess)
 	}
 
 	return result, fmt.Errorf("max iterations (%d) reached", loopCfg.MaxIterations)

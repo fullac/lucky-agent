@@ -32,7 +32,7 @@ out, err := agent.Chat(ctx, "hello")
 |------|-----|
 | Lifecycle | `New`, `Close`, `HomeDir` |
 | Chat | `Chat`, `ChatSession`, `ChatStream`, `ChatSessionStream`, `ChatWithInput`, `ChatSessionWithInput`, `ChatStreamWithInput`, `ChatSessionStreamWithInput` |
-| Sessions | `NewSession`, `NewSessionWithTitle`, `ListSessions`, `GetSession`, `RenameSession`, `DeleteSession`, `CompactSession` |
+| Sessions | `NewSession`, `NewSessionWithTitle`, `ListSessions`, `GetSession`, `RenameSession`, `SetSessionWorkingDir`, `SessionWorkingDir`, `DeleteSession`, `CompactSession` |
 | Memory | `Remember`, `RememberLongTerm`, `Recall` |
 | RAG | `IndexText`, `IndexFile`, `IndexDirectory`, `SearchRAG`, `RemoveDocument`, `ListDocuments`, `RAGStats` |
 | Tools | `RegisterTool`, `UnregisterTool`, `EnableTool`, `DisableTool`, `ListTools` |
@@ -43,10 +43,33 @@ Streaming `Event` values may carry optional `Approval`, `Observation`, and `Usag
 
 ### Config knobs
 
+- `Provider`, `Model`, `APIKey`, `APIBase`, `Protocol` — select the model service
+- `MaxTokens` — override the per-response generation cap when greater than zero
+- `MaxContextTokens` — override the assembled context window when greater than zero
+- `Temperature` — override sampling temperature when greater than zero
 - `SystemPrompt` — write an embed-local SOUL.md
 - `AutoApprove` — auto-approve gated tools inside the host process
 - `DisableTools` — disable builtins after bootstrap (e.g. `terminal`)
 - `LoadExisting` — load previous HomeDir settings, then apply overrides
+
+### Set a session working directory
+
+Shell-aware tools use the session working directory. Embedders that provide a
+repository or project workspace can set it before the first turn:
+
+```go
+sessionID, err := agent.NewSessionWithTitle("repository review")
+if err != nil {
+	return err
+}
+if err := agent.SetSessionWorkingDir(sessionID, "/srv/repositories/example"); err != nil {
+	return err
+}
+reply, err := agent.ChatSession(ctx, sessionID, "审查当前仓库")
+```
+
+The directory must exist. `GetSession` exposes the value as `WorkingDir`, and
+`SessionWorkingDir` reads it without loading the full transcript.
 
 ### Register a host tool
 

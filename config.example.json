@@ -18,6 +18,7 @@
         "api_base": "https://api.openai.com/v1",
         "protocol": "chat_completions",
         "reasoning_summary": "detailed",
+        "reasoning_effort": "auto",
         "extra_headers": {
           "User-Agent": "luckyagent"
         }
@@ -191,6 +192,19 @@
     "tokens_per_minute": 100000,
     "burst_size": 10
   },
+  "context_budget": {
+    "system_ratio": 0.15,
+    "memory_ratio": 0.10,
+    "rag_ratio": 0.20,
+    "history_ratio": 0.25,
+    "tool_result_ratio": 0.30,
+    "reserved_ratio": 0.25,
+    "system_floor": 256,
+    "memory_floor": 128,
+    "rag_floor": 256,
+    "history_floor": 256,
+    "tool_result_floor": 256
+  },
   "context": {
     "max_history_turns": 50,
     "max_context_tokens": 8000,
@@ -202,6 +216,14 @@
     "auto_compact_cooldown_turns": 8,
     "auto_compact_retain_turns": 6,
     "auto_compact_reserved_summary_tokens": 1200,
+    "compact_model": "",
+    "compact_max_chunk_tokens": 12000,
+    "compact_max_parallel": 4,
+    "session_auto_roll": true,
+    "session_max_messages": 8000,
+    "session_max_bytes": 67108864,
+    "session_roll_retain_turns": 12,
+    "history_preview_chars": 4000,
     "memory_hygiene_before_context": false,
     "memory_hygiene_action": "quarantine",
     "memory_hygiene_min_severity": "high",

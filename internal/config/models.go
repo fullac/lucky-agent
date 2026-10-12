@@ -16,6 +16,7 @@ const (
 	ModelKindImage         ModelKind = "image"
 	ModelKindTTS           ModelKind = "tts"
 	ModelKindReranker      ModelKind = "reranker"
+	ModelKindCompact       ModelKind = "compact"
 )
 
 var modelKinds = []ModelKind{
@@ -26,6 +27,44 @@ var modelKinds = []ModelKind{
 	ModelKindImage,
 	ModelKindTTS,
 	ModelKindReranker,
+	ModelKindCompact,
+}
+
+var reasoningEffortValues = []string{"auto", "none", "minimal", "low", "medium", "high", "xhigh"}
+
+// NormalizeReasoningEffort returns the canonical effort value. Empty means
+// the provider default (auto); callers should omit auto from upstream JSON.
+func NormalizeReasoningEffort(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "auto"
+	}
+	for _, candidate := range reasoningEffortValues {
+		if value == candidate {
+			return value
+		}
+	}
+	return ""
+}
+
+func ReasoningEffortValues() []string {
+	return append([]string(nil), reasoningEffortValues...)
+}
+
+// SupportsReasoningEffort reports whether this endpoint uses the OpenAI
+// request shape that carries reasoning effort. Other providers are not
+// promised support by the generic model settings API.
+func SupportsReasoningEffort(provider, protocol string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider != "openai" && provider != "openai-compatible" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "", "chat", "chat-completion", "chat-completions", "chat_completion", "chat_completions", "response", "responses":
+		return true
+	default:
+		return false
+	}
 }
 
 // ModelKinds returns the stable, supported model purposes.
@@ -41,7 +80,7 @@ func ParseModelKind(value string) (ModelKind, error) {
 			return kind, nil
 		}
 	}
-	return "", fmt.Errorf("unknown model kind %q; supported kinds: chat, vision, embedding, transcription, image, tts, reranker", value)
+	return "", fmt.Errorf("unknown model kind %q; supported kinds: chat, vision, embedding, transcription, image, tts, reranker, compact", value)
 }
 
 // ModelEndpointConfig stores credentials and transport settings independently
@@ -54,6 +93,7 @@ type ModelEndpointConfig struct {
 	APIBase          string            `json:"api_base,omitempty"`
 	Protocol         string            `json:"protocol,omitempty"`
 	ReasoningSummary string            `json:"reasoning_summary,omitempty"`
+	ReasoningEffort  string            `json:"reasoning_effort,omitempty"`
 	ExtraHeaders     map[string]string `json:"extra_headers,omitempty"`
 	TimeoutSeconds   int               `json:"timeout_seconds,omitempty"`
 }
@@ -75,6 +115,7 @@ type ModelSelection struct {
 	APIBase          string
 	Protocol         string
 	ReasoningSummary string
+	ReasoningEffort  string
 	ExtraHeaders     map[string]string
 	TimeoutSeconds   int
 }
@@ -101,7 +142,7 @@ func normalizeModels(cfg *Config) {
 		}
 		if _, exists := cfg.Models.Endpoints[kind]; !exists {
 			endpoint := legacyEndpoint(cfg, kind)
-			if kind != ModelKindChat && kind != ModelKindReranker {
+			if kind != ModelKindChat && kind != ModelKindReranker && kind != ModelKindCompact {
 				chat := cfg.Models.Endpoints[ModelKindChat]
 				if endpoint.APIBase == "" {
 					endpoint.APIBase = chat.APIBase
@@ -115,6 +156,13 @@ func normalizeModels(cfg *Config) {
 				if endpoint.Provider == "openai-media" {
 					endpoint.Provider = "openai"
 				}
+			}
+			cfg.Models.Endpoints[kind] = endpoint
+		}
+		endpoint := cfg.Models.Endpoints[kind]
+		if kind == ModelKindChat {
+			if endpoint.ReasoningEffort == "" {
+				endpoint.ReasoningEffort = "auto"
 			}
 			cfg.Models.Endpoints[kind] = endpoint
 		}
@@ -156,6 +204,9 @@ func mergeModelEndpoint(base, override ModelEndpointConfig) ModelEndpointConfig 
 	if value := strings.TrimSpace(override.ReasoningSummary); value != "" {
 		result.ReasoningSummary = value
 	}
+	if value := strings.TrimSpace(override.ReasoningEffort); value != "" {
+		result.ReasoningEffort = value
+	}
 	if override.ExtraHeaders != nil {
 		result.ExtraHeaders = cloneStringMap(override.ExtraHeaders)
 	}
@@ -172,6 +223,7 @@ func legacyModelSelection(cfg *Config, kind ModelKind) ModelSelection {
 	selection.APIBase = endpoint.APIBase
 	selection.Protocol = endpoint.Protocol
 	selection.ReasoningSummary = endpoint.ReasoningSummary
+	selection.ReasoningEffort = endpoint.ReasoningEffort
 	selection.ExtraHeaders = cloneStringMap(endpoint.ExtraHeaders)
 	selection.TimeoutSeconds = endpoint.TimeoutSeconds
 	switch kind {
@@ -187,6 +239,8 @@ func legacyModelSelection(cfg *Config, kind ModelKind) ModelSelection {
 		selection.ID = cfg.ImageGeneration.Model
 	case ModelKindTTS:
 		selection.ID = cfg.TTS.Model
+	case ModelKindCompact:
+		selection.ID = cfg.Context.CompactModel
 	}
 	return selection
 }
@@ -200,6 +254,7 @@ func legacyEndpoint(cfg *Config, kind ModelKind) ModelEndpointConfig {
 			APIBase:          cfg.LlmProvider.BaseURL,
 			Protocol:         cfg.LlmProvider.Protocol,
 			ReasoningSummary: cfg.LlmProvider.ReasoningSummary,
+			ReasoningEffort:  cfg.LlmProvider.ReasoningEffort,
 			ExtraHeaders:     cloneStringMap(cfg.ExtraHeaders),
 		}
 	case ModelKindEmbedding:
@@ -210,6 +265,13 @@ func legacyEndpoint(cfg *Config, kind ModelKind) ModelEndpointConfig {
 		return ModelEndpointConfig{Provider: cfg.ImageGeneration.Provider, APIKey: cfg.ImageGeneration.APIKey, APIBase: cfg.ImageGeneration.APIBase}
 	case ModelKindTTS:
 		return ModelEndpointConfig{Provider: cfg.TTS.Provider, APIKey: cfg.TTS.APIKey, APIBase: cfg.TTS.APIBase}
+	case ModelKindCompact:
+		return ModelEndpointConfig{
+			Provider: cfg.LlmProvider.Name,
+			APIKey:   cfg.LlmProvider.APIKey,
+			APIBase:  cfg.LlmProvider.BaseURL,
+			Protocol: cfg.LlmProvider.Protocol,
+		}
 	default:
 		return ModelEndpointConfig{}
 	}
@@ -227,6 +289,7 @@ func syncLegacyModels(cfg *Config) {
 			cfg.LlmProvider.BaseURL = endpoint.APIBase
 			cfg.LlmProvider.Protocol = endpoint.Protocol
 			cfg.LlmProvider.ReasoningSummary = endpoint.ReasoningSummary
+			cfg.LlmProvider.ReasoningEffort = endpoint.ReasoningEffort
 			cfg.Provider = cfg.LlmProvider.Name
 			cfg.APIKey = cfg.LlmProvider.APIKey
 			cfg.APIBase = cfg.LlmProvider.BaseURL
@@ -253,6 +316,8 @@ func syncLegacyModels(cfg *Config) {
 			cfg.TTS.Provider = endpoint.Provider
 			cfg.TTS.APIKey = endpoint.APIKey
 			cfg.TTS.APIBase = endpoint.APIBase
+		case ModelKindCompact:
+			cfg.Context.CompactModel = id
 		}
 	}
 }
@@ -277,6 +342,7 @@ func (c *Config) ModelSelection(kind ModelKind) (ModelSelection, bool) {
 		selection.APIBase = endpoint.APIBase
 		selection.Protocol = endpoint.Protocol
 		selection.ReasoningSummary = endpoint.ReasoningSummary
+		selection.ReasoningEffort = endpoint.ReasoningEffort
 		selection.ExtraHeaders = cloneStringMap(endpoint.ExtraHeaders)
 		selection.TimeoutSeconds = endpoint.TimeoutSeconds
 	}
@@ -303,7 +369,13 @@ func (c *Config) SetModelSelection(kind ModelKind, modelID string, endpoint Mode
 		c.Models.Endpoints = make(map[ModelKind]ModelEndpointConfig)
 	}
 	c.Models.Active[kind] = modelID
-	c.Models.Endpoints[kind] = mergeModelEndpoint(c.ModelEndpoint(kind), endpoint)
+	merged := mergeModelEndpoint(c.ModelEndpoint(kind), endpoint)
+	if kind == ModelKindChat && !SupportsReasoningEffort(merged.Provider, merged.Protocol) {
+		// Do not carry an OpenAI-only effort setting into a provider that cannot
+		// consume it after a model/provider switch.
+		merged.ReasoningEffort = "auto"
+	}
+	c.Models.Endpoints[kind] = merged
 	syncLegacyModels(c)
 	return nil
 }
@@ -341,6 +413,19 @@ func validateModelConfig(c *Config) error {
 	case "", "auto", "external":
 	default:
 		return fmt.Errorf("models.vision_mode must be auto or external")
+	}
+	if value := strings.TrimSpace(c.LlmProvider.ReasoningEffort); value != "" && NormalizeReasoningEffort(value) == "" {
+		return fmt.Errorf("llm_provider.reasoning_effort has unsupported value %q", value)
+	}
+	for index, fallback := range c.Fallbacks {
+		if value := strings.TrimSpace(fallback.ReasoningEffort); value != "" && NormalizeReasoningEffort(value) == "" {
+			return fmt.Errorf("fallbacks[%d].reasoning_effort has unsupported value %q", index, value)
+		}
+	}
+	for kind, endpoint := range c.Models.Endpoints {
+		if value := strings.TrimSpace(endpoint.ReasoningEffort); value != "" && NormalizeReasoningEffort(value) == "" {
+			return fmt.Errorf("models.endpoints.%s.reasoning_effort has unsupported value %q", kind, value)
+		}
 	}
 	return nil
 }

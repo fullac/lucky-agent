@@ -129,11 +129,11 @@ func TestHandleAgentsDelegate(t *testing.T) {
 	}
 
 	body := map[string]any{
-		"mode":         "parallel",
-		"description":  "test task",
-		"input":        "hello",
-		"agent_ids":    []string{"agent-1"},
-		"timeout":      10,
+		"mode":        "parallel",
+		"description": "test task",
+		"input":       "hello",
+		"agent_ids":   []string{"agent-1"},
+		"timeout":     10,
 	}
 	bodyBytes, _ := json.Marshal(body)
 
@@ -222,6 +222,65 @@ func TestHandleAgentsCancel(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestHandleAgentsBlackboard(t *testing.T) {
+	reg := collab.NewRegistry()
+	dm := collab.NewDelegateManager(reg, nil)
+	s := &Server{collabRegistry: reg, delegateManager: dm}
+
+	put := httptest.NewRequest(http.MethodPut, "/api/v1/agents/blackboard", bytes.NewBufferString(`{"task_id":"task-1","key":"status","value":"reviewing","author":"android"}`))
+	w := httptest.NewRecorder()
+	s.handleAgentsBlackboard(w, put)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("PUT status: got %d, want %d (%s)", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	get := httptest.NewRequest(http.MethodGet, "/api/v1/agents/blackboard?task_id=task-1", nil)
+	w = httptest.NewRecorder()
+	s.handleAgentsBlackboard(w, get)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET status: got %d, want %d", w.Code, http.StatusOK)
+	}
+	var response struct {
+		Items []collab.BlackboardEntry `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) != 1 || response.Items[0].Value != "reviewing" {
+		t.Fatalf("unexpected blackboard response: %+v", response.Items)
+	}
+}
+
+func TestHandleAgentsMessages(t *testing.T) {
+	reg := collab.NewRegistry()
+	dm := collab.NewDelegateManager(reg, nil)
+	s := &Server{collabRegistry: reg, delegateManager: dm}
+
+	body := `{"type":"task_assign","from":"planner","to":"coder","payload":{"task":"review"}}`
+	post := httptest.NewRequest(http.MethodPost, "/api/v1/agents/messages", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.handleAgentsMessages(w, post)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("POST status: got %d, want %d (%s)", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	get := httptest.NewRequest(http.MethodGet, "/api/v1/agents/messages?to=coder", nil)
+	w = httptest.NewRecorder()
+	s.handleAgentsMessages(w, get)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET status: got %d, want %d", w.Code, http.StatusOK)
+	}
+	var response struct {
+		Messages []collab.Message `json:"messages"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Messages) != 1 || response.Messages[0].From != "planner" {
+		t.Fatalf("unexpected messages: %+v", response.Messages)
 	}
 }
 

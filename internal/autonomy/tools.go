@@ -54,6 +54,9 @@ func (td *ToolDefinitions) HandleQueueAdd(args map[string]any) (string, error) {
 	}
 
 	metadata := map[string]string{}
+	if sessionID, _ := args["_parent_session_id"].(string); strings.TrimSpace(sessionID) != "" {
+		metadata["parent_session_id"] = strings.TrimSpace(sessionID)
+	}
 	if key, _ := args["idempotency_key"].(string); strings.TrimSpace(key) != "" {
 		metadata["idempotency_key"] = strings.TrimSpace(key)
 	}
@@ -68,22 +71,25 @@ func (td *ToolDefinitions) HandleQueueAdd(args map[string]any) (string, error) {
 	ready, inProgress, blocked, done := td.kit.Queue().Stats()
 
 	result, _ := json.Marshal(map[string]any{
-		"ok":                  true,
-		"action":              "add",
-		"task_id":             task.ID,
-		"title":               task.Title,
-		"priority":            task.Priority.String(),
-		"state":               task.State,
-		"tags":                task.Tags,
-		"metadata":            task.Metadata,
-		"deduped":             deduped,
-		"acceptance_criteria": task.AcceptanceCriteria,
-		"queue_ready":         ready,
-		"queue_in_progress":   inProgress,
-		"queue_blocked":       blocked,
-		"queue_done":          done,
-		"worker_count":        safeWorkerCount(td.kit),
-		"message":             fmt.Sprintf("Task '%s' added to queue with %s priority", title, priority),
+		"ok":                   true,
+		"action":               "add",
+		"task_id":              task.ID,
+		"execution_session_id": task.SessionID,
+		"parent_session_id":    task.Metadata["parent_session_id"],
+		"role":                 "worker-task",
+		"title":                task.Title,
+		"priority":             task.Priority.String(),
+		"state":                task.State,
+		"tags":                 task.Tags,
+		"metadata":             task.Metadata,
+		"deduped":              deduped,
+		"acceptance_criteria":  task.AcceptanceCriteria,
+		"queue_ready":          ready,
+		"queue_in_progress":    inProgress,
+		"queue_blocked":        blocked,
+		"queue_done":           done,
+		"worker_count":         safeWorkerCount(td.kit),
+		"message":              fmt.Sprintf("Task '%s' added to queue with %s priority", title, priority),
 	})
 
 	return string(result), nil
@@ -114,6 +120,9 @@ func (td *ToolDefinitions) HandleQueueList(args map[string]any) (string, error) 
 			"assigned_to":           t.AssignedTo,
 			"tags":                  t.Tags,
 			"session_id":            t.SessionID,
+			"execution_session_id":  t.SessionID,
+			"parent_session_id":     t.Metadata["parent_session_id"],
+			"role":                  "worker-task",
 			"attempts":              t.Attempts,
 			"retries":               t.Retries,
 			"continuations":         t.Continuations,

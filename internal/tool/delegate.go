@@ -270,21 +270,27 @@ func (s TaskStatus) String() string {
 
 // DelegateTask 子代理任务
 type DelegateTask struct {
-	ID                     string
-	Description            string
-	Context                string
-	Workspace              string
-	Mode                   taskstore.Mode
-	PlannedMode            taskstore.Mode
-	PlannerSummary         string
-	Status                 TaskStatus
-	Result                 string
-	Error                  string
-	StartedAt              time.Time
-	CompletedAt            time.Time
-	ToolCalls              int
-	LastTool               string
-	OwnerSessionID         string
+	ID             string
+	Description    string
+	Context        string
+	Workspace      string
+	Mode           taskstore.Mode
+	PlannedMode    taskstore.Mode
+	PlannerSummary string
+	Status         TaskStatus
+	Result         string
+	Error          string
+	StartedAt      time.Time
+	CompletedAt    time.Time
+	ToolCalls      int
+	LastTool       string
+	OwnerSessionID string
+	// ExecutionSessionID is a stable, durable session for this delegated run.
+	// ParentSessionID is the session that requested the delegation. They are
+	// intentionally separate so a UI can open either side of the relationship.
+	ExecutionSessionID     string
+	ParentSessionID        string
+	Role                   string
 	OwnerSource            string
 	RequestKey             string
 	AllowRecursiveDelegate bool
@@ -315,57 +321,66 @@ func (owner delegateTaskOwner) scoped() bool {
 }
 
 type delegateStartResponse struct {
-	TaskID         string `json:"task_id"`
-	Status         string `json:"status"`
-	Mode           string `json:"mode"`
-	PlannedMode    string `json:"planned_mode,omitempty"`
-	PlannerSummary string `json:"planner_summary,omitempty"`
-	TraceAvailable bool   `json:"trace_available,omitempty"`
-	Workspace      string `json:"workspace"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	Message        string `json:"message"`
+	TaskID             string `json:"task_id"`
+	ExecutionSessionID string `json:"execution_session_id,omitempty"`
+	ParentSessionID    string `json:"parent_session_id,omitempty"`
+	Role               string `json:"role,omitempty"`
+	Status             string `json:"status"`
+	Mode               string `json:"mode"`
+	PlannedMode        string `json:"planned_mode,omitempty"`
+	PlannerSummary     string `json:"planner_summary,omitempty"`
+	TraceAvailable     bool   `json:"trace_available,omitempty"`
+	Workspace          string `json:"workspace"`
+	TimeoutSeconds     int    `json:"timeout_seconds"`
+	Message            string `json:"message"`
 }
 
 type delegateStatusResponse struct {
-	TaskID          string                          `json:"task_id"`
-	Source          string                          `json:"source,omitempty"`
-	Mode            string                          `json:"mode,omitempty"`
-	ParentID        string                          `json:"parent_id,omitempty"`
-	Description     string                          `json:"description"`
-	Workspace       string                          `json:"workspace"`
-	Status          string                          `json:"status"`
-	ResultSummary   string                          `json:"result_summary,omitempty"`
-	Result          string                          `json:"result,omitempty"`
-	ResultBytes     int                             `json:"result_bytes"`
-	ResultTruncated bool                            `json:"result_truncated"`
-	Error           string                          `json:"error,omitempty"`
-	StartedAt       string                          `json:"started_at"`
-	CompletedAt     string                          `json:"completed_at"`
-	ToolCalls       int                             `json:"tool_calls,omitempty"`
-	ElapsedMS       int64                           `json:"elapsed_ms,omitempty"`
-	LastTool        string                          `json:"last_tool,omitempty"`
-	Observation     *taskstore.MainAgentObservation `json:"observation,omitempty"`
-	Events          []taskstore.Event               `json:"events,omitempty"`
-	PlannerTrace    json.RawMessage                 `json:"planner_trace,omitempty"`
+	TaskID             string                          `json:"task_id"`
+	ExecutionSessionID string                          `json:"execution_session_id,omitempty"`
+	ParentSessionID    string                          `json:"parent_session_id,omitempty"`
+	Role               string                          `json:"role,omitempty"`
+	Source             string                          `json:"source,omitempty"`
+	Mode               string                          `json:"mode,omitempty"`
+	ParentID           string                          `json:"parent_id,omitempty"`
+	Description        string                          `json:"description"`
+	Workspace          string                          `json:"workspace"`
+	Status             string                          `json:"status"`
+	ResultSummary      string                          `json:"result_summary,omitempty"`
+	Result             string                          `json:"result,omitempty"`
+	ResultBytes        int                             `json:"result_bytes"`
+	ResultTruncated    bool                            `json:"result_truncated"`
+	Error              string                          `json:"error,omitempty"`
+	StartedAt          string                          `json:"started_at"`
+	CompletedAt        string                          `json:"completed_at"`
+	ToolCalls          int                             `json:"tool_calls,omitempty"`
+	ElapsedMS          int64                           `json:"elapsed_ms,omitempty"`
+	LastTool           string                          `json:"last_tool,omitempty"`
+	Observation        *taskstore.MainAgentObservation `json:"observation,omitempty"`
+	Events             []taskstore.Event               `json:"events,omitempty"`
+	PlannerTrace       json.RawMessage                 `json:"planner_trace,omitempty"`
 }
 
 type delegateListItem struct {
-	TaskID          string `json:"task_id"`
-	Source          string `json:"source,omitempty"`
-	Mode            string `json:"mode,omitempty"`
-	ParentID        string `json:"parent_id,omitempty"`
-	Description     string `json:"description"`
-	Workspace       string `json:"workspace"`
-	Status          string `json:"status"`
-	ResultSummary   string `json:"result_summary,omitempty"`
-	ResultBytes     int    `json:"result_bytes,omitempty"`
-	ResultTruncated bool   `json:"result_truncated,omitempty"`
-	Error           string `json:"error,omitempty"`
-	StartedAt       string `json:"started_at"`
-	CompletedAt     string `json:"completed_at,omitempty"`
-	ToolCalls       int    `json:"tool_calls,omitempty"`
-	ElapsedMS       int64  `json:"elapsed_ms,omitempty"`
-	LastTool        string `json:"last_tool,omitempty"`
+	TaskID             string `json:"task_id"`
+	ExecutionSessionID string `json:"execution_session_id,omitempty"`
+	ParentSessionID    string `json:"parent_session_id,omitempty"`
+	Role               string `json:"role,omitempty"`
+	Source             string `json:"source,omitempty"`
+	Mode               string `json:"mode,omitempty"`
+	ParentID           string `json:"parent_id,omitempty"`
+	Description        string `json:"description"`
+	Workspace          string `json:"workspace"`
+	Status             string `json:"status"`
+	ResultSummary      string `json:"result_summary,omitempty"`
+	ResultBytes        int    `json:"result_bytes,omitempty"`
+	ResultTruncated    bool   `json:"result_truncated,omitempty"`
+	Error              string `json:"error,omitempty"`
+	StartedAt          string `json:"started_at"`
+	CompletedAt        string `json:"completed_at,omitempty"`
+	ToolCalls          int    `json:"tool_calls,omitempty"`
+	ElapsedMS          int64  `json:"elapsed_ms,omitempty"`
+	LastTool           string `json:"last_tool,omitempty"`
 }
 
 type delegateListResponse struct {
@@ -407,6 +422,7 @@ type AgentExecutorOptions struct {
 type AgentExecutorWithOptionsFunc func(ctx context.Context, description, contextStr string, options AgentExecutorOptions) (string, error)
 
 type delegateTaskIDContextKey struct{}
+type delegateExecutionSessionIDContextKey struct{}
 
 // DelegateTaskID returns the task id while a delegate executor is running.
 // It lets the host Agent attach execution metrics without changing the
@@ -419,6 +435,17 @@ func DelegateTaskID(ctx context.Context) string {
 	return strings.TrimSpace(id)
 }
 
+// DelegateExecutionSessionID returns the stable session assigned to the
+// delegated task currently being executed. Agent executors use this to resume
+// the same transcript on retries or when a client opens the task from a UI.
+func DelegateExecutionSessionID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(delegateExecutionSessionIDContextKey{}).(string)
+	return strings.TrimSpace(id)
+}
+
 // DelegateManager 子代理委派管理器
 type DelegateManager struct {
 	mu                       sync.RWMutex
@@ -428,6 +455,7 @@ type DelegateManager struct {
 	nextID                   int
 	agentExecutor            AgentExecutorFunc // v0.38.0: 真正的 Agent 执行器
 	agentExecutorWithOptions AgentExecutorWithOptionsFunc
+	sessionInitializer       func(*DelegateTask) error
 	taskStore                taskstore.Store
 	taskEvents               *taskstore.EventBus
 }
@@ -457,6 +485,14 @@ func (dm *DelegateManager) SetAgentExecutorWithOptions(fn AgentExecutorWithOptio
 	defer dm.mu.Unlock()
 	dm.agentExecutorWithOptions = fn
 	dm.agentExecutor = nil
+}
+
+// SetSessionInitializer provisions the execution conversation before the task
+// is returned to its caller. The executor will later use this same session ID.
+func (dm *DelegateManager) SetSessionInitializer(fn func(*DelegateTask) error) {
+	dm.mu.Lock()
+	dm.sessionInitializer = fn
+	dm.mu.Unlock()
 }
 
 // Config returns the normalized delegate runtime configuration.
@@ -528,6 +564,36 @@ func delegateElapsedMillisAsDuration(start time.Time, end time.Time) time.Durati
 		return 0
 	}
 	return end.Sub(start)
+}
+
+// delegateExecutionSessionID is deterministic so the task-to-session link
+// remains valid after a process restart and never changes during retries or
+// status polling.
+func delegateExecutionSessionID(taskID string) string {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return ""
+	}
+	return "delegate-" + taskID
+}
+
+func recordExecutionRefs(record taskstore.Record) (executionSessionID, parentSessionID, role string) {
+	executionSessionID = strings.TrimSpace(record.ExecutionSessionID)
+	parentSessionID = strings.TrimSpace(record.ParentSessionID)
+	role = strings.TrimSpace(record.Role)
+	if executionSessionID == "" {
+		executionSessionID = strings.TrimSpace(record.Metadata["execution_session_id"])
+	}
+	if parentSessionID == "" {
+		parentSessionID = strings.TrimSpace(record.Metadata["parent_session_id"])
+		if parentSessionID == "" {
+			parentSessionID = strings.TrimSpace(record.Metadata["owner_session_id"])
+		}
+	}
+	if role == "" {
+		role = strings.TrimSpace(record.Metadata["role"])
+	}
+	return executionSessionID, parentSessionID, role
 }
 
 // RetryTask creates a fresh delegated task from a failed/cancelled task. The
@@ -1098,14 +1164,17 @@ func (dm *DelegateManager) handleDelegateWithOwner(args map[string]any, owner de
 	for _, t := range dm.tasks {
 		if owner.scoped() && owner.RequestKey != "" && t.OwnerSessionID == owner.SessionID && t.RequestKey == owner.RequestKey {
 			response, _ := json.Marshal(delegateStartResponse{
-				TaskID:         t.ID,
-				Status:         t.Status.String(),
-				Mode:           string(t.Mode),
-				PlannedMode:    string(t.PlannedMode),
-				PlannerSummary: t.PlannerSummary,
-				Workspace:      t.Workspace,
-				TimeoutSeconds: int(timeout.Seconds()),
-				Message:        fmt.Sprintf("Task '%s' already exists for this request.", t.ID),
+				TaskID:             t.ID,
+				ExecutionSessionID: t.ExecutionSessionID,
+				ParentSessionID:    t.ParentSessionID,
+				Role:               t.Role,
+				Status:             t.Status.String(),
+				Mode:               string(t.Mode),
+				PlannedMode:        string(t.PlannedMode),
+				PlannerSummary:     t.PlannerSummary,
+				Workspace:          t.Workspace,
+				TimeoutSeconds:     int(timeout.Seconds()),
+				Message:            fmt.Sprintf("Task '%s' already exists for this request.", t.ID),
 			})
 			dm.mu.RUnlock()
 			return string(response), nil
@@ -1123,7 +1192,10 @@ func (dm *DelegateManager) handleDelegateWithOwner(args map[string]any, owner de
 	// 创建任务
 	dm.mu.Lock()
 	dm.nextID++
-	taskID := fmt.Sprintf("task-%d", dm.nextID)
+	// Keep task IDs unique across runtime restarts; the counter alone would
+	// recreate task-1 and could reuse its persisted execution session.
+	taskID := fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), dm.nextID)
+	executionSessionID := delegateExecutionSessionID(taskID)
 	workspace, enrichedContext, err := prepareDelegateExecutionContext(taskID, description, contextStr)
 	if err != nil {
 		dm.mu.Unlock()
@@ -1140,6 +1212,9 @@ func (dm *DelegateManager) handleDelegateWithOwner(args map[string]any, owner de
 		Status:                 StatusPending,
 		StartedAt:              time.Now(),
 		OwnerSessionID:         owner.SessionID,
+		ExecutionSessionID:     executionSessionID,
+		ParentSessionID:        owner.SessionID,
+		Role:                   "subagent",
 		OwnerSource:            owner.Source,
 		RequestKey:             owner.RequestKey,
 		AllowRecursiveDelegate: allowRecursive,
@@ -1147,7 +1222,17 @@ func (dm *DelegateManager) handleDelegateWithOwner(args map[string]any, owner de
 	dm.tasks[taskID] = task
 	store := dm.taskStore
 	events := dm.taskEvents
+	initializeSession := dm.sessionInitializer
 	dm.mu.Unlock()
+	if initializeSession != nil {
+		snapshot := cloneDelegateTask(task)
+		if err := initializeSession(&snapshot); err != nil {
+			dm.mu.Lock()
+			delete(dm.tasks, taskID)
+			dm.mu.Unlock()
+			return "", fmt.Errorf("initialize delegate session: %w", err)
+		}
+	}
 
 	dm.recordDelegateTaskCreated(store, events, task, timeout, maxChildren, allowRecursive, plannerTrace)
 
@@ -1155,15 +1240,18 @@ func (dm *DelegateManager) handleDelegateWithOwner(args map[string]any, owner de
 	go dm.executeTask(taskID, description, enrichedContext, timeout)
 
 	result, _ := json.Marshal(delegateStartResponse{
-		TaskID:         taskID,
-		Status:         StatusRunning.String(),
-		Mode:           string(mode),
-		PlannedMode:    string(plannedMode),
-		PlannerSummary: plannerSummary,
-		TraceAvailable: plannerTrace != nil,
-		Workspace:      workspace,
-		TimeoutSeconds: int(timeout.Seconds()),
-		Message:        fmt.Sprintf("Task '%s' delegated. Use wait_for_tasks with this task ID before synthesizing a final answer.", taskID),
+		TaskID:             taskID,
+		ExecutionSessionID: executionSessionID,
+		ParentSessionID:    owner.SessionID,
+		Role:               "subagent",
+		Status:             StatusRunning.String(),
+		Mode:               string(mode),
+		PlannedMode:        string(plannedMode),
+		PlannerSummary:     plannerSummary,
+		TraceAvailable:     plannerTrace != nil,
+		Workspace:          workspace,
+		TimeoutSeconds:     int(timeout.Seconds()),
+		Message:            fmt.Sprintf("Task '%s' delegated. Use wait_for_tasks with this task ID before synthesizing a final answer.", taskID),
 	})
 
 	return string(result), nil
@@ -1174,8 +1262,17 @@ func (dm *DelegateManager) handleDelegateWithOwner(args map[string]any, owner de
 func (dm *DelegateManager) executeTask(taskID, description, contextStr string, timeout time.Duration) {
 	dm.mu.Lock()
 	task := dm.tasks[taskID]
+	if task == nil || task.Status == StatusCancelled {
+		dm.mu.Unlock()
+		return
+	}
+	if strings.TrimSpace(task.ExecutionSessionID) == "" {
+		task.ExecutionSessionID = delegateExecutionSessionID(taskID)
+	}
 	task.Status = StatusRunning
-	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), delegateTaskIDContextKey{}, taskID), timeout)
+	baseCtx := context.WithValue(context.Background(), delegateTaskIDContextKey{}, taskID)
+	baseCtx = context.WithValue(baseCtx, delegateExecutionSessionIDContextKey{}, task.ExecutionSessionID)
+	ctx, cancel := context.WithTimeout(baseCtx, timeout)
 	dm.cancels[taskID] = cancel
 	executor := dm.agentExecutor
 	executorWithOptions := dm.agentExecutorWithOptions
@@ -1285,21 +1382,24 @@ func (dm *DelegateManager) handleStatusForSession(args map[string]any, sessionID
 		mode = taskstore.ModeSingle
 	}
 	resp := delegateStatusResponse{
-		TaskID:          snapshot.ID,
-		Source:          string(taskstore.SourceTool),
-		Mode:            string(mode),
-		Description:     snapshot.Description,
-		Workspace:       snapshot.Workspace,
-		Status:          snapshot.Status.String(),
-		ResultSummary:   summary,
-		ResultBytes:     resultBytes,
-		ResultTruncated: truncated,
-		Error:           snapshot.Error,
-		StartedAt:       snapshot.StartedAt.Format(time.RFC3339),
-		CompletedAt:     formatDelegateCompletedAt(snapshot.CompletedAt),
-		ToolCalls:       snapshot.ToolCalls,
-		ElapsedMS:       delegateElapsedMillis(snapshot.StartedAt, snapshot.CompletedAt),
-		LastTool:        snapshot.LastTool,
+		TaskID:             snapshot.ID,
+		ExecutionSessionID: snapshot.ExecutionSessionID,
+		ParentSessionID:    snapshot.ParentSessionID,
+		Role:               snapshot.Role,
+		Source:             string(taskstore.SourceTool),
+		Mode:               string(mode),
+		Description:        snapshot.Description,
+		Workspace:          snapshot.Workspace,
+		Status:             snapshot.Status.String(),
+		ResultSummary:      summary,
+		ResultBytes:        resultBytes,
+		ResultTruncated:    truncated,
+		Error:              snapshot.Error,
+		StartedAt:          snapshot.StartedAt.Format(time.RFC3339),
+		CompletedAt:        formatDelegateCompletedAt(snapshot.CompletedAt),
+		ToolCalls:          snapshot.ToolCalls,
+		ElapsedMS:          delegateElapsedMillis(snapshot.StartedAt, snapshot.CompletedAt),
+		LastTool:           snapshot.LastTool,
 	}
 	if includeResult {
 		resp.Result = inline
@@ -1528,22 +1628,26 @@ func (dm *DelegateManager) handleUnifiedStatus(store taskstore.Store, taskID str
 	}
 	resultText, _, _ := store.Result(taskID)
 	summary, inline, resultBytes, truncated := summarizeDelegateResult(resultText, dm.config.MaxResultBytesInline)
+	executionSessionID, parentSessionID, role := recordExecutionRefs(record)
 	resp := delegateStatusResponse{
-		TaskID:          record.ID,
-		Source:          string(record.Source),
-		Mode:            string(record.Mode),
-		ParentID:        record.ParentID,
-		Description:     record.Description,
-		Workspace:       record.Runtime.Workspace,
-		Status:          string(record.Status),
-		ResultSummary:   summary,
-		ResultBytes:     resultBytes,
-		ResultTruncated: truncated,
-		StartedAt:       formatDelegateCompletedAt(record.StartedAt),
-		CompletedAt:     formatDelegateCompletedAt(record.CompletedAt),
-		ToolCalls:       record.Outcome.Cost.ToolCalls,
-		ElapsedMS:       delegateElapsedMillis(record.StartedAt, record.CompletedAt),
-		LastTool:        record.Metadata["last_tool"],
+		TaskID:             record.ID,
+		ExecutionSessionID: executionSessionID,
+		ParentSessionID:    parentSessionID,
+		Role:               role,
+		Source:             string(record.Source),
+		Mode:               string(record.Mode),
+		ParentID:           record.ParentID,
+		Description:        record.Description,
+		Workspace:          record.Runtime.Workspace,
+		Status:             string(record.Status),
+		ResultSummary:      summary,
+		ResultBytes:        resultBytes,
+		ResultTruncated:    truncated,
+		StartedAt:          formatDelegateCompletedAt(record.StartedAt),
+		CompletedAt:        formatDelegateCompletedAt(record.CompletedAt),
+		ToolCalls:          record.Outcome.Cost.ToolCalls,
+		ElapsedMS:          delegateElapsedMillis(record.StartedAt, record.CompletedAt),
+		LastTool:           record.Metadata["last_tool"],
 	}
 	if includeResult {
 		resp.Result = inline
@@ -1652,18 +1756,21 @@ func (dm *DelegateManager) handleListForSession(args map[string]any, sessionID s
 			mode = taskstore.ModeSingle
 		}
 		item := delegateListItem{
-			TaskID:      t.ID,
-			Source:      string(taskstore.SourceTool),
-			Mode:        string(mode),
-			Description: t.Description,
-			Workspace:   t.Workspace,
-			Status:      t.Status.String(),
-			Error:       t.Error,
-			StartedAt:   t.StartedAt.Format(time.RFC3339),
-			CompletedAt: formatDelegateCompletedAt(t.CompletedAt),
-			ToolCalls:   t.ToolCalls,
-			ElapsedMS:   delegateElapsedMillis(t.StartedAt, t.CompletedAt),
-			LastTool:    t.LastTool,
+			TaskID:             t.ID,
+			ExecutionSessionID: t.ExecutionSessionID,
+			ParentSessionID:    t.ParentSessionID,
+			Role:               t.Role,
+			Source:             string(taskstore.SourceTool),
+			Mode:               string(mode),
+			Description:        t.Description,
+			Workspace:          t.Workspace,
+			Status:             t.Status.String(),
+			Error:              t.Error,
+			StartedAt:          t.StartedAt.Format(time.RFC3339),
+			CompletedAt:        formatDelegateCompletedAt(t.CompletedAt),
+			ToolCalls:          t.ToolCalls,
+			ElapsedMS:          delegateElapsedMillis(t.StartedAt, t.CompletedAt),
+			LastTool:           t.LastTool,
 		}
 		if includeResult {
 			item.ResultSummary = summary
@@ -1689,20 +1796,24 @@ func (dm *DelegateManager) handleListForSession(args map[string]any, sessionID s
 				}
 				resultText, _, _ := store.Result(record.ID)
 				summary, _, resultBytes, truncated := summarizeDelegateResult(resultText, dm.config.MaxResultBytesInline)
+				executionSessionID, parentSessionID, role := recordExecutionRefs(record)
 				item := delegateListItem{
-					TaskID:      record.ID,
-					Source:      string(record.Source),
-					Mode:        string(record.Mode),
-					ParentID:    record.ParentID,
-					Description: record.Description,
-					Workspace:   record.Runtime.Workspace,
-					Status:      string(record.Status),
-					Error:       record.Outcome.UserFeedback,
-					StartedAt:   formatDelegateCompletedAt(record.StartedAt),
-					CompletedAt: formatDelegateCompletedAt(record.CompletedAt),
-					ToolCalls:   record.Outcome.Cost.ToolCalls,
-					ElapsedMS:   delegateElapsedMillis(record.StartedAt, record.CompletedAt),
-					LastTool:    record.Metadata["last_tool"],
+					TaskID:             record.ID,
+					ExecutionSessionID: executionSessionID,
+					ParentSessionID:    parentSessionID,
+					Role:               role,
+					Source:             string(record.Source),
+					Mode:               string(record.Mode),
+					ParentID:           record.ParentID,
+					Description:        record.Description,
+					Workspace:          record.Runtime.Workspace,
+					Status:             string(record.Status),
+					Error:              record.Outcome.UserFeedback,
+					StartedAt:          formatDelegateCompletedAt(record.StartedAt),
+					CompletedAt:        formatDelegateCompletedAt(record.CompletedAt),
+					ToolCalls:          record.Outcome.Cost.ToolCalls,
+					ElapsedMS:          delegateElapsedMillis(record.StartedAt, record.CompletedAt),
+					LastTool:           record.Metadata["last_tool"],
 				}
 				if includeResult {
 					item.ResultSummary = summary
@@ -1758,18 +1869,41 @@ func (dm *DelegateManager) handleCancelForSession(args map[string]any, sessionID
 	if reason == "" {
 		reason = "cancelled by user"
 	}
+	if err := dm.CancelTask(taskID, reason); err != nil {
+		return "", err
+	}
+
+	result, _ := json.Marshal(delegateCancelResponse{
+		TaskID:  taskID,
+		Status:  StatusCancelled.String(),
+		Message: fmt.Sprintf("Task '%s' cancelled.", taskID),
+	})
+	return string(result), nil
+}
+
+// CancelTask stops a running delegated task and persists its cancellation.
+// HTTP task APIs use this method so cancellation has the same behavior as the
+// delegate_cancel tool.
+func (dm *DelegateManager) CancelTask(taskID, reason string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return fmt.Errorf("task_id is required")
+	}
+	if reason = strings.TrimSpace(reason); reason == "" {
+		reason = "cancelled by user"
+	}
 
 	dm.mu.Lock()
 	task, ok := dm.tasks[taskID]
 	if !ok {
 		dm.mu.Unlock()
-		return "", fmt.Errorf("task not found: %s", taskID)
+		return fmt.Errorf("task not found: %s", taskID)
 	}
 	switch task.Status {
 	case StatusCompleted, StatusFailed, StatusCancelled:
 		status := task.Status.String()
 		dm.mu.Unlock()
-		return "", fmt.Errorf("task %s cannot be cancelled from status %s", taskID, status)
+		return fmt.Errorf("task %s cannot be cancelled from status %s", taskID, status)
 	}
 	task.Status = StatusCancelled
 	task.Error = reason
@@ -1784,13 +1918,7 @@ func (dm *DelegateManager) handleCancelForSession(args map[string]any, sessionID
 		cancel()
 	}
 	dm.recordDelegateTaskFinished(store, events, snapshot)
-
-	result, _ := json.Marshal(delegateCancelResponse{
-		TaskID:  taskID,
-		Status:  StatusCancelled.String(),
-		Message: fmt.Sprintf("Task '%s' cancelled.", taskID),
-	})
-	return string(result), nil
+	return nil
 }
 
 func (dm *DelegateManager) recordDelegateTaskCreated(store taskstore.Store, events *taskstore.EventBus, task *DelegateTask, timeout time.Duration, maxChildren int, allowRecursive bool, plannerTrace any) {
@@ -1802,13 +1930,16 @@ func (dm *DelegateManager) recordDelegateTaskCreated(store taskstore.Store, even
 		mode = taskstore.ModeSingle
 	}
 	record := taskstore.Record{
-		ID:          task.ID,
-		Source:      taskstore.SourceTool,
-		Mode:        mode,
-		Status:      taskstore.StatusPending,
-		Description: task.Description,
-		Input:       task.Context,
-		CreatedAt:   task.StartedAt,
+		ID:                 task.ID,
+		ExecutionSessionID: task.ExecutionSessionID,
+		ParentSessionID:    task.ParentSessionID,
+		Role:               task.Role,
+		Source:             taskstore.SourceTool,
+		Mode:               mode,
+		Status:             taskstore.StatusPending,
+		Description:        task.Description,
+		Input:              task.Context,
+		CreatedAt:          task.StartedAt,
 		Runtime: taskstore.RuntimeRef{
 			Type:      "delegate",
 			Workspace: task.Workspace,
@@ -1820,11 +1951,14 @@ func (dm *DelegateManager) recordDelegateTaskCreated(store taskstore.Store, even
 			AllowRecursive: allowRecursive,
 		},
 		Metadata: map[string]string{
-			"planned_mode":     string(task.PlannedMode),
-			"planner_summary":  task.PlannerSummary,
-			"owner_session_id": task.OwnerSessionID,
-			"owner_source":     task.OwnerSource,
-			"request_key":      task.RequestKey,
+			"planned_mode":         string(task.PlannedMode),
+			"planner_summary":      task.PlannerSummary,
+			"owner_session_id":     task.OwnerSessionID,
+			"owner_source":         task.OwnerSource,
+			"request_key":          task.RequestKey,
+			"execution_session_id": task.ExecutionSessionID,
+			"parent_session_id":    task.ParentSessionID,
+			"role":                 task.Role,
 		},
 	}
 	if _, err := store.Create(record); err != nil {
@@ -1896,10 +2030,14 @@ func (dm *DelegateManager) recordDelegateTaskFinished(store taskstore.Store, eve
 		_ = events.Failed(record, task.Error)
 	case StatusCancelled:
 		_ = events.Emit(taskstore.Event{
-			Type:    taskstore.EventCancelled,
-			TaskID:  task.ID,
-			Status:  taskstore.StatusCancelled,
-			Message: task.Error,
+			Type:               taskstore.EventCancelled,
+			TaskID:             task.ID,
+			ExecutionSessionID: task.ExecutionSessionID,
+			ParentSessionID:    task.ParentSessionID,
+			Role:               task.Role,
+			Mode:               task.Mode,
+			Status:             taskstore.StatusCancelled,
+			Message:            task.Error,
 		})
 	}
 	// A terminal record is only visible after its result and terminal event are
@@ -1984,7 +2122,7 @@ func (dm *DelegateManager) DelegateParallel(descriptions []string, contextStr st
 			// 创建任务
 			dm.mu.Lock()
 			dm.nextID++
-			taskID := fmt.Sprintf("parallel-task-%d", dm.nextID)
+			taskID := fmt.Sprintf("parallel-task-%d-%d", time.Now().UnixNano(), dm.nextID)
 			workspace, enrichedContext, workspaceErr := prepareDelegateExecutionContext(taskID, description, contextStr)
 			task := &DelegateTask{
 				ID:          taskID,
