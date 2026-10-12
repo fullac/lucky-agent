@@ -76,8 +76,13 @@ func DataTool() *Tool {
 		Handler: func(args map[string]any) (string, error) {
 			switch toolAction(args) {
 			case "log":
+				mode, _ := args["mode"].(string)
+				mode = strings.ToLower(strings.TrimSpace(mode))
+				if mode != "tail" && mode != "grep" {
+					return "", fmt.Errorf("invalid data log mode %q (use tail or grep)", args["mode"])
+				}
 				next := cloneToolArgs(args)
-				next["action"], _ = next["mode"].(string)
+				next["action"] = mode
 				return handleLog(next)
 			case "query":
 				return handleDataQuery(args)

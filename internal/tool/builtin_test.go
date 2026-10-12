@@ -224,61 +224,61 @@ func TestCalculateTool(t *testing.T) {
 	}
 }
 
-	func TestLogTool(t *testing.T) {
-		r := NewRegistry()
-		RegisterBuiltinTools(r)
+func TestLogTool(t *testing.T) {
+	r := NewRegistry()
+	RegisterBuiltinTools(r)
 
-		tmpDir := t.TempDir()
-		testFile := filepath.Join(tmpDir, "app.log")
-		content := "one\nerror first\ntwo\nthree\nerror second\nfour\n"
-		if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
-			t.Fatalf("write log: %v", err)
-		}
-
-		tail, err := r.Call("data", map[string]any{"action": "log", "mode": "tail", "path": testFile, "lines": 2})
-		if err != nil {
-			t.Fatalf("log tail: %v", err)
-		}
-		if !strings.Contains(tail, "error second") || !strings.Contains(tail, "four") {
-			t.Fatalf("unexpected tail output: %q", tail)
-		}
-
-		grep, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "error", "before": 1, "after": 0})
-		if err != nil {
-			t.Fatalf("log grep: %v", err)
-		}
-		if !strings.Contains(grep, "> 2| error first") || !strings.Contains(grep, "> 5| error second") {
-			t.Fatalf("unexpected grep output: %q", grep)
-		}
-
-		noMatch, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "panic"})
-		if err != nil {
-			t.Fatalf("log grep no match should not fail: %v", err)
-		}
-		if !strings.Contains(noMatch, "No matches") {
-			t.Fatalf("unexpected no-match output: %q", noMatch)
-		}
-
-		ignoreCase, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "ERROR", "ignore_case": true, "max_matches": 1})
-		if err != nil {
-			t.Fatalf("log grep ignore_case: %v", err)
-		}
-		if !strings.Contains(ignoreCase, "> 2| error first") {
-			t.Fatalf("unexpected ignore_case output: %q", ignoreCase)
-		}
-
-		numberedTail, err := r.Call("data", map[string]any{"action": "log", "mode": "tail", "path": testFile, "lines": 2, "with_line_numbers": true})
-		if err != nil {
-			t.Fatalf("log tail with line numbers: %v", err)
-		}
-		if !strings.Contains(numberedTail, "5| error second") || !strings.Contains(numberedTail, "6| four") {
-			t.Fatalf("unexpected numbered tail output: %q", numberedTail)
-		}
-
-		if _, err := r.Call("data", map[string]any{"action": "log", "path": testFile}); err == nil || !strings.Contains(err.Error(), "invalid data action") {
-			t.Fatalf("expected invalid data action, got %v", err)
-		}
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "app.log")
+	content := "one\nerror first\ntwo\nthree\nerror second\nfour\n"
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
 	}
+
+	tail, err := r.Call("data", map[string]any{"action": "log", "mode": "tail", "path": testFile, "lines": 2})
+	if err != nil {
+		t.Fatalf("log tail: %v", err)
+	}
+	if !strings.Contains(tail, "error second") || !strings.Contains(tail, "four") {
+		t.Fatalf("unexpected tail output: %q", tail)
+	}
+
+	grep, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "error", "before": 1, "after": 0})
+	if err != nil {
+		t.Fatalf("log grep: %v", err)
+	}
+	if !strings.Contains(grep, "> 2| error first") || !strings.Contains(grep, "> 5| error second") {
+		t.Fatalf("unexpected grep output: %q", grep)
+	}
+
+	noMatch, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "panic"})
+	if err != nil {
+		t.Fatalf("log grep no match should not fail: %v", err)
+	}
+	if !strings.Contains(noMatch, "No matches") {
+		t.Fatalf("unexpected no-match output: %q", noMatch)
+	}
+
+	ignoreCase, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "ERROR", "ignore_case": true, "max_matches": 1})
+	if err != nil {
+		t.Fatalf("log grep ignore_case: %v", err)
+	}
+	if !strings.Contains(ignoreCase, "> 2| error first") {
+		t.Fatalf("unexpected ignore_case output: %q", ignoreCase)
+	}
+
+	numberedTail, err := r.Call("data", map[string]any{"action": "log", "mode": "tail", "path": testFile, "lines": 2, "with_line_numbers": true})
+	if err != nil {
+		t.Fatalf("log tail with line numbers: %v", err)
+	}
+	if !strings.Contains(numberedTail, "5| error second") || !strings.Contains(numberedTail, "6| four") {
+		t.Fatalf("unexpected numbered tail output: %q", numberedTail)
+	}
+
+	if _, err := r.Call("data", map[string]any{"action": "log", "path": testFile}); err == nil || !strings.Contains(err.Error(), "invalid data log mode") {
+		t.Fatalf("expected invalid data log mode, got %v", err)
+	}
+}
 
 func TestHTTPRequestToolValidation(t *testing.T) {
 	r := NewRegistry()

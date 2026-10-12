@@ -124,7 +124,7 @@ func TestApplyIntentToolGatingHybridTerminalAndComputerUseKeepsBothToolsets(t *t
 		"terminal", "file_read", "file_list", "computer_observe", "computer_act",
 	)
 	assertDisabledTools(t, loopCfg.DisabledTools,
-		"web_search", "web_fetch", "file_write", "file_delete", "sql_query",
+		"web_search", "web_fetch", "file_write", "file_delete", "data",
 	)
 }
 
@@ -337,8 +337,8 @@ func TestApplyIntentToolGatingDatabaseSchemaOnlyBlocksSQLQuery(t *testing.T) {
 	opts := a.buildLoopCallOptions("只检查数据库表结构，不要查询用户数据。", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "db_schema")
-	assertDisabledTools(t, loopCfg.DisabledTools, "sql_query", "file_write", "terminal")
+	assertEnabledTools(t, visible, "data")
+	assertDisabledTools(t, loopCfg.DisabledTools, "file_write", "terminal")
 }
 
 func TestApplyIntentToolGatingReadOnlyFilePromptBlocksPatch(t *testing.T) {

@@ -121,11 +121,8 @@ func (a *Agent) intentAllowedTools(input string) (map[string]struct{}, bool) {
 		if (!negatedExecution || needsTerminal) && !readOnlySourceIntent && !readOnlyMutationBlocked {
 			addIntentTools(allowed, "terminal")
 		}
-		if intentTextContainsAny(intentText, "\u65e5\u5fd7", ".log", "logs", "log file", "stack trace", "trace") {
-			addIntentTools(allowed, "log_file")
-		}
-		if intentTextContainsAny(intentText, ".json", "json", ".yaml", ".yml", "yaml", "yml") {
-			addIntentTools(allowed, "data_query")
+		if intentTextContainsAny(intentText, "\u65e5\u5fd7", ".log", "logs", "log file", "stack trace", "trace", ".json", "json", ".yaml", ".yml", "yaml", "yml", ".csv", "csv") {
+			addIntentTools(allowed, "data")
 		}
 		if intentTextContainsAny(intentText, ".pdf", ".docx", ".pptx", "pdf", "docx", "pptx", "word", "powerpoint", "文档", "幻灯片") {
 			addIntentTools(allowed, "document_read")

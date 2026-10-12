@@ -190,8 +190,8 @@ func TestBuildSystemPromptIncludesNapCatPlainTextPlatformHint(t *testing.T) {
 
 	prompt := a.buildSystemPrompt(nil)
 	for _, want := range []string{
-		"NapCat",
 		"QQ",
+		"plain chat text",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected NapCat platform hint to contain %q:\n%s", want, prompt)
