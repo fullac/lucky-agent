@@ -1,5 +1,5 @@
 #ifndef SourceRoot
-  #define SourceRoot "..\\..\\dist\\windows-installer"
+  #define SourceRoot "..\..\dist\windows-installer"
 #endif
 #ifndef MyAppVersion
   #define MyAppVersion "dev"
@@ -26,33 +26,14 @@ ChangesEnvironment=yes
 
 [Files]
 Source: "{#SourceRoot}\lh.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\LuckyAgent-Desktop.cmd"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\desktop\*"; DestDir: "{app}\desktop"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#SourceRoot}\runtime\electron\*"; DestDir: "{app}\runtime\electron"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "LuckyAgent.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\ConfigurationCenter.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\Install-Portable.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\LuckyAgent-TUI.cmd"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\LuckyAgent-GUI.cmd"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\UI\GUI\dist\*"; DestDir: "{app}\UI\GUI\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#SourceRoot}\UI\TUI\dist\*"; DestDir: "{app}\UI\TUI\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#SourceRoot}\runtime\node\*"; DestDir: "{app}\runtime\node"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\LuckyAgent Configuration Center"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\ConfigurationCenter.ps1"""; WorkingDir: "{app}"
-Name: "{group}\LuckyAgent Desktop"; Filename: "{app}\LuckyAgent-Desktop.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\LuckyAgent.ico"
-Name: "{group}\LuckyAgent GUI"; Filename: "{app}\LuckyAgent-GUI.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\LuckyAgent.ico"
-Name: "{group}\LuckyAgent TUI"; Filename: "{app}\LuckyAgent-TUI.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\LuckyAgent.ico"
-Name: "{group}\Stop LuckyAgent"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\ConfigurationCenter.ps1"" -Action Stop"; WorkingDir: "{app}"
-Name: "{autodesktop}\LuckyAgent"; Filename: "{app}\LuckyAgent-Desktop.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\LuckyAgent.ico"; Tasks: desktopicon
-
-[Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
+Name: "{group}\LuckyAgent CLI"; Filename: "{app}\lh.exe"; WorkingDir: "{app}"; IconFilename: "{app}\LuckyAgent.ico"
 
 [Run]
 Filename: "{app}\lh.exe"; Parameters: "init"; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
-Filename: "{app}\LuckyAgent-Desktop.cmd"; WorkingDir: "{app}"; Description: "Launch LuckyAgent Desktop"; Flags: postinstall nowait skipifsilent
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\ConfigurationCenter.ps1"""; WorkingDir: "{app}"; Description: "Launch LuckyAgent Configuration Center"; Flags: postinstall nowait skipifsilent unchecked
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
@@ -102,7 +83,6 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
     AddUserPath(ExpandConstant('{app}'));
-    AddUserPath(ExpandConstant('{app}\runtime\node'));
   end;
 end;
 
@@ -110,6 +90,5 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then begin
     RemoveUserPath(ExpandConstant('{app}'));
-    RemoveUserPath(ExpandConstant('{app}\runtime\node'));
   end;
 end;

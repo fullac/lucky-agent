@@ -208,7 +208,6 @@ func buildREPLCommandRegistry() map[string]replCommandFunc {
 		fmt.Println("  /watch stop        停止监控")
 		fmt.Println("  /profile list      列出 Profile")
 		fmt.Println("  /profile switch X  切换 Profile")
-		fmt.Println("  /dashboard start   启动 Web Dashboard")
 		fmt.Println("  /serve [addr]      启动 API Server")
 		fmt.Println("  /context           上下文窗口状态")
 		fmt.Println("  /context fit       手动触发上下文裁剪")
@@ -508,9 +507,6 @@ func buildREPLCommandRegistry() map[string]replCommandFunc {
 		},
 		"/profile": func(_ replCommandContext, arg string) (bool, bool) {
 			return handleProfileCommand(arg), false
-		},
-		"/dashboard": func(ctx replCommandContext, arg string) (bool, bool) {
-			return handleDashboardCommand(arg, ctx.agent), false
 		},
 		"/serve": func(ctx replCommandContext, arg string) (bool, bool) {
 			return handleServeCommand(arg, ctx.agent), false
@@ -1066,60 +1062,6 @@ func handleProfileCommand(arg string) bool {
 	default:
 		fmt.Printf("未知 profile 子命令: %s\n", parts[0])
 		fmt.Println("用法: /profile <list|switch> [args]")
-	}
-	return true
-}
-
-// handleDashboardCommand 处理 /dashboard 命令
-func handleDashboardCommand(arg string, a *agent.Agent) bool {
-	parts := strings.Fields(arg)
-	if len(parts) == 0 {
-		fmt.Println("用法: /dashboard <start [addr]|status|stop>")
-		return true
-	}
-
-	switch parts[0] {
-	case "start":
-		addr := ":8765"
-		if len(parts) > 1 {
-			addr = parts[1]
-		}
-		d, created := ensureREPLDashboard(a, addr)
-		if d.IsRunning() {
-			fmt.Printf("🌐 Dashboard 已在运行: http://localhost%s\n", d.Addr())
-			return true
-		}
-		if err := d.Start(); err != nil {
-			fmt.Printf("❌ %v\n", err)
-		} else {
-			if created {
-				fmt.Printf("✅ Dashboard provider 已接入当前 Agent 运行态\n")
-			}
-			fmt.Printf("🌐 Dashboard 已启动: http://localhost%s\n", d.Addr())
-		}
-	case "status":
-		d := getREPLDashboard()
-		if d == nil {
-			fmt.Println("Dashboard 尚未创建。先执行 /dashboard start")
-		} else if d.IsRunning() {
-			fmt.Printf("🌐 Dashboard 运行中: http://localhost%s\n", d.Addr())
-		} else {
-			fmt.Printf("Dashboard 已创建但未运行，监听地址: %s\n", d.Addr())
-		}
-	case "stop":
-		d := getREPLDashboard()
-		if d == nil {
-			fmt.Println("Dashboard 尚未创建，无需停止")
-			return true
-		}
-		if err := d.Stop(); err != nil {
-			fmt.Printf("❌ %v\n", err)
-		} else {
-			fmt.Println("🛑 Dashboard 已停止")
-		}
-
-	default:
-		fmt.Printf("未知 dashboard 子命令: %s\n", parts[0])
 	}
 	return true
 }

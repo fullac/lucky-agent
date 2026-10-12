@@ -255,7 +255,6 @@ func (h *Handler) buildCommandRegistry() map[string]commandHandler {
 		"deny":          h.handleDeny,
 		"cron":          h.handleCron,
 		"watch":         h.handleWatch,
-		"dashboard":     h.handleDashboard,
 		"msg_gateway":   h.handleMsgGateway,
 		"rag":           h.handleRAG,
 		"context":       h.handleContext,
@@ -578,7 +577,7 @@ func (h *Handler) handleConfig(ctx context.Context, msg *gateway.Message) error 
 
 func (h *Handler) sendConfigList(ctx context.Context, msg *gateway.Message) error {
 	cfg := h.agent.Config().Get()
-	info := fmt.Sprintf("配置：\nprovider: %s\napi_key: %s\napi_base: %s\nmodel: %s\nsoul_path: %s\nmax_tokens: %d\ntemperature: %.1f\nserver.addr: %s\ndashboard.addr: %s\nmsg_gateway.platform: %s\nmsg_gateway.api_addr: %s\nmsg_gateway.telegram.token: %s\nmsg_gateway.qqofficial.app_id: %s\nmsg_gateway.qqofficial.sandbox: %t\nmsg_gateway.napcat.listen_addr: %s\nmsg_gateway.napcat.path: %s\nmsg_gateway.feishu.app_id: %s\nmsg_gateway.feishu.listen_addr: %s\nmsg_gateway.feishu.path: %s",
+	info := fmt.Sprintf("配置：\nprovider: %s\napi_key: %s\napi_base: %s\nmodel: %s\nsoul_path: %s\nmax_tokens: %d\ntemperature: %.1f\nserver.addr: %s\nmsg_gateway.platform: %s\nmsg_gateway.api_addr: %s\nmsg_gateway.telegram.token: %s\nmsg_gateway.qqofficial.app_id: %s\nmsg_gateway.qqofficial.sandbox: %t\nmsg_gateway.napcat.listen_addr: %s\nmsg_gateway.napcat.path: %s\nmsg_gateway.feishu.app_id: %s\nmsg_gateway.feishu.listen_addr: %s\nmsg_gateway.feishu.path: %s",
 		valueOrUnset(cfg.Provider),
 		maskSecret(cfg.APIKey),
 		valueOrUnset(cfg.APIBase),
@@ -587,7 +586,6 @@ func (h *Handler) sendConfigList(ctx context.Context, msg *gateway.Message) erro
 		cfg.MaxTokens,
 		cfg.Temperature,
 		valueOrUnset(cfg.Server.Addr),
-		valueOrUnset(cfg.Dashboard.Addr),
 		valueOrUnset(cfg.MsgGateway.Platform),
 		valueOrUnset(cfg.MsgGateway.APIAddr),
 		maskSecret(cfg.MsgGateway.Telegram.Token),
@@ -626,8 +624,6 @@ func (h *Handler) configValue(key string) (string, bool) {
 		return fmt.Sprintf("%.1f", cfg.Temperature), true
 	case "server.addr":
 		return valueOrUnset(cfg.Server.Addr), true
-	case "dashboard.addr":
-		return valueOrUnset(cfg.Dashboard.Addr), true
 	case "msg_gateway.platform":
 		return valueOrUnset(cfg.MsgGateway.Platform), true
 	case "msg_gateway.api_addr":
@@ -1213,28 +1209,7 @@ func (h *Handler) handleWatch(ctx context.Context, msg *gateway.Message) error {
 	}
 }
 
-func (h *Handler) handleDashboard(ctx context.Context, msg *gateway.Message) error {
-	parts := strings.Fields(strings.TrimSpace(msg.Args))
-	subcmd := "status"
-	if len(parts) > 0 {
-		subcmd = parts[0]
-	}
-	cfg := h.agent.Config().Get()
-	addr := cfg.Dashboard.Addr
-	if strings.TrimSpace(addr) == "" {
-		addr = ":8765"
-	}
-	switch subcmd {
-	case "status", "list", "":
-		return h.reply(ctx, msg, fmt.Sprintf("Dashboard：\nconfigured addr: %s\nurl hint: %s\n\nstart/stop 属于本机进程管理，请在主机运行 lh dashboard start 或 lh dashboard stop。", addr, dashboardURLHint(addr)))
-	case "start", "stop":
-		return h.reply(ctx, msg, fmt.Sprintf("%s内不直接启停 Dashboard。请在主机运行 lh dashboard start 或 lh dashboard stop。", h.display()))
-	default:
-		return h.reply(ctx, msg, "用法：/dashboard [status]")
-	}
-}
-
-func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
+	func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
 	parts := strings.Fields(strings.TrimSpace(msg.Args))
 	subcmd := "status"
 	if len(parts) > 0 {
@@ -2893,21 +2868,7 @@ func buildInfo() (version, commit, date string) {
 	return version, commit, date
 }
 
-func dashboardURLHint(addr string) string {
-	addr = strings.TrimSpace(addr)
-	if addr == "" {
-		addr = ":8765"
-	}
-	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
-		return addr
-	}
-	if strings.HasPrefix(addr, ":") {
-		return "http://localhost" + addr
-	}
-	return "http://" + addr
-}
-
-type sessionLookupStatus int
+	type sessionLookupStatus int
 
 const (
 	sessionLookupNotFound sessionLookupStatus = iota

@@ -96,9 +96,6 @@ type Config struct {
 	// API Server 配置
 	Server ServerConfig `json:"server,omitempty"`
 
-	// Dashboard 配置
-	Dashboard DashboardConfig `json:"dashboard,omitempty"`
-
 	// Autonomy 配置
 	Autonomy AutonomyConfig `json:"autonomy,omitempty"`
 
@@ -445,11 +442,6 @@ type ServerConfig struct {
 	LogFormat              string   `json:"log_format,omitempty"`
 	ProgressSummaryWithLLM bool     `json:"progress_summary_with_llm,omitempty"` // React/WebSocket 每轮是否由 LLM 生成进度摘要
 	ProgressSummaryPrompt  string   `json:"progress_summary_prompt,omitempty"`   // React/WebSocket 每轮进度摘要展示提示词
-}
-
-// DashboardConfig Dashboard 配置
-type DashboardConfig struct {
-	Addr string `json:"addr,omitempty"`
 }
 
 // AutonomyWorkerConfig 自主 worker 配置
@@ -1074,9 +1066,6 @@ func DefaultConfig() *Config {
 			RateLimit:   60,
 			LogLevel:    "info",
 			LogFormat:   "text",
-		},
-		Dashboard: DashboardConfig{
-			Addr: ":8765",
 		},
 		Autonomy: AutonomyConfig{
 			Recovery: AutonomyRecoveryConfig{
@@ -1803,10 +1792,6 @@ func normalizeConfig(cfg *Config) {
 		cfg.Server.CORSOrigins = append([]string(nil), def.Server.CORSOrigins...)
 	}
 
-	if cfg.Dashboard.Addr == "" {
-		cfg.Dashboard.Addr = def.Dashboard.Addr
-	}
-
 	if cfg.MsgGateway.APIAddr == "" {
 		cfg.MsgGateway.APIAddr = def.MsgGateway.APIAddr
 	}
@@ -2436,8 +2421,6 @@ func (m *Manager) Set(key, value string) error {
 		m.config.Server.ProgressSummaryWithLLM = parseBool(value)
 	case "server.progress_summary_prompt":
 		m.config.Server.ProgressSummaryPrompt = value
-	case "dashboard.addr":
-		m.config.Dashboard.Addr = value
 	case "autonomy.enabled":
 		m.config.Autonomy.Enabled = parseBool(value)
 	case "autonomy.recovery.resume_on_start":
