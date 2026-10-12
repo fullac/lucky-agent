@@ -114,6 +114,8 @@ type supportRuntime struct {
 // Agent 是 LuckyAgent 的核心 Agent
 type Agent struct {
 	foregroundActive sync.Map // session ID -> active caller; removed when the request ends
+	loopMu           sync.Mutex
+	loop             *Loop
 	cfg              *config.Manager
 	soul             *soul.Soul
 	tmplMgr          *soul.TemplateManager  // SOUL 模板管理器

@@ -126,6 +126,48 @@ type LoopConfig struct {
 	Sandbox                *sandbox.Snapshot   // task-scoped execution boundary
 }
 
+// loopRuntime is the narrow set of services used by one ordinary turn. The
+// runtime is deliberately an interface: Loop does not own or reference the
+// Agent coordinator, autonomy kit, or gateway manager.
+type loopRuntime interface {
+	sandboxSnapshot(*session.Session) (*sandbox.Snapshot, error)
+	SandboxMode() sandbox.Mode
+	applySandboxToolPolicy(*LoopConfig, *sandbox.Snapshot)
+	applyIntentToolGating(*LoopConfig, string)
+	applyVisionToolPolicy(*LoopConfig, providerSnapshot)
+	runDurableLoop(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
+	useForeground(*session.Session, LoopConfig) bool
+	runForeground(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
+	StartAutonomy(context.Context) error
+	loopAutonomyEnabled() bool
+	getStreamMode() StreamMode
+	appendNaturalCitationsIfEnabled(string, []toolCallLog) string
+	appendRunningTaskNotice(string) string
+	loopHasRAG() bool
+	indexConversationTurn(string, string)
+	saveFinalAnswerDocument(string, string, string) error
+	maybeRollSession(*session.Session)
+	buildMemoryToolGate(string, TurnScope, []string) *memoryToolGate
+	maybeAutoCompactSessionWithProvider(context.Context, *session.Session, string, bool, providerSnapshot, func(CompactProgress))
+	buildContextMessagesForInputWithProvider(context.Context, *session.Session, UserTurnInput, contextBuildOptions, providerSnapshot) []provider.Message
+	buildLoopCallOptions(string, LoopConfig) provider.CallOptions
+	appendEphemeralToolSchemas(provider.CallOptions, string) provider.CallOptions
+	chatLoopIterationWithSoftRetry(context.Context, time.Duration, []provider.Message, provider.CallOptions, bool, providerSnapshot, func()) (*provider.Response, error, bool)
+	processToolCallBatch(*provider.Response, LoopConfig, *LoopResult, *session.Session, []provider.Message, *loopRuntimeState, *memoryToolGate, string) ([]provider.Message, bool, string)
+	executeMemoryGateForLoop(*memoryToolGate, LoopConfig, *LoopResult, *session.Session, []provider.Message, *loopRuntimeState) ([]provider.Message, bool)
+	processDirectResponse(*provider.Response, []provider.Message, *loopRuntimeState) ([]provider.Message, bool, string)
+}
+
+// Loop executes one turn using only the services exposed by loopRuntime.
+// Agent remains the compatibility coordinator and constructs this facade.
+type Loop struct {
+	runtime loopRuntime
+}
+
+func NewLoop(runtime loopRuntime) *Loop {
+	return &Loop{runtime: runtime}
+}
+
 // DefaultLoopConfig 返回默认 Loop 配置
 func DefaultLoopConfig() LoopConfig {
 	return LoopConfig{
@@ -317,10 +359,41 @@ func (a *Agent) RunLoopWithSessionInput(ctx context.Context, sess *session.Sessi
 	return a.runLoopWithProviderSnapshot(ctx, sess, turnInput, loopCfg, a.providerSnapshotForTurn(turnInput.RoutingText))
 }
 
+func (a *Agent) loopRunner() *Loop {
+	if a == nil {
+		return nil
+	}
+	a.loopMu.Lock()
+	defer a.loopMu.Unlock()
+	if a.loop == nil {
+		a.loop = NewLoop(a)
+	}
+	return a.loop
+}
+
+func (a *Agent) loopAutonomyEnabled() bool {
+	return a != nil && a.autonomy != nil
+}
+
+func (a *Agent) loopHasRAG() bool {
+	return a != nil && a.ragManager != nil
+}
+
+func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.Session, turnInput UserTurnInput, loopCfg LoopConfig, turnProvider providerSnapshot) (result *LoopResult, err error) {
+	runner := a.loopRunner()
+	if runner == nil {
+		return nil, fmt.Errorf("loop runtime not initialized")
+	}
+	return runner.RunWithProviderSnapshot(ctx, sess, turnInput, loopCfg, turnProvider)
+}
+
 // runLoopWithProviderSnapshot executes one turn using the provider selected at
 // its boundary. Every model call in the loop receives this same snapshot,
 // including retries and tool-result follow-up iterations.
-func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.Session, turnInput UserTurnInput, loopCfg LoopConfig, turnProvider providerSnapshot) (result *LoopResult, err error) {
+func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Session, turnInput UserTurnInput, loopCfg LoopConfig, turnProvider providerSnapshot) (result *LoopResult, err error) {
+	if l == nil || l.runtime == nil {
+		return nil, fmt.Errorf("loop runtime not initialized")
+	}
 	turnInput = turnInput.Normalize()
 	routingText := turnInput.RoutingText
 	if !turnProvider.valid() {
@@ -333,9 +406,9 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	ownedSnapshot := false
 	if snapshot == nil {
 		var snapshotErr error
-		snapshot, snapshotErr = a.sandboxSnapshot(sess)
+		snapshot, snapshotErr = l.runtime.sandboxSnapshot(sess)
 		if snapshotErr != nil {
-			return nil, fmt.Errorf("prepare %s sandbox: %w", a.SandboxMode(), snapshotErr)
+			return nil, fmt.Errorf("prepare %s sandbox: %w", l.runtime.SandboxMode(), snapshotErr)
 		}
 		ownedSnapshot = true
 	}
@@ -350,7 +423,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 			emit(ctx, event)
 		})
 	}
-	a.applySandboxToolPolicy(&loopCfg, snapshot)
+	l.runtime.applySandboxToolPolicy(&loopCfg, snapshot)
 	if strings.TrimSpace(loopCfg.Source) == "" {
 		loopCfg.Source = "cli"
 	}
@@ -358,17 +431,17 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		loopCfg.SessionID = strings.TrimSpace(sess.ID)
 	}
 	if loopCfg.Execution != nil {
-		a.applyIntentToolGating(&loopCfg, routingText)
-		a.applyVisionToolPolicy(&loopCfg, turnProvider)
-		return a.runDurableLoop(ctx, sess, turnInput, loopCfg, turnProvider)
+		l.runtime.applyIntentToolGating(&loopCfg, routingText)
+		l.runtime.applyVisionToolPolicy(&loopCfg, turnProvider)
+		return l.runtime.runDurableLoop(ctx, sess, turnInput, loopCfg, turnProvider)
 	}
-	if a.useForeground(sess, loopCfg) {
-		return a.runForeground(ctx, sess, turnInput, loopCfg, turnProvider)
+	if l.runtime.useForeground(sess, loopCfg) {
+		return l.runtime.runForeground(ctx, sess, turnInput, loopCfg, turnProvider)
 	}
-	a.applyIntentToolGating(&loopCfg, routingText)
-	a.applyVisionToolPolicy(&loopCfg, turnProvider)
+	l.runtime.applyIntentToolGating(&loopCfg, routingText)
+	l.runtime.applyVisionToolPolicy(&loopCfg, turnProvider)
 
-	if startErr := a.StartAutonomy(ctx); startErr != nil && a.autonomy != nil {
+	if startErr := l.runtime.StartAutonomy(ctx); startErr != nil && l.runtime.loopAutonomyEnabled() {
 		return nil, fmt.Errorf("start autonomy: %w", startErr)
 	}
 
@@ -391,7 +464,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		"max_iterations", loopCfg.MaxIterations,
 		"timeout_ms", loopCfg.Timeout.Milliseconds(),
 		"auto_approve", loopCfg.AutoApprove,
-		"stream_mode", a.getStreamMode(),
+		"stream_mode", l.runtime.getStreamMode(),
 		"input_len", len(routingText),
 	)
 	logger.Debug("agent loop input",
@@ -446,8 +519,8 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 			response = emptyFinalResponseMessage
 		}
 		response = utils.SanitizeToolProtocolOutput(response)
-		response = a.appendNaturalCitationsIfEnabled(response, result.ToolCalls)
-		response = a.appendRunningTaskNotice(response)
+		response = l.runtime.appendNaturalCitationsIfEnabled(response, result.ToolCalls)
+		response = l.runtime.appendRunningTaskNotice(response)
 		result.Response = response
 		result.State = StateDone
 		createdAt := time.Now().UTC()
@@ -465,12 +538,12 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 
 		// Final answers are not indexed into RAG by default: indexed source
 		// material should stay separate from model-generated conclusions.
-		if !loopCfg.Ephemeral && a.ragManager != nil && autoIndexFinalAnswersEnabled() {
-			a.indexConversationTurn(routingText, response)
+		if !loopCfg.Ephemeral && l.runtime.loopHasRAG() && autoIndexFinalAnswersEnabled() {
+			l.runtime.indexConversationTurn(routingText, response)
 		}
 
 		if !loopCfg.Ephemeral {
-			if saveErr := a.saveFinalAnswerDocument(sessionID, routingText, response); saveErr != nil {
+			if saveErr := l.runtime.saveFinalAnswerDocument(sessionID, routingText, response); saveErr != nil {
 				logger.Warn("save final answer document failed", "session_id", sessionID, "error", saveErr)
 			}
 		}
@@ -480,25 +553,25 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 			if saveErr := sess.Save(); saveErr != nil {
 				logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
 			}
-			a.maybeRollSession(sess)
+			l.runtime.maybeRollSession(sess)
 		}
 	}
 	loopState := newLoopRuntimeState()
 	loopState.provider = turnProvider
 	loopState.toolExecutionGuard = newTurnToolGuard(routingText, loopCfg.DisabledTools, loopCfg.BlockedActions, snapshotMode(loopCfg.Sandbox))
 	loopState.artifactGuard = newArtifactFinalizationGuard(routingText)
-	memoryGate := a.buildMemoryToolGate(routingText, turnInput.Scope, loopCfg.DisabledTools)
+	memoryGate := l.runtime.buildMemoryToolGate(routingText, turnInput.Scope, loopCfg.DisabledTools)
 
 	// 构建初始消息
-	a.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider, compactProgressEmitter(loopCfg))
+	l.runtime.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider, compactProgressEmitter(loopCfg))
 	buildOpts := defaultContextBuildOptions()
 	buildOpts.DisabledTools = append([]string(nil), loopCfg.DisabledTools...)
-	messages := a.buildContextMessagesForInputWithProvider(ctx, sess, turnInput, buildOpts, turnProvider)
+	messages := l.runtime.buildContextMessagesForInputWithProvider(ctx, sess, turnInput, buildOpts, turnProvider)
 	if sess != nil {
 		sess.AddProviderMessage(turnInput.Message)
 	}
 
-	callOpts := a.buildLoopCallOptions(routingText, loopCfg)
+	callOpts := l.runtime.buildLoopCallOptions(routingText, loopCfg)
 	logger.Debug("agent loop context prepared",
 		"session_id", sessionID,
 		"messages", len(messages),
@@ -508,7 +581,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	)
 
 	for i := 0; i < loopCfg.MaxIterations; i++ {
-		callOpts = a.appendEphemeralToolSchemas(callOpts, loopCfg.SessionID)
+		callOpts = l.runtime.appendEphemeralToolSchemas(callOpts, loopCfg.SessionID)
 		result.Iterations = i + 1
 		result.State = StateReason
 		logger.Debug("agent loop iteration started",
@@ -522,7 +595,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		)
 
 		// Reason: 调用 LLM（带 function calling 支持）
-		resp, err, _ := a.chatLoopIterationWithSoftRetry(
+		resp, err, _ := l.runtime.chatLoopIterationWithSoftRetry(
 			ctx,
 			loopCfg.Timeout,
 			messages,
@@ -560,29 +633,29 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		if len(resp.ToolCalls) > 0 {
 			var finalized bool
 			var finalResponse string
-			messages, finalized, finalResponse = a.processToolCallBatch(resp, loopCfg, result, sess, messages, loopState, memoryGate, turnInput.RoutingText)
+			messages, finalized, finalResponse = l.runtime.processToolCallBatch(resp, loopCfg, result, sess, messages, loopState, memoryGate, turnInput.RoutingText)
 			if finalized {
-				if updatedMessages, enforced := a.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
+				if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
 					messages = updatedMessages
 					continue
 				}
 				finalize(finalResponse, "")
 				return result, nil
 			}
-			if updatedMessages, enforced := a.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
+			if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
 				messages = updatedMessages
 			}
 			continue // 继续循环，让 LLM 处理工具结果
 		}
 
-		if updatedMessages, enforced := a.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
+		if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
 			messages = updatedMessages
 			continue
 		}
 
 		var finalized bool
 		var finalResponse string
-		messages, finalized, finalResponse = a.processDirectResponse(resp, messages, loopState)
+		messages, finalized, finalResponse = l.runtime.processDirectResponse(resp, messages, loopState)
 		if !finalized {
 			continue
 		}
@@ -602,7 +675,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 			if saveErr := sess.Save(); saveErr != nil {
 				logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
 			}
-			a.maybeRollSession(sess)
+			l.runtime.maybeRollSession(sess)
 		}
 		return result, fmt.Errorf("memory gate did not produce final synthesis")
 	}
@@ -616,7 +689,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		if saveErr := sess.Save(); saveErr != nil {
 			logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
 		}
-		a.maybeRollSession(sess)
+		l.runtime.maybeRollSession(sess)
 	}
 
 	return result, fmt.Errorf("max iterations (%d) reached", loopCfg.MaxIterations)
