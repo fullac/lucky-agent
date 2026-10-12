@@ -4540,6 +4540,23 @@ func (a *Agent) Config() *config.Manager {
 	return a.cfg
 }
 
+// ContextEstimator returns the token estimator used by context planning.
+// The planner consumes it through its narrow runtime contract.
+func (a *Agent) ContextEstimator() *contextx.TokenEstimator {
+	if a == nil {
+		return nil
+	}
+	return a.contextEst
+}
+
+// ContextCache exposes the planner cache through its minimal storage contract.
+func (a *Agent) ContextCache() contextMessageCacheStore {
+	if a == nil {
+		return nil
+	}
+	return a.contextCache
+}
+
 // Metrics 返回指标收集器
 func (a *Agent) Metrics() *metrics.Metrics {
 	return a.metrics
@@ -4558,6 +4575,29 @@ func (a *Agent) CronStore() *cron.Store {
 // Memory 返回记忆存储
 func (a *Agent) Memory() *memory.Store {
 	return a.memory
+}
+
+// MidTermStore returns the store used for query-aware session summaries.
+func (a *Agent) MidTermStore() *memory.MidTermStore {
+	if a == nil {
+		return nil
+	}
+	return a.midTerm
+}
+
+// ShortTermSummary returns the session-scoped short-term summary used by the
+// context planner. The legacy single-buffer fallback remains for old callers.
+func (a *Agent) ShortTermSummary(sess *session.Session) string {
+	if a == nil {
+		return ""
+	}
+	if a.shortTerms != nil && sess != nil {
+		return a.shortTerms.Summary(sess.ID)
+	}
+	if a.shortTerms == nil && a.shortTerm != nil {
+		return a.shortTerm.Summary()
+	}
+	return ""
 }
 
 // ContextWindow 返回上下文窗口管理器
@@ -4594,6 +4634,14 @@ func (a *Agent) ContextCacheStats() map[string]any {
 // RAG 返回 RAG 管理器
 func (a *Agent) RAG() *rag.RAGManager {
 	return a.ragManager
+}
+
+// MemoryVaultPath returns the configured durable memory vault path.
+func (a *Agent) MemoryVaultPath() string {
+	if a == nil {
+		return ""
+	}
+	return a.memoryVaultPath()
 }
 
 // RAGPersist 返回 RAG 持久化管理器
