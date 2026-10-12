@@ -63,7 +63,7 @@ type turnEventChatRuntime = turn.ChatRuntime
 
 type stateRuntime interface {
 	Sessions() *session.Manager
-	Config() agentConfigProvider
+	Config() AgentConfigProvider
 	SwitchModel(modelID string) error
 	Soul() *soul.Soul
 	Tools() *tool.Registry
@@ -80,7 +80,7 @@ type stateRuntime interface {
 	Catalog() *provider.ModelCatalog
 	RAG() *rag.RAGManager
 	ConnectMCPServer(name, url, apiKey string)
-	ContextWindowConfig() contextWindowSnapshot
+	ContextWindowConfig() ContextWindowSnapshot
 	ContextCacheStats() map[string]any
 	EmbedderRegistry() *embedder.Registry
 }
@@ -152,19 +152,26 @@ type restartNoticeSender interface {
 	SendControl(context.Context, string, string) error
 }
 
-// agentConfigProvider 定义 Handler 需要从 config 获得的能力接口。
-type agentConfigProvider interface {
+// AgentConfigProvider defines the configuration view consumed by the
+// Telegram handler. It is exported so an embedding application can provide a
+// Runtime implementation without depending on an unexported return type.
+type AgentConfigProvider interface {
 	Get() agentConfigSnapshot
 }
 
+// agentConfigProvider is retained as an in-package compatibility alias.
+type agentConfigProvider = AgentConfigProvider
+
 type mutableAgentConfigProvider interface {
-	agentConfigProvider
+	AgentConfigProvider
 	Set(key, value string) error
 	Save() error
 }
 
 // agentConfigSnapshot 是 config 快照的最小子集。
-type agentConfigSnapshot struct {
+// AgentConfigSnapshot is the configuration subset exposed to the Telegram
+// command surface.
+type AgentConfigSnapshot struct {
 	HomeDir                   string
 	ConfigFile                string
 	Model                     string
@@ -202,7 +209,11 @@ type agentConfigSnapshot struct {
 	ModelRouterEnabled        bool
 }
 
-type contextWindowSnapshot struct {
+// agentConfigSnapshot is retained as an in-package compatibility alias.
+type agentConfigSnapshot = AgentConfigSnapshot
+
+// ContextWindowSnapshot is the reduced context-window view used by commands.
+type ContextWindowSnapshot struct {
 	MaxTokens            int
 	ReservedTokens       int
 	Strategy             string
@@ -211,6 +222,9 @@ type contextWindowSnapshot struct {
 	MemoryBudget         int
 	SummarizeThreshold   float64
 }
+
+// contextWindowSnapshot is retained as an in-package compatibility alias.
+type contextWindowSnapshot = ContextWindowSnapshot
 
 // agentProviderAdapter 将 *agent.Agent 适配为 agentProvider 接口。
 type agentProviderAdapter struct {
