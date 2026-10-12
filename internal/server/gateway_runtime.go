@@ -360,7 +360,7 @@ func (s *Server) buildGateway(name string, req gatewayStartRequest) (gateway.Gat
 			AdminIDs:            preferStrings(req.AdminIDs, mg.Telegram.AdminIDs),
 			DisableAutoReaction: mg.Telegram.DisableAutoReaction,
 		})
-		h := telegram.NewHandler(adapter, s.agent)
+		h := telegram.NewHandlerWithRuntime(adapter, telegram.NewRuntime(s.agent))
 		if homeDir != "" {
 			h.SetDataDir(filepath.Join(homeDir, "data", "telegram"))
 		}

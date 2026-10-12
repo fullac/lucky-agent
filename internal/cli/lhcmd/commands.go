@@ -1259,7 +1259,7 @@ func runMsgGatewayStart(cmd *cobra.Command, args []string) error {
 			AdminIDs:            append([]string(nil), cfg.MsgGateway.Telegram.AdminIDs...),
 			DisableAutoReaction: cfg.MsgGateway.Telegram.DisableAutoReaction,
 		})
-		handler := telegram.NewHandler(tgAdapter, a)
+		handler := telegram.NewHandlerWithRuntime(tgAdapter, telegram.NewRuntime(a))
 		handler.SetDataDir(filepath.Join(a.Config().HomeDir(), "data", "telegram"))
 		tgAdapter.SetHandler(func(ctx context.Context, msg *gateway.Message) error {
 			return handler.HandleMessage(ctx, msg)
