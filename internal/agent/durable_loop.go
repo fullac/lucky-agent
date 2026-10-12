@@ -14,6 +14,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -366,7 +367,7 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 		if err := ctx.Err(); err != nil {
 			return durableProviderError(ctx, err)
 		}
-		op, err := cfg.Execution.BeginOperation(autonomy.Operation{
+		op, err := cfg.Execution.BeginOperation(turn.DurableOperation{
 			ID: pending.ID, Name: pending.Call.Name, Arguments: pending.Call.Arguments,
 		})
 		if err != nil {

@@ -4205,8 +4205,12 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 		sess.SetAgentProfile("worker", profile)
 	}
 
+	var execution turn.DurableExecution
+	if cfg.Execution != nil {
+		execution = autonomy.NewTurnExecution(cfg.Execution)
+	}
 	loopCfg := LoopConfig{
-		Execution:              cfg.Execution,
+		Execution:              execution,
 		Source:                 "autonomy",
 		MaxIterations:          cfg.MaxIterations,
 		Timeout:                cfg.Timeout,

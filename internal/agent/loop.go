@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yurika0211/luckyagent/internal/autonomy"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/logger"
 	"github.com/yurika0211/luckyagent/internal/provider"
@@ -22,6 +21,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/telemetry"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -111,19 +111,19 @@ type LoopConfig struct {
 	Foreground             bool // continue and checkpoint in the caller's request
 	emit                   func(context.Context, ChatEvent)
 	eventContext           context.Context
-	Execution              *autonomy.Execution // durable background task claim
-	MaxIterations          int                 // 最大循环次数
-	Timeout                time.Duration       // 单次循环超时
-	AutoApprove            bool                // 自动批准工具调用 (--yolo)
-	RepeatToolCallLimit    int                 // 相同工具签名重复上限
-	ToolOnlyIterationLimit int                 // 连续纯工具轮次上限
-	DuplicateFetchLimit    int                 // 同一 URL 抓取上限
-	DisabledTools          []string            // 本轮对模型隐藏的工具名
-	BlockedActions         map[string][]string // 工具名到本轮禁止的 action
-	Ephemeral              bool                // 临时后台执行，不写会话外持久化上下文
-	Source                 string              // 调用入口，例如 cli、tui、http、telegram
-	SessionID              string              // 当前回合的会话作用域（临时工具使用）
-	Sandbox                *sandbox.Snapshot   // task-scoped execution boundary
+	Execution              turn.DurableExecution // durable background task claim
+	MaxIterations          int                   // 最大循环次数
+	Timeout                time.Duration         // 单次循环超时
+	AutoApprove            bool                  // 自动批准工具调用 (--yolo)
+	RepeatToolCallLimit    int                   // 相同工具签名重复上限
+	ToolOnlyIterationLimit int                   // 连续纯工具轮次上限
+	DuplicateFetchLimit    int                   // 同一 URL 抓取上限
+	DisabledTools          []string              // 本轮对模型隐藏的工具名
+	BlockedActions         map[string][]string   // 工具名到本轮禁止的 action
+	Ephemeral              bool                  // 临时后台执行，不写会话外持久化上下文
+	Source                 string                // 调用入口，例如 cli、tui、http、telegram
+	SessionID              string                // 当前回合的会话作用域（临时工具使用）
+	Sandbox                *sandbox.Snapshot     // task-scoped execution boundary
 }
 
 // loopRuntime is the narrow set of services used by one ordinary turn. The
