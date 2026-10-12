@@ -388,7 +388,7 @@ func (a *Agent) loopRunner() *Loop {
 	a.loopMu.Lock()
 	defer a.loopMu.Unlock()
 	if a.loop == nil {
-		a.loop = NewLoop(a, LoopOptions{
+		a.loop = NewLoop(newAgentLoopRuntime(a), LoopOptions{
 			EnsureAutonomy: func(ctx context.Context) error {
 				if a.autonomy == nil {
 					return nil
