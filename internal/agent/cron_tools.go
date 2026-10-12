@@ -10,7 +10,6 @@ import (
 	"github.com/yurika0211/luckyagent/internal/cron"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/provider"
-	"github.com/yurika0211/luckyagent/internal/session"
 )
 
 /*
@@ -38,9 +37,9 @@ func getCronNotificationSystemPrompt() string {
 	return loader.LoadOrDefault("functions/cron_notification.md", defaultPrompt)
 }
 
-	var cronAgentDisabledTools = []string{
-		"cron",
-	}
+var cronAgentDisabledTools = []string{
+	"cron",
+}
 
 const cronNotificationForwardChunkLimit = 1200
 
@@ -122,103 +121,14 @@ func (m cronTaskMode) String() string {
 }
 
 func (a *Agent) buildCronTask(id string, mode cronTaskMode, command string, metadata map[string]string) func() error {
-	return func() error {
-		fmt.Printf("\n⏰ [cron:%s] %s\n", id, command)
-
-		switch mode {
-		case cronTaskModeAgent:
-			runCfg := DefaultLoopConfig()
-			if a.cfg != nil {
-				cfg := a.cfg.Get()
-				ApplyAgentLoopConfig(&runCfg, cfg.Agent)
-			}
-			runCfg.AutoApprove = true
-			runCfg.Foreground = false
-			runCfg.DisabledTools = append(runCfg.DisabledTools, cronAgentDisabledTools...)
-
-			sessionID := strings.TrimSpace(metadata["session_id"])
-			var sess *session.Session
-			if sessionID != "" {
-				if existing, ok := a.Sessions().Get(sessionID); ok {
-					sess = existing
-				} else {
-					sess = session.NewSession(sessionID, a.Sessions().Dir())
-					sess.Title = "cron-" + id
-					a.Sessions().Upsert(sess)
-				}
-			} else {
-				runCfg.Ephemeral = true
-			}
-			result, err := a.loopRunner().Run(context.Background(), sess, TextUserTurnInput(command), runCfg)
-			if err != nil {
-				notificationErr := a.sendCronNotification(metadata, cronNotificationPayload{
-					JobID:     id,
-					Mode:      mode.String(),
-					Command:   command,
-					Outcome:   "failed",
-					RawResult: err.Error(),
-				})
-				return combineCronTaskAndNotificationError(err, notificationErr)
-			}
-			if out := strings.TrimSpace(result.Response); out != "" {
-				fmt.Println(out)
-				if err := a.sendCronNotification(metadata, cronNotificationPayload{
-					JobID:     id,
-					Mode:      mode.String(),
-					Command:   command,
-					Outcome:   "succeeded",
-					RawResult: out,
-				}); err != nil {
-					return fmt.Errorf("deliver cron result: %w", err)
-				}
-			}
-			return nil
-
-		default:
-			if a.gateway == nil {
-				return fmt.Errorf("gateway is not initialized")
-			}
-			res, err := a.gateway.Execute("terminal", map[string]any{
-				"command": command,
-				"timeout": 300,
-			}, "")
-			if err != nil {
-				notificationErr := a.sendCronNotification(metadata, cronNotificationPayload{
-					JobID:     id,
-					Mode:      mode.String(),
-					Command:   command,
-					Outcome:   "failed",
-					RawResult: err.Error(),
-				})
-				return combineCronTaskAndNotificationError(err, notificationErr)
-			}
-			if res != nil && strings.Contains(res.Output, "[exit code:") {
-				taskErr := errors.New("shell command exited with non-zero status")
-				notificationErr := a.sendCronNotification(metadata, cronNotificationPayload{
-					JobID:     id,
-					Mode:      mode.String(),
-					Command:   command,
-					Outcome:   "failed",
-					RawResult: taskErr.Error(),
-				})
-				return combineCronTaskAndNotificationError(taskErr, notificationErr)
-			}
-			if res != nil && strings.TrimSpace(res.Output) != "" {
-				out := strings.TrimSpace(res.Output)
-				fmt.Println(out)
-				if err := a.sendCronNotification(metadata, cronNotificationPayload{
-					JobID:     id,
-					Mode:      mode.String(),
-					Command:   command,
-					Outcome:   "succeeded",
-					RawResult: out,
-				}); err != nil {
-					return fmt.Errorf("deliver cron result: %w", err)
-				}
-			}
-			return nil
-		}
+	runtime := cronTaskRuntime{
+		loop:     a.loopRunner(),
+		sessions: a.sessions,
+		cfg:      a.cfg,
+		gateway:  a.gateway,
+		notify:   a.sendCronNotification,
 	}
+	return runtime.buildTask(id, mode, command, metadata)
 }
 
 func combineCronTaskAndNotificationError(taskErr, notificationErr error) error {
