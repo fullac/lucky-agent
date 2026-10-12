@@ -1988,7 +1988,7 @@ func (h *Handler) handleLucky(ctx context.Context, msg *gateway.Message) error {
 		if err != nil {
 			return h.sendLuckyNotice(ctx, msg, fmt.Sprintf("Lucky 提交失败：%s", err.Error()))
 		}
-		input := batch.UserTurnInput()
+		input := agent.UserTurnInputFromTurn(batch.UserTurnInput())
 		finalMsg := *msg
 		finalMsg.IsCommand = false
 		finalMsg.Command = ""

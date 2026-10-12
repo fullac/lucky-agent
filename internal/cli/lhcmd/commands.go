@@ -1553,7 +1553,7 @@ func handlePlainGatewayLuckyCommand(ctx context.Context, platform string, runtim
 		if err != nil {
 			return gw.SendWithReply(ctx, msg.Chat.ID, msg.ID, "Lucky 提交失败："+err.Error())
 		}
-		return sendPlainGatewayAgentInput(ctx, platform, runtime, gw, msg, batch.UserTurnInput(), errorPrefix)
+		return sendPlainGatewayAgentInput(ctx, platform, runtime, gw, msg, agent.UserTurnInputFromTurn(batch.UserTurnInput()), errorPrefix)
 	case luckycollector.LuckyActionStatus:
 		status := lucky.Status(key)
 		if !status.Active {

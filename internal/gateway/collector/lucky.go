@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/gateway"
+	"github.com/yurika0211/luckyagent/internal/turn"
 )
 
 type LuckyAction string
@@ -293,8 +293,13 @@ func (b LuckyBatch) Attachments() []gateway.Attachment {
 	return append([]gateway.Attachment(nil), attachments...)
 }
 
-func (b LuckyBatch) UserTurnInput() agent.UserTurnInput {
-	return agent.MultimodalUserTurnInput(b.Text(), b.Attachments())
+func (b LuckyBatch) UserTurnInput() turn.Input {
+	text := b.Text()
+	return turn.Input{
+		OriginalText: text,
+		RoutingText:  text,
+		Attachments:  b.Attachments(),
+	}
 }
 
 func statusFromBuffer(buf *luckyBuffer) LuckyStatus {
