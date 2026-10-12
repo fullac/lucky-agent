@@ -175,7 +175,7 @@ func (h *Handler) HandleMessage(ctx context.Context, msg *gateway.Message) error
 	return h.dispatchChatAsync(ctx, msg, input)
 }
 
-func formatQQApprovalPrompt(evt agent.ChatEvent) string {
+func formatQQApprovalPrompt(evt turn.ChatEvent) string {
 	kind := "approval"
 	requestID := ""
 	prompt := strings.TrimSpace(evt.Content)
@@ -2107,17 +2107,17 @@ func napcatSenderContextText(text string, sender gateway.User) string {
 	return b.String()
 }
 
-func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan agent.ChatEvent, error) {
-	var events <-chan agent.ChatEvent
+func (h *Handler) openTurnChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan turn.ChatEvent, error) {
+	var events <-chan turn.ChatEvent
 	var err error
 	if h.chat != nil {
-		neutralEvents, neutralErr := h.chat.ChatWithSessionStreamTurnEvents(ctx, sessionID, agent.TurnInput(input))
-		err = neutralErr
-		if neutralErr == nil {
-			events = agent.FromTurnChatEventStream(ctx, neutralEvents)
-		}
+		events, err = h.chat.ChatWithSessionStreamTurnEvents(ctx, sessionID, agent.TurnInput(input))
 	} else {
-		events, err = h.agent.ChatWithSessionStreamInput(ctx, sessionID, input)
+		legacyEvents, legacyErr := h.agent.ChatWithSessionStreamInput(ctx, sessionID, input)
+		err = legacyErr
+		if legacyErr == nil {
+			events = agent.ToTurnChatEventStream(ctx, legacyEvents)
+		}
 	}
 	if err == nil {
 		return events, nil
@@ -2128,13 +2128,23 @@ func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input 
 	h.resetSession(chatID)
 	retrySessionID := h.getSessionID(chatID)
 	if h.chat != nil {
-		neutralEvents, retryErr := h.chat.ChatWithSessionStreamTurnEvents(ctx, retrySessionID, agent.TurnInput(input))
-		if retryErr != nil {
-			return nil, retryErr
-		}
-		return agent.FromTurnChatEventStream(ctx, neutralEvents), nil
+		return h.chat.ChatWithSessionStreamTurnEvents(ctx, retrySessionID, agent.TurnInput(input))
 	}
-	return h.agent.ChatWithSessionStreamInput(ctx, retrySessionID, input)
+	legacyEvents, retryErr := h.agent.ChatWithSessionStreamInput(ctx, retrySessionID, input)
+	if retryErr != nil {
+		return nil, retryErr
+	}
+	return agent.ToTurnChatEventStream(ctx, legacyEvents), nil
+}
+
+// openChatEventStream is retained for callers that still render legacy agent
+// events. The message path uses openTurnChatEventStream directly.
+func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan agent.ChatEvent, error) {
+	events, err := h.openTurnChatEventStream(ctx, chatID, input, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return agent.FromTurnChatEventStream(ctx, events), nil
 }
 
 func (h *Handler) sendProgress(ctx context.Context, msg *gateway.Message, text string) {
@@ -2308,7 +2318,7 @@ func (h *Handler) handleChatStream(ctx context.Context, msg *gateway.Message, in
 	stopTyping := h.startTypingIndicator(chatCtx, msg)
 	defer stopTyping()
 
-	events, err := h.openChatEventStream(chatCtx, msg.Chat.ID, input, sessionID)
+	events, err := h.openTurnChatEventStream(chatCtx, msg.Chat.ID, input, sessionID)
 	if err != nil {
 		if isTaskTimeoutError(err) {
 			h.sendProgress(ctx, msg, "⏱ 请求超时")
@@ -2321,7 +2331,7 @@ func (h *Handler) handleChatStream(ctx context.Context, msg *gateway.Message, in
 		return err
 	}
 
-	return h.handleChatEventStream(chatCtx, msg, events)
+	return h.handleTurnChatEventStream(chatCtx, msg, events)
 }
 
 func (h *Handler) startTypingIndicator(ctx context.Context, msg *gateway.Message) context.CancelFunc {
@@ -2351,12 +2361,18 @@ func (h *Handler) startTypingIndicator(ctx context.Context, msg *gateway.Message
 	return cancel
 }
 
+// handleChatEventStream keeps the legacy event signature used by older tests
+// and in-process callers. New message handling consumes turn.ChatEvent below.
 func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Message, events <-chan agent.ChatEvent) error {
+	return h.handleTurnChatEventStream(chatCtx, msg, agent.ToTurnChatEventStream(chatCtx, events))
+}
+
+func (h *Handler) handleTurnChatEventStream(chatCtx context.Context, msg *gateway.Message, events <-chan turn.ChatEvent) error {
 	if h.finalAnswerOnly {
 		if streamGateway, ok := h.adapter.(gateway.StreamGateway); ok {
 			stream, err := streamGateway.SendStream(chatCtx, msg.Chat.ID, msg.ID)
 			if err == nil && stream != nil {
-				return h.handleChatEventStreamWithSender(chatCtx, msg, events, stream)
+				return h.handleTurnChatEventStreamWithSender(chatCtx, msg, events, stream)
 			}
 			if err != nil {
 				fmt.Printf("[%s] streaming unavailable; falling back to text: %v\n", h.logPrefixValue(), err)
@@ -2392,7 +2408,7 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 				return h.sendAssistantResponseWithTrace(context.Background(), msg, out, trace)
 			}
 			switch evt.Type {
-			case agent.ChatEventThinking:
+			case turn.ChatEventThinking:
 				if nextRound := extractQQRoundNumber(evt.Content); nextRound > currentRound {
 					currentRound = nextRound
 				}
@@ -2401,24 +2417,24 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 				}
 				trace.AddThinking(evt.Content, currentRound)
 				h.sendProgress(context.Background(), msg, qqThinkingMessage(evt.Content, currentRound))
-			case agent.ChatEventApprovalRequired:
+			case turn.ChatEventApprovalRequired:
 				h.sendProgress(context.Background(), msg, formatQQApprovalPrompt(evt))
-			case agent.ChatEventToolCall:
+			case turn.ChatEventToolCall:
 				if h.finalAnswerOnly {
 					continue
 				}
 				trace.AddToolCall(evt.Name, evt.Args)
 				h.sendProgress(context.Background(), msg, qqToolCallMessage(evt.Name, evt.Args))
-			case agent.ChatEventToolResult:
+			case turn.ChatEventToolResult:
 				if h.finalAnswerOnly {
 					continue
 				}
 				result := qqToolResultText(evt)
 				trace.AddToolResult(evt.Name, result)
 				h.sendProgress(context.Background(), msg, qqToolResultMessage(evt.Name, result))
-			case agent.ChatEventContent:
+			case turn.ChatEventContent:
 				finalContent.WriteString(evt.Content)
-			case agent.ChatEventDone:
+			case turn.ChatEventDone:
 				if evt.Content != "" {
 					finalContent.Reset()
 					finalContent.WriteString(evt.Content)
@@ -2431,7 +2447,7 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 					return h.sendAssistantResponse(context.Background(), msg, out)
 				}
 				return h.sendAssistantResponseWithTrace(context.Background(), msg, out, trace)
-			case agent.ChatEventError:
+			case turn.ChatEventError:
 				if isTaskTimeoutError(evt.Err) {
 					h.sendProgress(context.Background(), msg, "⏱ 请求超时")
 					return nil
@@ -2446,7 +2462,13 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 	}
 }
 
+// handleChatEventStreamWithSender is the legacy wrapper for callers that
+// still produce agent.ChatEvent values.
 func (h *Handler) handleChatEventStreamWithSender(chatCtx context.Context, msg *gateway.Message, events <-chan agent.ChatEvent, stream gateway.StreamSender) error {
+	return h.handleTurnChatEventStreamWithSender(chatCtx, msg, agent.ToTurnChatEventStream(chatCtx, events), stream)
+}
+
+func (h *Handler) handleTurnChatEventStreamWithSender(chatCtx context.Context, msg *gateway.Message, events <-chan turn.ChatEvent, stream gateway.StreamSender) error {
 	var finalContent strings.Builder
 	streamHealthy := true
 	failStream := func(err error) {
@@ -2497,38 +2519,38 @@ func (h *Handler) handleChatEventStreamWithSender(chatCtx context.Context, msg *
 				return finish()
 			}
 			switch evt.Type {
-			case agent.ChatEventThinking:
+			case turn.ChatEventThinking:
 				if streamHealthy {
 					if err := stream.SetThinking(evt.Content); err != nil {
 						failStream(err)
 					}
 				}
-			case agent.ChatEventApprovalRequired:
+			case turn.ChatEventApprovalRequired:
 				if streamHealthy {
 					if err := stream.SetThinking(formatQQApprovalPrompt(evt)); err != nil {
 						failStream(err)
 					}
 				}
-			case agent.ChatEventToolCall:
+			case turn.ChatEventToolCall:
 				if streamHealthy {
 					if err := stream.SetToolCall(evt.Name, evt.Args); err != nil {
 						failStream(err)
 					}
 				}
-			case agent.ChatEventContent:
+			case turn.ChatEventContent:
 				finalContent.WriteString(evt.Content)
 				if streamHealthy {
 					if err := stream.Append(evt.Content); err != nil {
 						failStream(err)
 					}
 				}
-			case agent.ChatEventDone:
+			case turn.ChatEventDone:
 				if evt.Content != "" {
 					finalContent.Reset()
 					finalContent.WriteString(evt.Content)
 				}
 				return finish()
-			case agent.ChatEventError:
+			case turn.ChatEventError:
 				message := fmt.Sprintf("处理消息时出错：%v", evt.Err)
 				if isTaskTimeoutError(evt.Err) {
 					message = "⏱ 请求超时"
@@ -2559,7 +2581,7 @@ func extractQQRoundNumber(thinking string) int {
 	return 0
 }
 
-func qqToolResultText(evt agent.ChatEvent) string {
+func qqToolResultText(evt turn.ChatEvent) string {
 	if strings.TrimSpace(evt.Result) != "" {
 		return evt.Result
 	}
