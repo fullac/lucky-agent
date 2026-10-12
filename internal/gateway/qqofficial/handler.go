@@ -70,7 +70,7 @@ type messageFeedbackSender interface {
 // narrow interface while those commands are migrated.
 type turnChatRuntime interface {
 	ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error)
-	ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error)
+	ChatWithSessionStreamTurnEvents(ctx context.Context, sessionID string, input turn.Input) (<-chan turn.ChatEvent, error)
 }
 
 type HandlerOptions struct {
@@ -2111,7 +2111,11 @@ func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input 
 	var events <-chan agent.ChatEvent
 	var err error
 	if h.chat != nil {
-		events, err = h.chat.ChatWithSessionStreamTurn(ctx, sessionID, agent.TurnInput(input))
+		neutralEvents, neutralErr := h.chat.ChatWithSessionStreamTurnEvents(ctx, sessionID, agent.TurnInput(input))
+		err = neutralErr
+		if neutralErr == nil {
+			events = agent.FromTurnChatEventStream(ctx, neutralEvents)
+		}
 	} else {
 		events, err = h.agent.ChatWithSessionStreamInput(ctx, sessionID, input)
 	}
@@ -2124,7 +2128,11 @@ func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input 
 	h.resetSession(chatID)
 	retrySessionID := h.getSessionID(chatID)
 	if h.chat != nil {
-		return h.chat.ChatWithSessionStreamTurn(ctx, retrySessionID, agent.TurnInput(input))
+		neutralEvents, retryErr := h.chat.ChatWithSessionStreamTurnEvents(ctx, retrySessionID, agent.TurnInput(input))
+		if retryErr != nil {
+			return nil, retryErr
+		}
+		return agent.FromTurnChatEventStream(ctx, neutralEvents), nil
 	}
 	return h.agent.ChatWithSessionStreamInput(ctx, retrySessionID, input)
 }

@@ -2614,6 +2614,17 @@ func (a *Agent) ChatWithSessionStreamTurn(ctx context.Context, sessionID string,
 	return a.ChatWithSessionStreamInput(ctx, sessionID, UserTurnInputFromTurn(input))
 }
 
+// ChatWithSessionStreamTurnEvents is the neutral-event counterpart to
+// ChatWithSessionStreamTurn. The legacy method remains available for in-process
+// callers while gateway adapters can consume turn.ChatEvent directly.
+func (a *Agent) ChatWithSessionStreamTurnEvents(ctx context.Context, sessionID string, input turn.Input) (<-chan turn.ChatEvent, error) {
+	events, err := a.ChatWithSessionStreamTurn(ctx, sessionID, input)
+	if err != nil {
+		return nil, err
+	}
+	return ToTurnChatEventStream(ctx, events), nil
+}
+
 func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, sessionID string, input UserTurnInput, loopCfg LoopConfig) (<-chan ChatEvent, error) {
 	sess, ok := a.sessions.Get(sessionID)
 	if !ok {

@@ -56,6 +56,13 @@ type turnChatRuntime interface {
 	ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error)
 }
 
+// turnEventChatRuntime is the neutral stream variant. It is optional during
+// migration so existing command test doubles can keep implementing the legacy
+// stream method while production adapters move to turn.ChatEvent.
+type turnEventChatRuntime interface {
+	ChatWithSessionStreamTurnEvents(ctx context.Context, sessionID string, input turn.Input) (<-chan turn.ChatEvent, error)
+}
+
 type stateRuntime interface {
 	Sessions() *session.Manager
 	Config() agentConfigProvider
@@ -101,6 +108,13 @@ func chatWithSessionTurn(ctx context.Context, runtime chatRuntime, sessionID str
 }
 
 func chatWithSessionStreamTurn(ctx context.Context, runtime chatRuntime, sessionID string, input agent.UserTurnInput) (<-chan agent.ChatEvent, error) {
+	if neutral, ok := runtime.(turnEventChatRuntime); ok {
+		events, err := neutral.ChatWithSessionStreamTurnEvents(ctx, sessionID, agent.TurnInput(input))
+		if err != nil {
+			return nil, err
+		}
+		return agent.FromTurnChatEventStream(ctx, events), nil
+	}
 	if narrow, ok := runtime.(turnChatRuntime); ok {
 		return narrow.ChatWithSessionStreamTurn(ctx, sessionID, agent.TurnInput(input))
 	}
@@ -290,6 +304,10 @@ func (a agentProviderAdapter) ChatWithSessionStreamInput(ctx context.Context, se
 
 func (a agentProviderAdapter) ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error) {
 	return a.inner.ChatWithSessionStreamTurn(ctx, sessionID, input)
+}
+
+func (a agentProviderAdapter) ChatWithSessionStreamTurnEvents(ctx context.Context, sessionID string, input turn.Input) (<-chan turn.ChatEvent, error) {
+	return a.inner.ChatWithSessionStreamTurnEvents(ctx, sessionID, input)
 }
 
 func (a agentProviderAdapter) ProgressFeedback(ctx context.Context, userInput string, round int, observations []string) (string, error) {
