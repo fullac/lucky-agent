@@ -42,7 +42,7 @@ func TestBuildSystemPromptIncludesSoulSkillsAndPlatformHints(t *testing.T) {
 		soul: &soul.Soul{Content: "You are Custom Lucky."},
 		tools: func() *tool.Registry {
 			r := tool.NewRegistry()
-			r.Register(&tool.Tool{Name: "remember", Enabled: true})
+			r.Register(&tool.Tool{Name: "memory", Enabled: true})
 			r.Register(&tool.Tool{Name: "skill_read", Enabled: true})
 			r.Register(&tool.Tool{Name: "computer_observe", Enabled: true})
 			r.Register(&tool.Tool{Name: "computer_act", Enabled: true})
@@ -146,17 +146,16 @@ func TestBuildSystemPromptIncludesHybridComputerTerminalPolicyOnlyWhenAllToolsVi
 
 func TestBuildSystemPromptIncludesDelegateWaitPolicyOnlyWhenToolsVisible(t *testing.T) {
 	reg := tool.NewRegistry()
-	reg.Register(&tool.Tool{Name: "delegate_task", Enabled: true})
-	reg.Register(&tool.Tool{Name: "wait_for_tasks", Enabled: true})
+	reg.Register(&tool.Tool{Name: "subagent", Enabled: true})
 	a := &Agent{soul: soul.Default(), tools: reg}
 
 	prompt := a.buildSystemPrompt(nil)
-	if !strings.Contains(prompt, "Delegated-task completion protocol:") || !strings.Contains(prompt, "wait_for_tasks") {
+	if !strings.Contains(prompt, "Delegated-task completion protocol:") || !strings.Contains(prompt, "action=wait") {
 		t.Fatalf("expected delegate wait policy, got %q", prompt)
 	}
-	withoutWait := a.buildSystemPromptWithOptions(nil, systemPromptOptions{DisabledTools: []string{"wait_for_tasks"}})
+	withoutWait := a.buildSystemPromptWithOptions(nil, systemPromptOptions{DisabledTools: []string{"subagent"}})
 	if strings.Contains(withoutWait, "Delegated-task completion protocol:") {
-		t.Fatalf("did not expect delegate wait policy when wait_for_tasks is hidden, got %q", withoutWait)
+		t.Fatalf("did not expect delegate wait policy when subagent is hidden, got %q", withoutWait)
 	}
 }
 
@@ -184,7 +183,7 @@ func TestBuildSystemPromptIncludesNapCatPlainTextPlatformHint(t *testing.T) {
 		soul: soul.Default(),
 		tools: func() *tool.Registry {
 			r := tool.NewRegistry()
-			r.Register(&tool.Tool{Name: "remember", Enabled: true})
+			r.Register(&tool.Tool{Name: "memory", Enabled: true})
 			return r
 		}(),
 	}
@@ -292,8 +291,7 @@ func TestBuildSystemPromptOmitsDisabledToolGuidance(t *testing.T) {
 		t.Fatalf("NewManagerWithDir: %v", err)
 	}
 	reg := tool.NewRegistry()
-	reg.Register(&tool.Tool{Name: "remember", Enabled: true, Description: "Save memory"})
-	reg.Register(&tool.Tool{Name: "recall", Enabled: true, Description: "Read memory"})
+	reg.Register(&tool.Tool{Name: "memory", Enabled: true, Description: "Save memory"})
 	reg.Register(&tool.Tool{Name: "skill_read", Enabled: true, Description: "Read a skill"})
 
 	a := &Agent{
@@ -310,7 +308,7 @@ func TestBuildSystemPromptOmitsDisabledToolGuidance(t *testing.T) {
 	}
 
 	prompt := a.buildSystemPromptWithOptions(nil, systemPromptOptions{
-		DisabledTools: []string{"remember", "recall", "skill_read"},
+		DisabledTools: []string{"memory", "skill_read"},
 	})
 	for _, notWant := range []string{
 		"Tool-use policy:",

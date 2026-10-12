@@ -100,8 +100,7 @@ func TestBuiltinToolsRegistration(t *testing.T) {
 	r := NewRegistry()
 	RegisterBuiltinTools(r)
 
-	expected := []string{"terminal", "file_read", "document_read", "file_write", "file_mkdir", "file_move", "file_delete", "file_patch", "file_list", "web_search", "web_fetch", "opencli", "current_time", "calculate", "image_analyze", "image_generate", "text_to_speech", "log_tail", "log_grep", "http_request", "json_query", "yaml_query", "csv_query", "sql_query", "db_schema", "remember", "recall", "rag_search", "rag_index"}
-	expected = append(expected, "image_read")
+	expected := []string{"terminal", "file_read", "document_read", "file_write", "file_mkdir", "file_move", "file_delete", "file_patch", "file_list", "web_search", "web_fetch", "opencli", "current_time", "calculate", "image", "text_to_speech", "data", "http_request", "memory", "rag_search", "rag_index"}
 	for _, name := range expected {
 		tool, ok := r.Get(name)
 		if !ok {
@@ -225,57 +224,61 @@ func TestCalculateTool(t *testing.T) {
 	}
 }
 
-func TestLogTailAndLogGrepTools(t *testing.T) {
-	r := NewRegistry()
-	RegisterBuiltinTools(r)
+	func TestLogTool(t *testing.T) {
+		r := NewRegistry()
+		RegisterBuiltinTools(r)
 
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "app.log")
-	content := "one\nerror first\ntwo\nthree\nerror second\nfour\n"
-	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
-		t.Fatalf("write log: %v", err)
-	}
+		tmpDir := t.TempDir()
+		testFile := filepath.Join(tmpDir, "app.log")
+		content := "one\nerror first\ntwo\nthree\nerror second\nfour\n"
+		if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+			t.Fatalf("write log: %v", err)
+		}
 
-	tail, err := r.Call("log_tail", map[string]any{"path": testFile, "lines": 2})
-	if err != nil {
-		t.Fatalf("log_tail: %v", err)
-	}
-	if !strings.Contains(tail, "error second") || !strings.Contains(tail, "four") {
-		t.Fatalf("unexpected tail output: %q", tail)
-	}
+		tail, err := r.Call("data", map[string]any{"action": "log", "mode": "tail", "path": testFile, "lines": 2})
+		if err != nil {
+			t.Fatalf("log tail: %v", err)
+		}
+		if !strings.Contains(tail, "error second") || !strings.Contains(tail, "four") {
+			t.Fatalf("unexpected tail output: %q", tail)
+		}
 
-	grep, err := r.Call("log_grep", map[string]any{"path": testFile, "pattern": "error", "before": 1, "after": 0})
-	if err != nil {
-		t.Fatalf("log_grep: %v", err)
-	}
-	if !strings.Contains(grep, "> 2| error first") || !strings.Contains(grep, "> 5| error second") {
-		t.Fatalf("unexpected grep output: %q", grep)
-	}
+		grep, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "error", "before": 1, "after": 0})
+		if err != nil {
+			t.Fatalf("log grep: %v", err)
+		}
+		if !strings.Contains(grep, "> 2| error first") || !strings.Contains(grep, "> 5| error second") {
+			t.Fatalf("unexpected grep output: %q", grep)
+		}
 
-	noMatch, err := r.Call("log_grep", map[string]any{"path": testFile, "pattern": "panic"})
-	if err != nil {
-		t.Fatalf("log_grep no match should not fail: %v", err)
-	}
-	if !strings.Contains(noMatch, "No matches") {
-		t.Fatalf("unexpected no-match output: %q", noMatch)
-	}
+		noMatch, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "panic"})
+		if err != nil {
+			t.Fatalf("log grep no match should not fail: %v", err)
+		}
+		if !strings.Contains(noMatch, "No matches") {
+			t.Fatalf("unexpected no-match output: %q", noMatch)
+		}
 
-	ignoreCase, err := r.Call("log_grep", map[string]any{"path": testFile, "pattern": "ERROR", "ignore_case": true, "max_matches": 1})
-	if err != nil {
-		t.Fatalf("log_grep ignore_case: %v", err)
-	}
-	if !strings.Contains(ignoreCase, "> 2| error first") {
-		t.Fatalf("unexpected ignore_case output: %q", ignoreCase)
-	}
+		ignoreCase, err := r.Call("data", map[string]any{"action": "log", "mode": "grep", "path": testFile, "pattern": "ERROR", "ignore_case": true, "max_matches": 1})
+		if err != nil {
+			t.Fatalf("log grep ignore_case: %v", err)
+		}
+		if !strings.Contains(ignoreCase, "> 2| error first") {
+			t.Fatalf("unexpected ignore_case output: %q", ignoreCase)
+		}
 
-	numberedTail, err := r.Call("log_tail", map[string]any{"path": testFile, "lines": 2, "with_line_numbers": true})
-	if err != nil {
-		t.Fatalf("log_tail with line numbers: %v", err)
+		numberedTail, err := r.Call("data", map[string]any{"action": "log", "mode": "tail", "path": testFile, "lines": 2, "with_line_numbers": true})
+		if err != nil {
+			t.Fatalf("log tail with line numbers: %v", err)
+		}
+		if !strings.Contains(numberedTail, "5| error second") || !strings.Contains(numberedTail, "6| four") {
+			t.Fatalf("unexpected numbered tail output: %q", numberedTail)
+		}
+
+		if _, err := r.Call("data", map[string]any{"action": "log", "path": testFile}); err == nil || !strings.Contains(err.Error(), "invalid data action") {
+			t.Fatalf("expected invalid data action, got %v", err)
+		}
 	}
-	if !strings.Contains(numberedTail, "5| error second") || !strings.Contains(numberedTail, "6| four") {
-		t.Fatalf("unexpected numbered tail output: %q", numberedTail)
-	}
-}
 
 func TestHTTPRequestToolValidation(t *testing.T) {
 	r := NewRegistry()
@@ -299,59 +302,62 @@ func TestStructuredQueryTools(t *testing.T) {
 	if err := os.WriteFile(jsonPath, []byte(`{"user":{"name":"Ada"},"metadata":{"app.kubernetes.io/name":"api"},"items":[{"id":1},{"id":2}]}`), 0644); err != nil {
 		t.Fatalf("write json: %v", err)
 	}
-	jsonResult, err := r.Call("json_query", map[string]any{"path": jsonPath, "query": "items[1].id"})
+	jsonResult, err := r.Call("data", map[string]any{"action": "query", "format": "json", "path": jsonPath, "query": "items[1].id"})
 	if err != nil {
-		t.Fatalf("json_query: %v", err)
+		t.Fatalf("data_query json: %v", err)
 	}
 	if strings.TrimSpace(jsonResult) != "2" {
-		t.Fatalf("unexpected json_query output: %q", jsonResult)
+		t.Fatalf("unexpected data_query json output: %q", jsonResult)
 	}
-	jsonBracketResult, err := r.Call("json_query", map[string]any{"path": jsonPath, "query": `metadata["app.kubernetes.io/name"]`})
+	jsonBracketResult, err := r.Call("data", map[string]any{"action": "query", "format": "json", "path": jsonPath, "query": `metadata["app.kubernetes.io/name"]`})
 	if err != nil {
-		t.Fatalf("json_query bracket key: %v", err)
+		t.Fatalf("data_query json bracket key: %v", err)
 	}
 	if strings.TrimSpace(jsonBracketResult) != `"api"` {
-		t.Fatalf("unexpected json_query bracket output: %q", jsonBracketResult)
+		t.Fatalf("unexpected data_query json bracket output: %q", jsonBracketResult)
 	}
-	jsonWildcardResult, err := r.Call("json_query", map[string]any{"path": jsonPath, "query": "items[*].id"})
+	jsonWildcardResult, err := r.Call("data", map[string]any{"action": "query", "format": "json", "path": jsonPath, "query": "items[*].id"})
 	if err != nil {
-		t.Fatalf("json_query wildcard: %v", err)
+		t.Fatalf("data_query json wildcard: %v", err)
 	}
 	if !strings.Contains(jsonWildcardResult, "1") || !strings.Contains(jsonWildcardResult, "2") {
-		t.Fatalf("unexpected json_query wildcard output: %q", jsonWildcardResult)
+		t.Fatalf("unexpected data_query json wildcard output: %q", jsonWildcardResult)
 	}
 
 	yamlPath := filepath.Join(tmpDir, "sample.yaml")
 	if err := os.WriteFile(yamlPath, []byte("service:\n  name: api\n---\nservice:\n  name: worker\n"), 0644); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}
-	yamlResult, err := r.Call("yaml_query", map[string]any{"path": yamlPath, "query": "service.name"})
+	yamlResult, err := r.Call("data", map[string]any{"action": "query", "format": "yaml", "path": yamlPath, "query": "service.name"})
 	if err != nil {
-		t.Fatalf("yaml_query: %v", err)
+		t.Fatalf("data_query yaml: %v", err)
 	}
 	if strings.TrimSpace(yamlResult) != `"api"` {
-		t.Fatalf("unexpected yaml_query output: %q", yamlResult)
+		t.Fatalf("unexpected data_query yaml output: %q", yamlResult)
 	}
-	yamlDocResult, err := r.Call("yaml_query", map[string]any{"path": yamlPath, "query": "service.name", "document": 1})
+	yamlDocResult, err := r.Call("data", map[string]any{"action": "query", "format": "yml", "path": yamlPath, "query": "service.name", "document": 1})
 	if err != nil {
-		t.Fatalf("yaml_query document: %v", err)
+		t.Fatalf("data_query yaml document: %v", err)
 	}
 	if strings.TrimSpace(yamlDocResult) != `"worker"` {
-		t.Fatalf("unexpected yaml_query document output: %q", yamlDocResult)
+		t.Fatalf("unexpected data_query yaml document output: %q", yamlDocResult)
 	}
-	yamlAllResult, err := r.Call("yaml_query", map[string]any{"path": yamlPath, "query": "service.name", "all_documents": true})
+	yamlAllResult, err := r.Call("data", map[string]any{"action": "query", "format": "yaml", "path": yamlPath, "query": "service.name", "all_documents": true})
 	if err != nil {
-		t.Fatalf("yaml_query all_documents: %v", err)
+		t.Fatalf("data_query yaml all_documents: %v", err)
 	}
 	if !strings.Contains(yamlAllResult, `"api"`) || !strings.Contains(yamlAllResult, `"worker"`) {
-		t.Fatalf("unexpected yaml_query all_documents output: %q", yamlAllResult)
+		t.Fatalf("unexpected data_query yaml all_documents output: %q", yamlAllResult)
+	}
+	if _, err := r.Call("data", map[string]any{"path": jsonPath, "query": "items[1].id"}); err == nil || !strings.Contains(err.Error(), "invalid data action") {
+		t.Fatalf("expected invalid data_query format, got %v", err)
 	}
 
 	csvPath := filepath.Join(tmpDir, "sample.csv")
 	if err := os.WriteFile(csvPath, []byte("name,role\nAda,admin\nBob,user\n"), 0644); err != nil {
 		t.Fatalf("write csv: %v", err)
 	}
-	csvResult, err := r.Call("csv_query", map[string]any{"path": csvPath, "column": "role", "equals": "admin"})
+	csvResult, err := r.Call("data", map[string]any{"action": "csv", "path": csvPath, "column": "role", "equals": "admin"})
 	if err != nil {
 		t.Fatalf("csv_query: %v", err)
 	}
@@ -375,7 +381,7 @@ func TestSQLiteTools(t *testing.T) {
 		t.Fatalf("seed sqlite: %v", err)
 	}
 
-	schemaResult, err := r.Call("db_schema", map[string]any{"path": dbPath, "table": "users"})
+	schemaResult, err := r.Call("data", map[string]any{"action": "schema", "path": dbPath, "table": "users"})
 	if err != nil {
 		t.Fatalf("db_schema: %v", err)
 	}
@@ -383,7 +389,7 @@ func TestSQLiteTools(t *testing.T) {
 		t.Fatalf("unexpected db_schema output: %q", schemaResult)
 	}
 
-	queryResult, err := r.Call("sql_query", map[string]any{"path": dbPath, "query": "SELECT name FROM users ORDER BY id"})
+	queryResult, err := r.Call("data", map[string]any{"action": "sql", "path": dbPath, "query": "SELECT name FROM users ORDER BY id"})
 	if err != nil {
 		t.Fatalf("sql_query: %v", err)
 	}
@@ -404,12 +410,13 @@ func TestImageAnalyzeTool(t *testing.T) {
 	r := NewRegistry()
 	RegisterBuiltinTools(r, processor)
 
-	result, err := r.Call("image_analyze", map[string]any{
+	result, err := r.Call("image", map[string]any{
+		"action":      "analyze",
 		"base64_data": "ZmFrZS1pbWFnZS1ieXRlcw==",
 		"mime_type":   "image/png",
 	})
 	if err != nil {
-		t.Fatalf("image_analyze call: %v", err)
+		t.Fatalf("image analyze call: %v", err)
 	}
 	if !strings.Contains(result, "Modality: image") {
 		t.Fatalf("expected image modality, got %q", result)
@@ -2382,25 +2389,25 @@ func TestToolPermissions(t *testing.T) {
 	if calcPerm != PermAuto {
 		t.Errorf("calculate should be auto, got %s", calcPerm)
 	}
-	logTailPerm, _ := r.CheckPermission("log_tail")
-	if logTailPerm != PermAuto {
-		t.Errorf("log_tail should be auto, got %s", logTailPerm)
+	dataTool, ok := r.Get("data")
+	if !ok {
+		t.Fatal("data tool not registered")
 	}
-	logGrepPerm, _ := r.CheckPermission("log_grep")
-	if logGrepPerm != PermAuto {
-		t.Errorf("log_grep should be auto, got %s", logGrepPerm)
+	if dataTool.EffectivePermission(map[string]any{"action": "log"}) != PermAuto {
+		t.Error("data log should be auto")
+	}
+	if dataTool.EffectivePermission(map[string]any{"action": "query"}) != PermAuto {
+		t.Error("data query should be auto")
+	}
+	if dataTool.EffectivePermission(map[string]any{"action": "schema"}) != PermAuto {
+		t.Error("data schema should be auto")
+	}
+	if dataTool.EffectivePermission(map[string]any{"action": "sql"}) != PermApprove {
+		t.Error("data sql should require approval")
 	}
 	httpPerm, _ := r.CheckPermission("http_request")
 	if httpPerm != PermApprove {
 		t.Errorf("http_request should be approve, got %s", httpPerm)
-	}
-	sqlPerm, _ := r.CheckPermission("sql_query")
-	if sqlPerm != PermApprove {
-		t.Errorf("sql_query should be approve, got %s", sqlPerm)
-	}
-	schemaPerm, _ := r.CheckPermission("db_schema")
-	if schemaPerm != PermAuto {
-		t.Errorf("db_schema should be auto, got %s", schemaPerm)
 	}
 }
 

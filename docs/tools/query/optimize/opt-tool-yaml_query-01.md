@@ -1,5 +1,7 @@
 # opt-tool-yaml_query-01
 
+> 历史优化记录。对应能力现在属于 `data_query` 的 `format=yaml`，当前说明见 [data_query.md](../data_query.md)。
+
 ## 目标
 
 优化 `yaml_query` 的多文档 YAML、锚点/类型处理、查询语法和输出控制，让它继续保持“只读查询本地 YAML 文件”的定位，同时更好支持 Kubernetes、CI 和复杂配置文件。

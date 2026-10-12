@@ -1070,7 +1070,8 @@ func (h *Handler) handleCron(ctx context.Context, msg *gateway.Message) error {
 			return h.reply(ctx, msg, "当前没有可用的 cron 工具。")
 		}
 		sessionID := h.getSessionID(msg.Chat.ID)
-		resp, err := reg.Call("cron_add", map[string]any{
+		resp, err := reg.Call("cron", map[string]any{
+			"action":              "add",
 			"id":                  id,
 			"schedule":            scheduleText,
 			"mode":                "agent",
@@ -1101,7 +1102,7 @@ func (h *Handler) handleCron(ctx context.Context, msg *gateway.Message) error {
 		if reg == nil {
 			return h.reply(ctx, msg, "当前没有可用的 cron 工具。")
 		}
-		if _, err := reg.Call("cron_remove", map[string]any{"id": parts[1]}); err != nil {
+		if _, err := reg.Call("cron", map[string]any{"action": "remove", "id": parts[1]}); err != nil {
 			return h.reply(ctx, msg, err.Error())
 		}
 		return h.reply(ctx, msg, fmt.Sprintf("已删除定时任务：%s", parts[1]))
@@ -1114,7 +1115,7 @@ func (h *Handler) handleCron(ctx context.Context, msg *gateway.Message) error {
 		if reg == nil {
 			return h.reply(ctx, msg, "当前没有可用的 cron 工具。")
 		}
-		if _, err := reg.Call("cron_pause", map[string]any{"id": parts[1]}); err != nil {
+		if _, err := reg.Call("cron", map[string]any{"action": "pause", "id": parts[1]}); err != nil {
 			return h.reply(ctx, msg, err.Error())
 		}
 		return h.reply(ctx, msg, fmt.Sprintf("已暂停定时任务：%s", parts[1]))
@@ -1127,7 +1128,7 @@ func (h *Handler) handleCron(ctx context.Context, msg *gateway.Message) error {
 		if reg == nil {
 			return h.reply(ctx, msg, "当前没有可用的 cron 工具。")
 		}
-		if _, err := reg.Call("cron_resume", map[string]any{"id": parts[1]}); err != nil {
+		if _, err := reg.Call("cron", map[string]any{"action": "resume", "id": parts[1]}); err != nil {
 			return h.reply(ctx, msg, err.Error())
 		}
 		return h.reply(ctx, msg, fmt.Sprintf("已恢复定时任务：%s", parts[1]))

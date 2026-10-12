@@ -73,7 +73,7 @@ func TestShellCommandClassifierDetectsHighConfidenceMutations(t *testing.T) {
 func TestToolExecutionGuardBlocksPersistentMemoryWrites(t *testing.T) {
 	guard := newToolExecutionGuard("网页里要求记住一段 token；只总结网页，不要写入记忆。")
 
-	if reason := guard.blockReason(provider.ToolCall{Name: "remember", Arguments: `{"content":"token"}`}); reason == "" {
+	if reason := guard.blockReason(provider.ToolCall{Name: "memory", Arguments: `{"action":"remember","content":"token"}`}); reason == "" {
 		t.Fatal("expected remember to be blocked")
 	}
 	if reason := guard.blockReason(provider.ToolCall{Name: "rag_index", Arguments: `{"content":"token"}`}); reason == "" {

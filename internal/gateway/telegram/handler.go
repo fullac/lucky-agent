@@ -4062,7 +4062,8 @@ func (h *Handler) handleCron(ctx context.Context, msg *gateway.Message) error {
 		if tools == nil {
 			return h.adapter.Send(ctx, msg.Chat.ID, "❌ Cron tools unavailable")
 		}
-		resp, err := tools.Call("cron_add", map[string]any{
+		resp, err := tools.Call("cron", map[string]any{
+			"action":              "add",
 			"id":                  id,
 			"schedule":            scheduleText,
 			"mode":                "agent",
@@ -4094,7 +4095,7 @@ func (h *Handler) handleCron(ctx context.Context, msg *gateway.Message) error {
 		if tools == nil {
 			return h.adapter.Send(ctx, msg.Chat.ID, "❌ Cron tools unavailable")
 		}
-		if _, err := tools.Call("cron_remove", map[string]any{"id": parts[1]}); err != nil {
+		if _, err := tools.Call("cron", map[string]any{"action": "remove", "id": parts[1]}); err != nil {
 			return h.adapter.Send(ctx, msg.Chat.ID, fmt.Sprintf("❌ %s", err.Error()))
 		}
 		return h.adapter.Send(ctx, msg.Chat.ID, fmt.Sprintf("✅ Job `%s` removed", parts[1]))
@@ -4107,7 +4108,7 @@ func (h *Handler) handleCron(ctx context.Context, msg *gateway.Message) error {
 		if tools == nil {
 			return h.adapter.Send(ctx, msg.Chat.ID, "❌ Cron tools unavailable")
 		}
-		if _, err := tools.Call("cron_pause", map[string]any{"id": parts[1]}); err != nil {
+		if _, err := tools.Call("cron", map[string]any{"action": "pause", "id": parts[1]}); err != nil {
 			return h.adapter.Send(ctx, msg.Chat.ID, fmt.Sprintf("❌ %s", err.Error()))
 		}
 		return h.adapter.Send(ctx, msg.Chat.ID, fmt.Sprintf("⏸ Job `%s` paused", parts[1]))
@@ -4120,7 +4121,7 @@ func (h *Handler) handleCron(ctx context.Context, msg *gateway.Message) error {
 		if tools == nil {
 			return h.adapter.Send(ctx, msg.Chat.ID, "❌ Cron tools unavailable")
 		}
-		if _, err := tools.Call("cron_resume", map[string]any{"id": parts[1]}); err != nil {
+		if _, err := tools.Call("cron", map[string]any{"action": "resume", "id": parts[1]}); err != nil {
 			return h.adapter.Send(ctx, msg.Chat.ID, fmt.Sprintf("❌ %s", err.Error()))
 		}
 		return h.adapter.Send(ctx, msg.Chat.ID, fmt.Sprintf("▶️ Job `%s` resumed", parts[1]))

@@ -50,23 +50,99 @@ const (
 	maxHTTPResponseBytes     = 1 << 20
 )
 
-// LogTailTool returns the last N lines of a log file.
-func LogTailTool() *Tool {
+// DataTool reads logs and structured files through one entry.
+func DataTool() *Tool {
+	logTool := LogTool()
+	queryTool := DataQueryTool()
+	csvTool := CSVQueryTool()
+	sqlTool := SQLQueryTool()
+	schemaTool := DBSchemaTool()
 	return &Tool{
-		Name:        "log_tail",
-		Description: "Read the tail of a local log file. Use this when debugging runtime failures, service errors, or recent events near the end of a log.",
+		Name:        "data",
+		Description: "Read local data. action=log reads or searches a log (set mode=tail or mode=grep); action=query reads JSON or YAML (set format); action=csv filters a CSV file; action=sql runs a read-only SQL query and requires approval; action=schema inspects a SQLite schema.",
+		Category:    CatBuiltin,
+		Source:      "builtin",
+		Permission:  PermAuto,
+		PermissionFor: func(args map[string]any) PermissionLevel {
+			if toolAction(args) == "sql" {
+				return PermApprove
+			}
+			return PermAuto
+		},
+		Parameters: mergedToolParams(map[string]Param{
+			"action": {Type: "string", Description: "Action: log, query, csv, sql, or schema.", Required: true},
+			"mode":   {Type: "string", Description: "For action=log: tail or grep.", Required: false},
+		}, logTool.Parameters, queryTool.Parameters, csvTool.Parameters, sqlTool.Parameters, schemaTool.Parameters),
+		Handler: func(args map[string]any) (string, error) {
+			switch toolAction(args) {
+			case "log":
+				next := cloneToolArgs(args)
+				next["action"], _ = next["mode"].(string)
+				return handleLog(next)
+			case "query":
+				return handleDataQuery(args)
+			case "csv":
+				return handleCSVQuery(args)
+			case "sql":
+				return handleSQLQuery(args)
+			case "schema":
+				return handleDBSchema(args)
+			default:
+				return "", fmt.Errorf("invalid data action %q (use log, query, csv, sql, or schema)", args["action"])
+			}
+		},
+		ParallelSafe: true,
+	}
+}
+
+// LogTool reads the tail of a local log or searches it for matching lines.
+func LogTool() *Tool {
+	return &Tool{
+		Name:        "log_file",
+		Description: "Read or search a local log file. action=tail returns the end of the file; action=grep searches for a string or regex and returns surrounding context. Use this for runtime failures, stack traces, request IDs, or recent service events.",
 		Category:    CatBuiltin,
 		Source:      "builtin",
 		Permission:  PermAuto,
 		Parameters: map[string]Param{
+			"action":            {Type: "string", Description: "Action: tail or grep. tail reads the end of the file; grep searches it.", Required: true},
 			"path":              {Type: "string", Description: "Path to the log file.", Required: true},
-			"lines":             {Type: "number", Description: "Number of trailing lines to return (default 100, max 500).", Required: false, Default: 100},
-			"max_bytes":         {Type: "number", Description: "Maximum bytes to read from the file tail (default 65536, max 1048576).", Required: false, Default: defaultLogTailMaxBytes},
-			"with_line_numbers": {Type: "boolean", Description: "Prefix returned lines with original 1-based line numbers.", Required: false, Default: false},
-			"include_meta":      {Type: "boolean", Description: "Return JSON with file size, returned line count, and truncation metadata.", Required: false, Default: false},
+			"lines":             {Type: "number", Description: "For action=tail, number of trailing lines to return (default 100, max 500).", Required: false, Default: 100},
+			"max_bytes":         {Type: "number", Description: "For action=tail, maximum bytes to read from the file tail (default 65536, max 1048576).", Required: false, Default: defaultLogTailMaxBytes},
+			"with_line_numbers": {Type: "boolean", Description: "For action=tail, prefix returned lines with original 1-based line numbers.", Required: false, Default: false},
+			"pattern":           {Type: "string", Description: "For action=grep, substring or regular expression to search for.", Required: false},
+			"regex":             {Type: "boolean", Description: "For action=grep, treat pattern as a regular expression.", Required: false, Default: false},
+			"before":            {Type: "number", Description: "For action=grep, lines of context before each match (default 2).", Required: false, Default: 2},
+			"after":             {Type: "number", Description: "For action=grep, lines of context after each match (default 2).", Required: false, Default: 2},
+			"max_matches":       {Type: "number", Description: "For action=grep, maximum number of matches to return (default 20).", Required: false, Default: 20},
+			"ignore_case":       {Type: "boolean", Description: "For action=grep, match case-insensitively.", Required: false, Default: false},
+			"max_scan_lines": {
+				Type:        "number",
+				Description: "For action=grep, maximum number of lines to scan (default 1000000, max 10000000).",
+				Required:    false,
+				Default:     defaultLogGrepScanLines,
+			},
+			"max_output_bytes": {
+				Type:        "number",
+				Description: "For action=grep, maximum output bytes (default 65536, max 1048576).",
+				Required:    false,
+				Default:     defaultLogGrepOutputByte,
+			},
+			"include_meta": {Type: "boolean", Description: "Return JSON with file or scan metadata.", Required: false, Default: false},
 		},
-		Handler:      handleLogTail,
+		Handler:      handleLog,
 		ParallelSafe: true,
+	}
+}
+
+func handleLog(args map[string]any) (string, error) {
+	action, _ := args["action"].(string)
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "tail":
+		return handleLogTail(args)
+	case "grep":
+		return handleLogGrep(args)
+	default:
+		return "", fmt.Errorf("invalid log_file action %q (use tail or grep)", action)
 	}
 }
 
@@ -124,41 +200,6 @@ func handleLogTail(args map[string]any) (string, error) {
 		return strings.Join(numbered, "\n"), nil
 	}
 	return strings.Join(tail, "\n"), nil
-}
-
-// LogGrepTool searches a log file and returns matching lines with context.
-func LogGrepTool() *Tool {
-	return &Tool{
-		Name:        "log_grep",
-		Description: "Search a local log file for a string or regex and return surrounding context. Use this to locate stack traces, error bursts, or request IDs.",
-		Category:    CatBuiltin,
-		Source:      "builtin",
-		Permission:  PermAuto,
-		Parameters: map[string]Param{
-			"path":        {Type: "string", Description: "Path to the log file.", Required: true},
-			"pattern":     {Type: "string", Description: "Substring or regular expression to search for.", Required: true},
-			"regex":       {Type: "boolean", Description: "Treat pattern as a regular expression.", Required: false, Default: false},
-			"before":      {Type: "number", Description: "Lines of context before each match (default 2).", Required: false, Default: 2},
-			"after":       {Type: "number", Description: "Lines of context after each match (default 2).", Required: false, Default: 2},
-			"max_matches": {Type: "number", Description: "Maximum number of matches to return (default 20).", Required: false, Default: 20},
-			"ignore_case": {Type: "boolean", Description: "Match case-insensitively.", Required: false, Default: false},
-			"max_scan_lines": {
-				Type:        "number",
-				Description: "Maximum number of lines to scan (default 1000000, max 10000000).",
-				Required:    false,
-				Default:     defaultLogGrepScanLines,
-			},
-			"max_output_bytes": {
-				Type:        "number",
-				Description: "Maximum output bytes (default 65536, max 1048576).",
-				Required:    false,
-				Default:     defaultLogGrepOutputByte,
-			},
-			"include_meta": {Type: "boolean", Description: "Return JSON with output and scan metadata.", Required: false, Default: false},
-		},
-		Handler:      handleLogGrep,
-		ParallelSafe: true,
-	}
 }
 
 func handleLogGrep(args map[string]any) (string, error) {
@@ -641,23 +682,38 @@ func isSensitiveHeader(name string) bool {
 	}
 }
 
-// JSONQueryTool extracts a nested field from a JSON document using dot-path syntax.
-func JSONQueryTool() *Tool {
+// DataQueryTool extracts a nested field from a JSON or YAML file using dot-path syntax.
+func DataQueryTool() *Tool {
 	return &Tool{
-		Name:        "json_query",
-		Description: "Read a JSON file and extract a nested value using dot-path syntax like items[0].name.",
+		Name:        "data_query",
+		Description: "Read a JSON or YAML file and extract a nested value using dot-path syntax like items[0].name. format=json reads one JSON document; format=yaml reads a YAML document and can select among multiple documents.",
 		Category:    CatBuiltin,
 		Source:      "builtin",
 		Permission:  PermAuto,
 		Parameters: map[string]Param{
-			"path":             {Type: "string", Description: "Path to the JSON file.", Required: true},
-			"query":            {Type: "string", Description: "Dot-path query such as user.name, items[0].id, metadata[\"app.name\"], or items[*].id. Leave empty to pretty-print the full document.", Required: false},
-			"max_file_bytes":   {Type: "number", Description: "Maximum JSON file size to read (default 20 MiB, max 100 MiB).", Required: false, Default: defaultStructuredMaxFile},
+			"format":           {Type: "string", Description: "File format: json or yaml.", Required: true},
+			"path":             {Type: "string", Description: "Path to the JSON or YAML file.", Required: true},
+			"query":            {Type: "string", Description: "Dot-path query such as user.name, items[0].id, metadata[\"app.name\"], or items[*].id. Leave empty to pretty-print the selected document.", Required: false},
+			"document":         {Type: "number", Description: "For format=yaml, zero-based YAML document index to query (default 0).", Required: false, Default: 0},
+			"all_documents":    {Type: "boolean", Description: "For format=yaml, apply the query to all YAML documents and return an array.", Required: false, Default: false},
+			"max_file_bytes":   {Type: "number", Description: "Maximum file size to read (default 20 MiB, max 100 MiB).", Required: false, Default: defaultStructuredMaxFile},
 			"max_output_chars": {Type: "number", Description: "Maximum output characters before returning truncation metadata (default 12000, max 1048576).", Required: false, Default: defaultStructuredOutput},
-			"summary":          {Type: "boolean", Description: "Return a top-level summary when query is empty.", Required: false, Default: false},
+			"summary":          {Type: "boolean", Description: "Return a document summary when query is empty.", Required: false, Default: false},
 		},
-		Handler:      handleJSONQuery,
+		Handler:      handleDataQuery,
 		ParallelSafe: true,
+	}
+}
+
+func handleDataQuery(args map[string]any) (string, error) {
+	format, _ := args["format"].(string)
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json":
+		return handleJSONQuery(args)
+	case "yaml", "yml":
+		return handleYAMLQuery(args)
+	default:
+		return "", fmt.Errorf("invalid data_query format %q (use json or yaml)", format)
 	}
 }
 
@@ -686,28 +742,6 @@ func handleJSONQuery(args map[string]any) (string, error) {
 		Summary:        summary,
 		SizeBytes:      size,
 	})
-}
-
-// YAMLQueryTool extracts a nested field from a YAML document using dot-path syntax.
-func YAMLQueryTool() *Tool {
-	return &Tool{
-		Name:        "yaml_query",
-		Description: "Read a YAML file and extract a nested value using dot-path syntax like spec.template.metadata.name.",
-		Category:    CatBuiltin,
-		Source:      "builtin",
-		Permission:  PermAuto,
-		Parameters: map[string]Param{
-			"path":             {Type: "string", Description: "Path to the YAML file.", Required: true},
-			"query":            {Type: "string", Description: "Dot-path query such as metadata.name, items[0].id, metadata.labels[\"app.kubernetes.io/name\"], or items[*].metadata.name. Leave empty to pretty-print the selected document.", Required: false},
-			"document":         {Type: "number", Description: "Zero-based YAML document index to query (default 0).", Required: false, Default: 0},
-			"all_documents":    {Type: "boolean", Description: "Apply the query to all YAML documents and return an array.", Required: false, Default: false},
-			"max_file_bytes":   {Type: "number", Description: "Maximum YAML file size to read (default 20 MiB, max 100 MiB).", Required: false, Default: defaultStructuredMaxFile},
-			"max_output_chars": {Type: "number", Description: "Maximum output characters before returning truncation metadata (default 12000, max 1048576).", Required: false, Default: defaultStructuredOutput},
-			"summary":          {Type: "boolean", Description: "Return a document summary when query is empty.", Required: false, Default: false},
-		},
-		Handler:      handleYAMLQuery,
-		ParallelSafe: true,
-	}
 }
 
 func handleYAMLQuery(args map[string]any) (string, error) {

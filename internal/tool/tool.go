@@ -55,6 +55,10 @@ type Tool struct {
 	// DetailedHandler without changing their call sites.
 	ContextDetailedHandler func(exec ExecutionContext, args map[string]any) (ToolCallResult, error)
 	Permission             PermissionLevel // 权限级别
+	// PermissionFor reports the permission of one call. Nil uses Permission.
+	// A tool that mixes read and write actions uses this so a read does not
+	// inherit the approval required by a write.
+	PermissionFor func(args map[string]any) PermissionLevel
 	Category               Category        // 工具分类
 	Source                 string          // 来源（skill名/mcp server名/builtin）
 	Enabled                bool            // 是否启用
@@ -70,6 +74,17 @@ type Tool struct {
 	// PolicySafe allows typed durable-memory policies to execute this tool
 	// automatically. Keep false for write, shell, delegation, and control tools.
 	PolicySafe bool
+}
+
+// EffectivePermission returns the permission that applies to one call.
+func (t *Tool) EffectivePermission(args map[string]any) PermissionLevel {
+	if t == nil {
+		return PermDeny
+	}
+	if t.PermissionFor != nil {
+		return t.PermissionFor(args)
+	}
+	return t.Permission
 }
 
 // Param 代表工具参数

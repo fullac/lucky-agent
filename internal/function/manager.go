@@ -143,7 +143,7 @@ func (m *Manager) executeCall(call FunctionCall, autoApprove bool) FunctionResul
 	}
 
 	// 权限检查
-	if !autoApprove && t.Permission == tool.PermApprove {
+	if !autoApprove && t.EffectivePermission(args) == tool.PermApprove {
 		fr := FunctionResult{
 			CallID:  call.ID,
 			Name:    call.Name,

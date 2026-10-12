@@ -14,12 +14,20 @@ func TestCronToolServiceRegistersValidate(t *testing.T) {
 
 	svc.RegisterTools(reg)
 
-	validate, ok := reg.Get("cron_validate")
+	cronTool, ok := reg.Get("cron")
 	if !ok {
-		t.Fatal("expected cron_validate to be registered")
+		t.Fatal("expected cron to be registered")
 	}
-	if validate.Permission != PermAuto {
-		t.Fatalf("expected cron_validate auto permission, got %s", validate.Permission)
+	if cronTool.EffectivePermission(map[string]any{"action": "validate"}) != PermAuto {
+		t.Fatal("expected cron validate to be auto")
+	}
+	if cronTool.EffectivePermission(map[string]any{"action": "add"}) != PermApprove {
+		t.Fatal("expected cron add to require approval")
+	}
+	for _, gone := range []string{"cron_add", "cron_list", "cron_validate", "cron_remove", "cron_pause", "cron_resume", "cron_status"} {
+		if _, ok := reg.Get(gone); ok {
+			t.Fatalf("split cron tool %s should no longer be registered", gone)
+		}
 	}
 }
 

@@ -901,6 +901,61 @@ func isTerminalDelegateStatus(status string) bool {
 	}
 }
 
+// SubagentTool creates, inspects, waits for, and cancels delegated tasks.
+func SubagentTool(dm *DelegateManager) *Tool {
+	task := DelegateTaskTool(dm)
+	status := TaskStatusTool(dm)
+	wait := WaitForTasksTool(dm)
+	list := ListTasksTool(dm)
+	cancel := DelegateCancelTool(dm)
+	byAction := map[string]*Tool{
+		"delegate": task,
+		"status":   status,
+		"wait":     wait,
+		"list":     list,
+		"cancel":   cancel,
+	}
+	call := func(exec *ExecutionContext, args map[string]any) (ToolCallResult, error) {
+		selected := byAction[toolAction(args)]
+		if selected == nil {
+			return ToolCallResult{}, fmt.Errorf("invalid subagent action %q (use delegate, status, wait, list, or cancel)", args["action"])
+		}
+		if exec != nil && selected.ContextDetailedHandler != nil {
+			return selected.ContextDetailedHandler(*exec, args)
+		}
+		if selected.DetailedHandler != nil {
+			return selected.DetailedHandler(args)
+		}
+		out, err := selected.Handler(args)
+		return ToolCallResult{Output: out}, err
+	}
+	return &Tool{
+		Name:        "subagent",
+		Description: "Manage delegated sub-agent tasks. action=delegate creates one and returns task_id; action=status checks one task; action=wait waits for task_ids and returns terminal results; action=list lists tasks; action=cancel cancels one.",
+		Category:    CatDelegate,
+		Source:      "builtin",
+		Permission:  PermAuto,
+		PermissionFor: func(args map[string]any) PermissionLevel {
+			switch toolAction(args) {
+			case "delegate", "cancel":
+				return PermApprove
+			default:
+				return PermAuto
+			}
+		},
+		Parameters: mergedToolParams(map[string]Param{
+			"action": {Type: "string", Description: "Action: delegate, status, wait, list, or cancel.", Required: true},
+		}, task.Parameters, status.Parameters, wait.Parameters, list.Parameters, cancel.Parameters),
+		Handler: func(args map[string]any) (string, error) {
+			result, err := call(nil, args)
+			return result.Output, err
+		},
+		ContextDetailedHandler: func(exec ExecutionContext, args map[string]any) (ToolCallResult, error) {
+			return call(&exec, args)
+		},
+	}
+}
+
 // DelegateTaskTool 创建子代理委派工具
 func DelegateTaskTool(dm *DelegateManager) *Tool {
 	return &Tool{
