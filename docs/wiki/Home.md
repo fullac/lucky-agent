@@ -1,13 +1,13 @@
 # LuckyAgent Wiki
 
-LuckyAgent 是一个面向长期运行的 Agent runtime。它把 CLI、HTTP API、TUI、GUI Dashboard、Telegram、QQ、NapCat、微信网关、记忆、RAG、工具调用和部署流程放在同一套运行时里管理。
+LuckyAgent 是一个面向长期运行的 Agent runtime。它把 CLI、HTTP API、Telegram、QQ、NapCat、微信网关、记忆、RAG、工具调用和部署流程放在同一套运行时里管理。
 
 如果你是第一次使用，可以按下面顺序阅读：
 
 1. [[使用指南]]
    - 初始化运行目录
    - 配置模型和服务地址
-   - 启动 CLI、API、TUI、GUI 和消息网关
+   - 启动 CLI、API 和消息网关
    - 常用命令和排障入口
 
 2. [[特色功能]]

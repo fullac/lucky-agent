@@ -275,7 +275,6 @@ $LUCKYAGENT_HOME/data/telegram/chat_sessions.json
 | `/deny <tool>` | 拒绝工具。 |
 | `/cron ...` | 管理定时任务。 |
 | `/watch ...` | 管理文件 watch。 |
-| `/dashboard [status]` | 查看 dashboard 状态。 |
 | `/msg_gateway [status]` | 查看消息网关状态。 |
 | `/rag ...` | 管理 RAG。 |
 | `/context` | 查看上下文窗口状态。 |

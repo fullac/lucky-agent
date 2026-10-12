@@ -1038,12 +1038,12 @@
         graphScope: 'local',
         collapsedGroups: [],
         edges: [
-          ['overview', 'install-tui'],
+          ['overview', 'install-cli'],
           ['overview', 'config'],
           ['overview', 'runtime'],
-          ['install-tui', 'config'],
+          ['install-cli', 'config'],
           ['config', 'config-reference'],
-          ['install-tui', 'runtime'],
+          ['install-cli', 'runtime'],
           ['config', 'source'],
           ['config', 'dev-docker'],
           ['config', 'prod-docker'],
@@ -1079,38 +1079,38 @@
             summary: 'LuckyAgent 的部署主线是 Config First：所有入口围绕同一份 HOME、config.json、SOUL、记忆、RAG 和消息网关运行。',
             points: [
               '小白用户可直接打开下载页选择系统安装包：./download.html。',
-              '核心入口包括 lh tui、lh chat、lh serve、lh msg-gateway start。',
+              '核心入口包括 lh chat、lh serve、lh msg-gateway start。',
               '部署路径包括源码运行、开发 Compose、生产 Compose 和镜像直跑。',
               '服务健康检查固定为 GET /api/v1/health。',
               '运行时行为尽量以 config.json 为准，环境变量只做局部覆盖。'
             ],
-            related: ['install-tui', 'config', 'runtime', 'source', 'dev-docker', 'prod-docker'],
+            related: ['install-cli', 'config', 'runtime', 'source', 'dev-docker', 'prod-docker'],
             commands: [
-              { label: '最短验证链路', body: 'lh init\nlh config set provider openai\nlh config set api_key sk-your-api-key\nlh config set model gpt-5.4-mini\nlh tui\nlh chat "Hello"\nlh serve\ncurl http://127.0.0.1:9090/api/v1/health' }
+              { label: '最短验证链路', body: 'lh init\nlh config set provider openai\nlh config set api_key sk-your-api-key\nlh config set model gpt-5.4-mini\nlh chat "Hello"\nlh serve\ncurl http://127.0.0.1:9090/api/v1/health' }
             ]
           },
           {
-            id: 'install-tui',
-            title: '三端安装和 TUI',
+            id: 'install-cli',
+            title: '三端安装',
             short: 'Linux / Windows / macOS 全局安装',
             group: '05 Install',
             icon: 'download',
             kind: 'deploy',
             x: 50,
             y: 22,
-            summary: 'Release 安装包包含 lh 二进制和 TUI 工作区。安装后把 lh 加进 PATH，终端里直接运行 lh tui 即可启动 TUI。',
+            summary: 'Release 安装包只包含 lh 二进制。安装后把 lh 加进 PATH，用 lh chat 做本地对话，用 lh serve 提供 HTTP API。',
             points: [
               'Linux 和 macOS 使用 install-lh.sh，默认安装到 $HOME/.local/bin。',
               'Windows 使用 install-lh.ps1，默认安装到 $HOME\\.local\\bin。',
-              'TUI 运行依赖 Node.js/npm；安装脚本会安装或回退下载 UI/TUI，并写入 .luckyagent/runtime/tui-ui-dir。',
+              '发行包不再捆绑 Node.js、GUI、TUI 或 Electron。会话、工具轨迹、记忆图、技能和网关通过 HTTP API 给外部客户端使用。',
               '如果指定版本，Linux/macOS 传 v0.x.x 参数，Windows 传 -Version v0.x.x。'
             ],
             related: ['config', 'runtime', 'commands', 'source'],
             commands: [
-              { label: 'Linux', body: 'curl -fsSL https://yurika0211.github.io/lucky-agent/install-lh.sh | sh\nexport PATH="$HOME/.local/bin:$PATH"\nlh init\nlh config set provider openai\nlh config set api_key sk-your-api-key\nlh config set model gpt-5.4-mini\nlh tui' },
-              { label: 'macOS', body: 'curl -fsSL https://yurika0211.github.io/lucky-agent/install-lh.sh | sh\necho \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.zshrc\nexec zsh -l\nlh init\nlh tui' },
-              { label: 'Windows PowerShell', body: 'iwr https://yurika0211.github.io/lucky-agent/install-lh.ps1 -OutFile "$env:TEMP\\install-lh.ps1"\npowershell -ExecutionPolicy Bypass -File "$env:TEMP\\install-lh.ps1" -Prefix "$HOME\\.local\\bin"\n$env:Path = "$HOME\\.local\\bin;$env:Path"\nlh.exe init\nlh.exe tui' },
-              { label: '指定版本或目录', body: 'sh scripts/install-lh.sh v0.54.1 "$HOME/bin"\n# Windows:\npowershell -ExecutionPolicy Bypass -File .\\scripts\\install-lh.ps1 -Version v0.54.1 -Prefix "$HOME\\bin"\n# 源码开发时仍可显式指定 UI:\nlh tui --ui-dir ./UI' }
+              { label: 'Linux', body: 'curl -fsSL https://yurika0211.github.io/lucky-agent/install-lh.sh | sh\nexport PATH="$HOME/.local/bin:$PATH"\nlh init\nlh config set provider openai\nlh config set api_key sk-your-api-key\nlh config set model gpt-5.4-mini\nlh chat "Hello"' },
+              { label: 'macOS', body: 'curl -fsSL https://yurika0211.github.io/lucky-agent/install-lh.sh | sh\necho \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.zshrc\nexec zsh -l\nlh init\nlh chat "Hello"' },
+              { label: 'Windows PowerShell', body: 'iwr https://yurika0211.github.io/lucky-agent/install-lh.ps1 -OutFile "$env:TEMP\\install-lh.ps1"\npowershell -ExecutionPolicy Bypass -File "$env:TEMP\\install-lh.ps1" -Prefix "$HOME\\.local\\bin"\n$env:Path = "$HOME\\.local\\bin;$env:Path"\nlh.exe init\nlh.exe chat "Hello"' },
+              { label: '指定版本或目录', body: 'sh scripts/install-lh.sh v0.54.1 "$HOME/bin"\n# Windows:\npowershell -ExecutionPolicy Bypass -File .\\scripts\\install-lh.ps1 -Version v0.54.1 -Prefix "$HOME\\bin"' }
             ]
           },
           {
@@ -1356,8 +1356,8 @@
               },
               {
                 id: 'services',
-                title: 'server / dashboard · 服务入口',
-                description: 'server 提供 API，dashboard 提供管理界面地址。',
+                title: 'server · 服务入口',
+                description: 'server 提供 HTTP API 和 WebSocket。',
                 fields: [
                   { field: 'server.addr', example: '127.0.0.1:9090', description: 'HTTP API 监听地址；容器对外提供服务时通常填 0.0.0.0:9090。' },
                   { field: 'server.api_keys', example: '[]', description: '访问 API 时允许的密钥数组；公网部署建议配置。' },
@@ -1365,8 +1365,7 @@
                   { field: 'server.cors_origins', example: '["*"]', description: '允许跨域的来源列表；生产环境不建议长期使用 *。' },
                   { field: 'server.rate_limit', example: '60', description: 'HTTP API 每分钟请求上限。' },
                   { field: 'server.metrics_addr', example: '""', description: 'Prometheus 指标监听地址；留空表示不单独监听。' },
-                  { field: 'server.log_level / log_format', example: 'info / text', description: '日志级别和格式，可按部署环境调整。' },
-                  { field: 'dashboard.addr', example: ':8765', description: 'Dashboard 监听地址或端口。' }
+                  { field: 'server.log_level / log_format', example: 'info / text', description: '日志级别和格式，可按部署环境调整。' }
                 ]
               },
               {
@@ -1893,7 +1892,7 @@
         },
         entryCards() {
           return [
-            { id: 'install-tui', title: '三端安装', description: 'Linux、Windows、macOS 安装后直接 lh tui' },
+            { id: 'install-cli', title: '三端安装', description: 'Linux、Windows、macOS 安装后使用 lh chat 和 lh serve' },
             { id: 'config', title: '配置入口', description: '先确认 HOME 和 config.json，再启动任何服务' },
             { id: 'prod-docker', title: '部署路径', description: '源码、开发 Compose、生产 Compose、镜像直跑' }
           ];
@@ -1901,7 +1900,7 @@
         recentRows() {
           return [
             { id: 'overview', label: '部署地图' },
-            { id: 'install-tui', label: '三端安装和 TUI' },
+            { id: 'install-cli', label: '三端安装' },
             { id: 'source', label: '源码运行' },
             { id: 'dev-docker', label: '开发 Docker' },
             { id: 'prod-docker', label: '生产 Docker' },
@@ -1915,7 +1914,7 @@
           const q = this.query.trim();
           const ids = q
             ? this.visibleNotes().map((note) => note.id)
-            : ['overview', 'install-tui', 'config', 'config-reference', 'runtime', 'source', 'dev-docker', 'prod-docker', 'api', 'opencli', 'napcat', 'ops', 'troubleshooting', 'commands'];
+            : ['overview', 'install-cli', 'config', 'config-reference', 'runtime', 'source', 'dev-docker', 'prod-docker', 'api', 'opencli', 'napcat', 'ops', 'troubleshooting', 'commands'];
           return ids.map((id) => this.node(id)).filter((note) => note.id);
         },
         articleSections() {

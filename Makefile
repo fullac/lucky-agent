@@ -1,4 +1,4 @@
-.PHONY: build install test clean init run serve chat tg qq napcat weixin dashboard tui ui-install ui-build ui-dev ui-typecheck
+.PHONY: build install test clean init run serve chat tg qq napcat weixin
 
 HOME_DIR := $(CURDIR)/.lh-home
 
@@ -21,8 +21,6 @@ build:
 	go build -o lh ./cmd/la
 
 install: build
-	mkdir -p "$$HOME/.luckyagent/runtime"
-	printf '%s\n' "$(CURDIR)/UI" > "$$HOME/.luckyagent/runtime/tui-ui-dir"
 	go install ./cmd/la
 
 test:
@@ -50,24 +48,6 @@ napcat:
 
 weixin:
 	$(RUN_WITH_HOME) $(LH_CMD) msg-gateway start --platform weixin
-
-dashboard:
-	$(RUN_WITH_HOME) $(LH_CMD) dashboard start
-
-tui:
-	$(RUN_WITH_HOME) $(LH_CMD) tui
-
-ui-install:
-	cd UI && npm install
-
-ui-build:
-	cd UI && npm run build
-
-ui-dev:
-	cd UI && npm run dev --workspace GUI
-
-ui-typecheck:
-	cd UI && npm run typecheck
 
 clean:
 	$(REMOVE_LH)

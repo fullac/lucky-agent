@@ -89,7 +89,6 @@ func TestTelegramCommandSpecsIncludeTUICompatibleCommands(t *testing.T) {
 		"deny",
 		"cron",
 		"watch",
-		"dashboard",
 		"msg_gateway",
 		"profile",
 	} {

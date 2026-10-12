@@ -510,7 +510,7 @@
             <ul class="hint-list">
               <li>下载 <strong>Setup 安装包</strong> 并双击安装。</li>
               <li>若只有 zip，解压后运行里面的启动脚本 / `lh.exe`。</li>
-              <li>安装后可在终端执行 `lh init`，再 `lh tui` 或打开 Desktop。</li>
+              <li>安装后可在终端执行 `lh init`，再用 `lh chat` 或 `lh serve`。</li>
             </ul>
           </article>
           <article class="card span-4">
@@ -553,8 +553,8 @@
         detected: { os: 'unknown', arch: 'unknown' },
         desktop: { tag: '', htmlUrl: '', publishedAt: '', assets: [] },
         android: { tag: '', htmlUrl: '', publishedAt: '', assets: [] },
-        linuxInstall: `curl -fsSL ${siteBase}/install-lh.sh | sh\nexport PATH="$HOME/.local/bin:$PATH"\nlh init\nlh tui`,
-        windowsInstall: `iwr ${siteBase}/install-lh.ps1 -OutFile "$env:TEMP\\install-lh.ps1"\npowershell -ExecutionPolicy Bypass -File "$env:TEMP\\install-lh.ps1"\n$env:Path = "$HOME\\.local\\bin;$env:Path"\nlh.exe init\nlh.exe tui`,
+        linuxInstall: `curl -fsSL ${siteBase}/install-lh.sh | sh\nexport PATH="$HOME/.local/bin:$PATH"\nlh init\nlh chat`,
+        windowsInstall: `iwr ${siteBase}/install-lh.ps1 -OutFile "$env:TEMP\\install-lh.ps1"\npowershell -ExecutionPolicy Bypass -File "$env:TEMP\\install-lh.ps1"\n$env:Path = "$HOME\\.local\\bin;$env:Path"\nlh.exe init\nlh.exe chat`,
 
         get detectedLabel() {
           const osMap = { windows: 'Windows', mac: 'macOS', linux: 'Linux', android: 'Android', unknown: '未知' };

@@ -136,7 +136,6 @@ type agentConfigSnapshot struct {
 	MaxTokens                 int
 	Temperature               float64
 	ServerAddr                string
-	DashboardAddr             string
 	MsgGatewayPlatform        string
 	MsgGatewayStartAll        bool
 	MsgGatewayAPIAddr         string
@@ -363,7 +362,6 @@ func (w agentConfigWrapper) Get() agentConfigSnapshot {
 		MaxTokens:                 cfg.MaxTokens,
 		Temperature:               cfg.Temperature,
 		ServerAddr:                cfg.Server.Addr,
-		DashboardAddr:             cfg.Dashboard.Addr,
 		MsgGatewayPlatform:        cfg.MsgGateway.Platform,
 		MsgGatewayStartAll:        cfg.MsgGateway.StartAll,
 		MsgGatewayAPIAddr:         cfg.MsgGateway.APIAddr,
@@ -598,7 +596,6 @@ func (h *Handler) buildCommandRegistry() map[string]telegramCommandHandler {
 		"deny":          h.handleDeny,
 		"cron":          h.handleCron,
 		"watch":         h.handleWatch,
-		"dashboard":     h.handleDashboard,
 		"msg_gateway":   h.handleMsgGateway,
 		"rag":           h.handleRAG,
 		"context":       h.handleContext,
@@ -3313,7 +3310,7 @@ func (h *Handler) handleConfig(ctx context.Context, msg *gateway.Message) error 
 
 func (h *Handler) sendConfigList(ctx context.Context, msg *gateway.Message) error {
 	cfg := h.configSnapshot()
-	info := fmt.Sprintf("⚙️ *Configuration:*\n\n• provider: %s\n• api_key: %s\n• api_base: %s\n• model: %s\n• soul_path: `%s`\n• max_tokens: %d\n• temperature: %.1f\n• server.addr: %s\n• dashboard.addr: %s\n• msg_gateway.platform: %s\n• msg_gateway.api_addr: %s\n• msg_gateway.telegram.token: %s",
+	info := fmt.Sprintf("⚙️ *Configuration:*\n\n• provider: %s\n• api_key: %s\n• api_base: %s\n• model: %s\n• soul_path: `%s`\n• max_tokens: %d\n• temperature: %.1f\n• server.addr: %s\n• msg_gateway.platform: %s\n• msg_gateway.api_addr: %s\n• msg_gateway.telegram.token: %s",
 		valueOrUnset(cfg.Provider),
 		maskSecret(cfg.APIKey),
 		valueOrUnset(cfg.APIBase),
@@ -3322,7 +3319,6 @@ func (h *Handler) sendConfigList(ctx context.Context, msg *gateway.Message) erro
 		cfg.MaxTokens,
 		cfg.Temperature,
 		valueOrUnset(cfg.ServerAddr),
-		valueOrUnset(cfg.DashboardAddr),
 		valueOrUnset(cfg.MsgGatewayPlatform),
 		valueOrUnset(cfg.MsgGatewayAPIAddr),
 		maskSecret(cfg.MsgGatewayTelegramToken),
@@ -3352,8 +3348,6 @@ func configSnapshotValue(cfg agentConfigSnapshot, key string) (string, bool) {
 		return fmt.Sprintf("%.1f", cfg.Temperature), true
 	case "server.addr":
 		return valueOrUnset(cfg.ServerAddr), true
-	case "dashboard.addr":
-		return valueOrUnset(cfg.DashboardAddr), true
 	case "msg_gateway.platform":
 		return valueOrUnset(cfg.MsgGatewayPlatform), true
 	case "msg_gateway.api_addr":
@@ -4124,42 +4118,7 @@ func (h *Handler) handleWatch(ctx context.Context, msg *gateway.Message) error {
 	}
 }
 
-func (h *Handler) handleDashboard(ctx context.Context, msg *gateway.Message) error {
-	parts := strings.Fields(strings.TrimSpace(msg.Args))
-	subcmd := "status"
-	if len(parts) > 0 {
-		subcmd = parts[0]
-	}
-	cfg := h.configSnapshot()
-	addr := cfg.DashboardAddr
-	if strings.TrimSpace(addr) == "" {
-		addr = ":8765"
-	}
-	switch subcmd {
-	case "status", "list", "":
-		return h.adapter.Send(ctx, msg.Chat.ID, fmt.Sprintf("🌐 *Dashboard:*\n\n• Configured addr: `%s`\n• URL hint: %s\n\nStart/stop is process-local. From Telegram, run dashboard service management on the host with `lh dashboard start` or `lh dashboard stop`.", addr, dashboardURLHint(addr)))
-	case "start", "stop":
-		return h.adapter.Send(ctx, msg.Chat.ID, "Dashboard start/stop from Telegram is disabled. Run `lh dashboard start` or `lh dashboard stop` on the host.")
-	default:
-		return h.adapter.Send(ctx, msg.Chat.ID, "Usage: /dashboard [status]")
-	}
-}
-
-func dashboardURLHint(addr string) string {
-	addr = strings.TrimSpace(addr)
-	if addr == "" {
-		addr = ":8765"
-	}
-	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
-		return addr
-	}
-	if strings.HasPrefix(addr, ":") {
-		return "http://localhost" + addr
-	}
-	return "http://" + addr
-}
-
-func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
+	func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
 	parts := strings.Fields(strings.TrimSpace(msg.Args))
 	subcmd := "status"
 	if len(parts) > 0 {

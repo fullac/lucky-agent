@@ -267,7 +267,8 @@ func TestShortCommandAliases(t *testing.T) {
 	for _, path := range [][]string{
 		{"msg-gateway", "stop"},
 		{"msg-gateway", "status"},
-		{"dashboard", "stop"},
+		{"dashboard"},
+		{"tui"},
 		{"memory", "tidal-stats"},
 	} {
 		parent := root

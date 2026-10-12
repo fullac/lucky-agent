@@ -25,23 +25,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: UI/package-lock.json
       - name: Download dependencies
         run: go mod download
-      - name: Install UI dependencies
-        working-directory: UI
-        run: npm ci
-      - name: Typecheck UI
-        working-directory: UI
-        run: npm run typecheck
-      - name: Build packaged UI assets
-        working-directory: UI
-        run: npm run build
       - name: Run tests
         run: go test ./... -race -count=1 -timeout 10m
       - name: Build
@@ -54,16 +39,13 @@ jobs:
           set -euo pipefail
           rm -rf .ci-release
           mkdir -p .ci-release/extract
-          node_bin="$(dirname "$(command -v node)")"
-          node_root="$(cd "$node_bin/.." && pwd)"
-          bash scripts/prepare-release-bundle.sh .ci-release/dist ./lh "$node_root"
+          bash scripts/prepare-release-bundle.sh .ci-release/dist ./lh
           tar -czf .ci-release/lh-linux-amd64.tar.gz -C .ci-release/dist .
           tar -xzf .ci-release/lh-linux-amd64.tar.gz -C .ci-release/extract
           test -x .ci-release/extract/lh
-          test -f .ci-release/extract/UI/GUI/dist/index.html
-          test -f .ci-release/extract/UI/TUI/dist/tui.mjs
-          test -x .ci-release/extract/runtime/node/bin/node
           test -x .ci-release/extract/install.sh
+          test ! -e .ci-release/extract/UI
+          test ! -e .ci-release/extract/runtime
 
   docker:
     name: Build Docker Image
