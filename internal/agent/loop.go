@@ -389,7 +389,12 @@ func (a *Agent) loopRunner() *Loop {
 	defer a.loopMu.Unlock()
 	if a.loop == nil {
 		a.loop = NewLoop(a, LoopOptions{
-			EnsureAutonomy:          a.StartAutonomy,
+			EnsureAutonomy: func(ctx context.Context) error {
+				if a.autonomy == nil {
+					return nil
+				}
+				return a.StartAutonomy(ctx)
+			},
 			AppendRunningTaskNotice: a.appendRunningTaskNotice,
 			UseForeground:           a.useForeground,
 			RunDurable:              a.runDurableLoop,
