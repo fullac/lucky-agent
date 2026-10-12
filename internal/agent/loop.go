@@ -551,50 +551,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	result = &LoopResult{
 		State: StateReason,
 	}
-	finalize := func(response string, reasoningContent string) {
-		if strings.TrimSpace(response) == "" {
-			response = emptyFinalResponseMessage
-		}
-		response = utils.SanitizeToolProtocolOutput(response)
-		response = l.runtime.appendNaturalCitationsIfEnabled(response, result.ToolCalls)
-		if l.options.AppendRunningTaskNotice != nil {
-			response = l.options.AppendRunningTaskNotice(response)
-		}
-		result.Response = response
-		result.State = StateDone
-		createdAt := time.Now().UTC()
-		result.CreatedAt = &createdAt
-
-		// 会话中保留 provider 级消息顺序：user -> assistant(tool call) -> tool -> assistant(final)
-		if sess != nil {
-			msg := provider.Message{Role: "assistant", Content: response, ReasoningContent: reasoningContent, CreatedAt: result.CreatedAt}
-			if result.Usage != nil && result.Usage.TotalTokens > 0 {
-				usage := *result.Usage
-				msg.Usage = &usage
-			}
-			sess.AddProviderMessage(msg)
-		}
-
-		// Final answers are not indexed into RAG by default: indexed source
-		// material should stay separate from model-generated conclusions.
-		if !loopCfg.Ephemeral && l.runtime.loopHasRAG() && autoIndexFinalAnswersEnabled() {
-			l.runtime.indexConversationTurn(routingText, response)
-		}
-
-		if !loopCfg.Ephemeral {
-			if saveErr := l.runtime.saveFinalAnswerDocument(sessionID, routingText, response); saveErr != nil {
-				logger.Warn("save final answer document failed", "session_id", sessionID, "error", saveErr)
-			}
-		}
-
-		// v0.24.1: 保存会话到磁盘
-		if sess != nil {
-			if saveErr := sess.Save(); saveErr != nil {
-				logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
-			}
-			l.runtime.maybeRollSession(sess)
-		}
-	}
+	finalizer := newLoopFinalizer(l.runtime, l.options.AppendRunningTaskNotice, result, sess, loopCfg, sessionID, routingText)
 	loopState := newLoopRuntimeState()
 	loopState.provider = turnProvider
 	loopState.toolExecutionGuard = newTurnToolGuard(routingText, loopCfg.DisabledTools, loopCfg.BlockedActions, snapshotMode(loopCfg.Sandbox))
@@ -678,7 +635,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 					messages = updatedMessages
 					continue
 				}
-				finalize(finalResponse, "")
+				finalizer.Finalize(finalResponse, "")
 				return result, nil
 			}
 			if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
@@ -698,12 +655,12 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 		if !finalized {
 			continue
 		}
-		finalize(finalResponse, directReasoningContent(resp, loopState))
+		finalizer.Finalize(finalResponse, directReasoningContent(resp, loopState))
 		return result, nil
 	}
 
 	if strings.TrimSpace(loopState.continuedResponse.String()) != "" {
-		finalize(strings.TrimSpace(loopState.continuedResponse.String())+lengthTruncatedNotice, strings.TrimSpace(loopState.continuedReasoning.String()))
+		finalizer.Finalize(strings.TrimSpace(loopState.continuedResponse.String())+lengthTruncatedNotice, strings.TrimSpace(loopState.continuedReasoning.String()))
 		return result, nil
 	}
 
