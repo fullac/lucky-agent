@@ -68,10 +68,7 @@ type messageFeedbackSender interface {
 // turnChatRuntime is the provider-independent chat boundary. The handler
 // still keeps Agent for legacy commands; only the message path uses this
 // narrow interface while those commands are migrated.
-type turnChatRuntime interface {
-	ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error)
-	ChatWithSessionStreamTurnEvents(ctx context.Context, sessionID string, input turn.Input) (<-chan turn.ChatEvent, error)
-}
+type turnChatRuntime = turn.ChatRuntime
 
 type HandlerOptions struct {
 	PlatformName     string

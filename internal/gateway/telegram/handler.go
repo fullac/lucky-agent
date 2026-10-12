@@ -51,7 +51,7 @@ type chatRuntime interface {
 // turnChatRuntime is the narrow, provider-independent chat boundary. The
 // legacy methods remain in chatRuntime while adapters are migrated one path at
 // a time, so existing gateway test doubles and command handlers keep working.
-type turnChatRuntime interface {
+type legacyTurnChatRuntime interface {
 	ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error)
 	ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error)
 }
@@ -59,9 +59,7 @@ type turnChatRuntime interface {
 // turnEventChatRuntime is the neutral stream variant. It is optional during
 // migration so existing command test doubles can keep implementing the legacy
 // stream method while production adapters move to turn.ChatEvent.
-type turnEventChatRuntime interface {
-	ChatWithSessionStreamTurnEvents(ctx context.Context, sessionID string, input turn.Input) (<-chan turn.ChatEvent, error)
-}
+type turnEventChatRuntime = turn.ChatRuntime
 
 type stateRuntime interface {
 	Sessions() *session.Manager
@@ -101,7 +99,7 @@ type agentProvider interface {
 }
 
 func chatWithSessionTurn(ctx context.Context, runtime chatRuntime, sessionID string, input agent.UserTurnInput) (string, error) {
-	if narrow, ok := runtime.(turnChatRuntime); ok {
+	if narrow, ok := runtime.(turnEventChatRuntime); ok {
 		return narrow.ChatWithSessionTurn(ctx, sessionID, agent.TurnInput(input))
 	}
 	return runtime.ChatWithSessionInput(ctx, sessionID, input)
@@ -115,7 +113,7 @@ func chatWithSessionStreamTurn(ctx context.Context, runtime chatRuntime, session
 		}
 		return agent.FromTurnChatEventStream(ctx, events), nil
 	}
-	if narrow, ok := runtime.(turnChatRuntime); ok {
+	if narrow, ok := runtime.(legacyTurnChatRuntime); ok {
 		return narrow.ChatWithSessionStreamTurn(ctx, sessionID, agent.TurnInput(input))
 	}
 	return runtime.ChatWithSessionStreamInput(ctx, sessionID, input)
