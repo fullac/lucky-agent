@@ -136,9 +136,6 @@ type loopRuntime interface {
 	applySandboxToolPolicy(*LoopConfig, *sandbox.Snapshot)
 	applyIntentToolGating(*LoopConfig, string)
 	applyVisionToolPolicy(*LoopConfig, providerSnapshot)
-	runDurableLoop(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
-	useForeground(*session.Session, LoopConfig) bool
-	runForeground(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
 	getStreamMode() StreamMode
 	appendNaturalCitationsIfEnabled(string, []toolCallLog) string
 	loopHasRAG() bool
@@ -169,6 +166,9 @@ type Loop struct {
 type LoopOptions struct {
 	EnsureAutonomy          func(context.Context) error
 	AppendRunningTaskNotice func(string) string
+	UseForeground           func(*session.Session, LoopConfig) bool
+	RunDurable              func(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
+	RunForeground           func(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
 }
 
 func NewLoop(runtime loopRuntime, options ...LoopOptions) *Loop {
@@ -391,6 +391,9 @@ func (a *Agent) loopRunner() *Loop {
 		a.loop = NewLoop(a, LoopOptions{
 			EnsureAutonomy:          a.StartAutonomy,
 			AppendRunningTaskNotice: a.appendRunningTaskNotice,
+			UseForeground:           a.useForeground,
+			RunDurable:              a.runDurableLoop,
+			RunForeground:           a.runForeground,
 		})
 	}
 	return a.loop
@@ -454,10 +457,16 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	if loopCfg.Execution != nil {
 		l.runtime.applyIntentToolGating(&loopCfg, routingText)
 		l.runtime.applyVisionToolPolicy(&loopCfg, turnProvider)
-		return l.runtime.runDurableLoop(ctx, sess, turnInput, loopCfg, turnProvider)
+		if l.options.RunDurable == nil {
+			return nil, fmt.Errorf("durable loop coordinator not initialized")
+		}
+		return l.options.RunDurable(ctx, sess, turnInput, loopCfg, turnProvider)
 	}
-	if l.runtime.useForeground(sess, loopCfg) {
-		return l.runtime.runForeground(ctx, sess, turnInput, loopCfg, turnProvider)
+	if l.options.UseForeground != nil && l.options.UseForeground(sess, loopCfg) {
+		if l.options.RunForeground == nil {
+			return nil, fmt.Errorf("foreground loop coordinator not initialized")
+		}
+		return l.options.RunForeground(ctx, sess, turnInput, loopCfg, turnProvider)
 	}
 	l.runtime.applyIntentToolGating(&loopCfg, routingText)
 	l.runtime.applyVisionToolPolicy(&loopCfg, turnProvider)
