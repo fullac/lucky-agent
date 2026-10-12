@@ -99,6 +99,22 @@ type TokenUsage struct {
 	Model             string `json:"model,omitempty"`
 }
 
+// ToTurnTokenUsage copies provider accounting into the neutral turn DTO at
+// the runtime boundary. Keeping the conversion here avoids making turn know
+// about provider-specific accumulation methods.
+func ToTurnTokenUsage(usage *TokenUsage) *turn.TokenUsage {
+	if usage == nil {
+		return nil
+	}
+	return &turn.TokenUsage{
+		InputTokens:       usage.InputTokens,
+		OutputTokens:      usage.OutputTokens,
+		TotalTokens:       usage.TotalTokens,
+		CachedInputTokens: usage.CachedInputTokens,
+		Model:             usage.Model,
+	}
+}
+
 // AddResponse folds one provider response into an aggregate turn usage.
 // A response without structured usage can still contribute TokensUsed when a
 // provider reports only a total count (for example, some local runtimes).
