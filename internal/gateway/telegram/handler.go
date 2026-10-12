@@ -2685,30 +2685,6 @@ func (h *Handler) openTurnChatEventStream(ctx context.Context, chatID string, in
 	return agent.ToTurnChatEventStream(ctx, legacyEvents), nil
 }
 
-func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan agent.ChatEvent, error) {
-	events, err := h.openTurnChatEventStream(ctx, chatID, input, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	return agent.FromTurnChatEventStream(ctx, events), nil
-}
-
-func runChatEventLoop(
-	chatCtx context.Context,
-	events <-chan agent.ChatEvent,
-	onTimeout func(err error) (sentResult bool),
-	onEvent func(evt agent.ChatEvent) (stop bool, sentResult bool),
-) (sentResult bool) {
-	return runTurnChatEventLoop(
-		chatCtx,
-		agent.ToTurnChatEventStream(chatCtx, events),
-		onTimeout,
-		func(evt turn.ChatEvent) (bool, bool) {
-			return onEvent(agent.FromTurnChatEvent(evt))
-		},
-	)
-}
-
 func runTurnChatEventLoop(
 	chatCtx context.Context,
 	events <-chan turn.ChatEvent,
