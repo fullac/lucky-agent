@@ -226,7 +226,7 @@ func (a *Agent) buildComputerUsePolicyPromptBlock() string {
 Treat desktop control as a finite state machine: Goal → observe once → choose one atomic action → verify the returned frame → decide whether the goal is complete.
 - computer_act already returns a fresh screenshot; do not call computer_observe immediately after it.
 - An observation by itself is not progress. Never call computer_observe twice in a row just to keep looking. If the screen is unchanged, perform the next concrete computer_act action with the newest frame_id, or state the blocker and stop.
-- Use wait_ms only when waiting for a known UI transition.
+- Use wait_ms only inside a computer_act actions array, with duration_ms, when waiting for a known UI transition. It delays the next item; it is not a desktop action and cannot be the only action.
 - Prefer format=tree for AT-SPI control names, roles and supported actions; use invoke/set_text/focus with element_id from the newest frame. Use format=both when visual context is also needed; fall back to image if the application has no accessible controls.
 - On X11, window=active or a unique window title/ID limits the screenshot. region={x,y,width,height} selects part of the original window/display. Pointer coordinates always refer to the returned image; offsets and scaling are applied automatically.
 - Prefer one atomic action. For a short, fully determined sequence such as click then type, computer_act can accept actions=[...], sharing the latest frame_id and returning one final observation. Only the first item may point, invoke, or focus. Observe between decisions that depend on a changed interface. Never replay a partially completed batch.

@@ -245,9 +245,13 @@ class Portal:
             raise RuntimeError("PipeWire capture pipeline failed to start")
         # Encode only when the agent asks for a screenshot, rather than running
         # PNG compression at the monitor's frame rate throughout the session.
+        # Scale before encoding. The previous pipeline encoded the monitor's
+        # full frame and left Go to decode and shrink it for the model.
         self.encoder = self.Gst.parse_launch(
-            "appsrc name=source is-live=true format=time ! pngenc ! "
+            "appsrc name=source is-live=true format=time ! videoscale ! "
+            "capsfilter name=limit ! pngenc ! "
             "appsink name=sink sync=false max-buffers=1 drop=true")
+        self.max_width = 0
         if self.encoder.set_state(self.Gst.State.PLAYING) == self.Gst.StateChangeReturn.FAILURE:
             raise RuntimeError("PNG encoder failed to start")
 
@@ -276,8 +280,10 @@ class Portal:
                 self.revoked = True
                 raise RuntimeError("PipeWire stream ended; observe again to request access")
 
-    def capture(self, path, display_id):
+    def capture(self, path, display_id, max_width=0):
         self.check()
+        self.max_width = int(max_width or 0)
+        self.encoded_sample = None
         current_id = "portal:" + str(self.stream)
         if display_id and display_id != current_id:
             raise RuntimeError("display_id does not match the portal-selected monitor")
@@ -292,7 +298,9 @@ class Portal:
             data = self.encoded_data
         else:
             source = self.encoder.get_by_name("source")
-            source.set_property("caps", sample.get_caps())
+            caps = sample.get_caps()
+            source.set_property("caps", caps)
+            self.set_output_size(caps)
             if source.emit("push-buffer", sample.get_buffer().copy()) != self.Gst.FlowReturn.OK:
                 raise RuntimeError("PNG encoder rejected the PipeWire frame")
             encoded = self.encoder.get_by_name("sink").emit("try-pull-sample", 5 * self.Gst.SECOND)
@@ -308,6 +316,19 @@ class Portal:
             output.write(data)
         self.observed_size = (width, height)
         return dict(width=width, height=height, display_id=current_id, scale_factor=1)
+
+    def set_output_size(self, caps):
+        limit = self.encoder.get_by_name("limit")
+        if limit is None:
+            return
+        structure = caps.get_structure(0)
+        width, height = structure.get_value("width"), structure.get_value("height")
+        if not self.max_width or width <= self.max_width:
+            limit.set_property("caps", self.Gst.Caps.from_string("video/x-raw"))
+            return
+        scaled_height = max(1, round(height * self.max_width / width))
+        limit.set_property("caps", self.Gst.Caps.from_string(
+            "video/x-raw,width=%d,height=%d" % (self.max_width, scaled_height)))
 
     def notify(self, method, signature, *args):
         return self.call(self.REMOTE, method, "(oa{sv}" + signature + ")", (self.session, {}, *args))
@@ -435,13 +456,12 @@ def wayland_request(request):
                 _portal = None
         if _portal is None:
             _portal = Portal(request.get("observe_only", False))
-        return _portal.capture(request["path"], request.get("display_id", ""))
+        return _portal.capture(request["path"], request.get("display_id", ""), request.get("max_width", 0))
     if op == "wayland_action" and _portal is not None:
         return _portal.action(request["action"])
     if op == "wayland_validate" and _portal is not None:
         _portal.check()
-        if (request.get("display_id") != "portal:" + str(_portal.stream)
-                or (request.get("width"), request.get("height")) != _portal.current_size):
+        if request.get("display_id") != "portal:" + str(_portal.stream) or _portal.current_size is None:
             raise RuntimeError("portal stream or monitor resolution changed since this frame; observe again")
         return {}
     raise RuntimeError("observe the Wayland desktop before acting")
