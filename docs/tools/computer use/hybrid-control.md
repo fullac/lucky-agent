@@ -101,8 +101,7 @@ Computer use 默认关闭。启用并允许本地 CLI/TUI：
 默认截图捕获整个后端画面，再按配置缩小，保留完整画面。只有显式传入 `window` 或
 `region` 时才缩小捕获范围；Wayland 的画面范围是用户在门户中选择的一个显示器。
 
-- `tools.computer_use.max_screenshot_width` 默认 `0`，不限制宽度。
-  例如设为 `1920` 后，3840×2160 的截图会返回为 1920×1080；不会只截取左上角。
+- `tools.computer_use.max_screenshot_width` 默认 `1280`。3840×2160 的截图会按比例缩成大约 1280×720 再交给模型；不会只截取左上角。设为 `0` 表示不限制宽度。
 - `tools.computer_use.max_observation_bytes` 默认 `10485760`（10 MiB）。
   PNG 超过该上限时，继续等比缩小并重新编码，直到满足上限。
   如果配置小到连 1×1 PNG 都无法容纳，会返回明确错误。

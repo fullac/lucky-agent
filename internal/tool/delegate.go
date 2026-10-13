@@ -1178,6 +1178,64 @@ func (dm *DelegateManager) handleDelegate(args map[string]any) (string, error) {
 	return dm.handleDelegateWithOwner(args, delegateTaskOwner{})
 }
 
+// RunExplorationHandoff starts one sub-agent for accumulated exploration and
+// waits until it finishes. The returned text is a short evidence summary; the
+// child keeps the full tool transcript in its own session.
+func (dm *DelegateManager) RunExplorationHandoff(ctx context.Context, ownerSessionID, description, contextStr string, timeout time.Duration) (taskID, summary string, err error) {
+	if dm == nil {
+		return "", "", fmt.Errorf("delegate manager is not configured")
+	}
+	if timeout <= 0 {
+		timeout = dm.Config().Timeout
+	}
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	started, err := dm.handleDelegateWithOwner(map[string]any{
+		"description": description,
+		"context":     contextStr,
+		"timeout":     int(timeout.Seconds()),
+		"mode":        string(taskstore.ModeSingle),
+	}, delegateTaskOwner{SessionID: ownerSessionID, Source: "context-handoff"})
+	if err != nil {
+		return "", "", err
+	}
+	var start delegateStartResponse
+	if err := json.Unmarshal([]byte(started), &start); err != nil {
+		return "", "", fmt.Errorf("decode handoff start: %w", err)
+	}
+	if strings.TrimSpace(start.TaskID) == "" {
+		return "", "", fmt.Errorf("handoff did not return a task id")
+	}
+	waited, err := dm.handleWaitForTasksForSession(ctx, map[string]any{
+		"task_ids":       []any{start.TaskID},
+		"include_result": true,
+		"timeout":        int(timeout.Seconds()),
+	}, ownerSessionID)
+	if err != nil {
+		return start.TaskID, "", err
+	}
+	var wait delegateWaitResponse
+	if err := json.Unmarshal([]byte(waited), &wait); err != nil {
+		return start.TaskID, "", fmt.Errorf("decode handoff wait: %w", err)
+	}
+	if len(wait.Tasks) == 0 {
+		return start.TaskID, "", fmt.Errorf("handoff task %s returned no status", start.TaskID)
+	}
+	task := wait.Tasks[0]
+	summary = strings.TrimSpace(task.ResultSummary)
+	if summary == "" {
+		summary = strings.TrimSpace(task.Result)
+	}
+	if summary == "" {
+		summary = "sub-agent finished without a summary"
+	}
+	if task.Error != "" {
+		summary = strings.TrimSpace(summary + "\nfailure: " + task.Error)
+	}
+	return start.TaskID, summary, nil
+}
+
 func (dm *DelegateManager) handleDelegateWithOwner(args map[string]any, owner delegateTaskOwner) (string, error) {
 	description, ok := args["description"].(string)
 	description = strings.TrimSpace(description)

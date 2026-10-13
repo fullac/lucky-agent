@@ -669,7 +669,7 @@ RobotGo 可用于快速验证跨平台鼠标键盘能力，但会引入 CGO（Go
 | `keep_frames` | 每个 session 保留的完整截图数。 |
 | `frame_ttl_seconds` | 截图自动清理时间。 |
 
-上述配置已经同步到 `internal/config/config.go`、默认值合并、`config get/set` 和 `config.example.json`；文档中的 `max_steps=20` 是概念示例，当前 LuckyAgent 默认值为 50；`max_screenshot_width=0` 表示不限制（当前 MVP 尚未做缩放，只做显式超限拒绝）。
+上述配置已经同步到 `internal/config/config.go`、默认值合并、`config get/set` 和 `config.example.json`；文档中的 `max_steps=20` 是概念示例，当前 LuckyAgent 默认值为 50。`max_screenshot_width` 默认 `1280`，超过这个宽度会按比例缩小后再交给模型；设为 `0` 表示不限制。
 
 ## 14. Agent Loop 收敛策略
 

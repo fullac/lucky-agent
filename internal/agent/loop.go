@@ -148,6 +148,9 @@ const (
 	emptyResponseRecoveryPrompt    = "Your last response was empty. Please provide a direct, complete answer to my previous request. Avoid tool calls unless required."
 	lengthRecoveryPrompt           = "Continue exactly from where you stopped. Do not repeat previous content."
 	searchSynthesisPrompt          = "You now have enough search evidence from previous tool results. Synthesize a direct, source-aware answer now. Do not call any more tools unless a critical factual gap remains unresolved."
+	explorationHandoffBytes        = 12 * 1024
+	explorationHandoffSummaryBytes = 1500
+	explorationHandoffMarker       = "[exploration handed off]"
 	computerObservationLoopMessage = "Computer-use stalled: the agent requested screenshots repeatedly without performing an action. The loop was stopped to avoid an observation-only cycle. Re-observe once, then perform one concrete computer_act action or explain the blocker."
 	computerActDirectiveMarker     = "[computer-use action required]"
 	computerActDirectiveMessage    = computerActDirectiveMarker + " The latest computer_observe reason requires a desktop action. In the next response, call computer_act with the newest frame_id and the concrete action. Do not call computer_observe again or use terminal to simulate the GUI action."
@@ -654,6 +657,8 @@ type loopRuntimeState struct {
 	successfulSearchEvidence       int
 	detailedSearchEvidence         int
 	forceSearchSynthesis           bool
+	explorationBytes               int
+	handoffUsed                    bool
 	artifactGuard                  *artifactFinalizationGuard
 	continuedResponse              strings.Builder
 	continuedReasoning             strings.Builder
@@ -978,6 +983,7 @@ func (a *Agent) processToolCallBatch(
 			loopState.toolURLLastResult[key] = tcLog.Result
 		}
 		messages = append(messages, contextToolMsg)
+		loopState.noteExplorationResult(execResult.ToolCall.Name, len(execResult.Result))
 		if sess != nil {
 			sess.AddProviderMessage(provider.Message{
 				Role:       "tool",
@@ -1006,6 +1012,7 @@ func (a *Agent) processToolCallBatch(
 	result.State = StateObserve
 
 	messages = maybeAppendSearchSynthesisMessage(messages, &loopState.forceSearchSynthesis, loopState.successfulSearchEvidence, loopState.consecutiveToolOnlyIters)
+	messages = a.maybeHandOffExploration(messages, executed, loopCfg, loopState, sess, userRequest)
 
 	return messages, false, ""
 }
@@ -1108,6 +1115,133 @@ func (a *Agent) executeToolMaybeDedup(name, arguments string, autoApprove bool, 
 /*
 compactToolResultForContext 将工具结果压缩成适合继续放入上下文的文本。
 */
+func (s *loopRuntimeState) noteExplorationResult(toolName string, resultBytes int) {
+	if s == nil || resultBytes <= 0 || !isExplorationTool(toolName) {
+		return
+	}
+	s.explorationBytes += resultBytes
+}
+
+func isExplorationTool(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "file_read", "file_list", "web_search", "web_fetch", "opencli",
+		"data_query", "log", "recall", "rag_search", "terminal":
+		return true
+	default:
+		return false
+	}
+}
+
+func isContextHandoffBlocked(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "file_write", "file_edit", "apply_patch", "ask_user", "request_credential",
+		"create_ephemeral_credential_terminal_tool", "subagent", "delegate_task",
+		"computer_act", "computer_observe":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldHandOffExploration(loopCfg LoopConfig, state *loopRuntimeState, executed []executedToolCall) bool {
+	if state == nil || state.handoffUsed || state.explorationBytes < explorationHandoffBytes {
+		return false
+	}
+	if state.consecutiveToolOnlyIters < 2 {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(loopCfg.Source), "subagent") {
+		return false
+	}
+	hasExploration := false
+	for _, execResult := range executed {
+		if isContextHandoffBlocked(execResult.ToolCall.Name) {
+			return false
+		}
+		if isExplorationTool(execResult.ToolCall.Name) {
+			hasExploration = true
+		}
+	}
+	return hasExploration
+}
+
+func (a *Agent) maybeHandOffExploration(messages []provider.Message, executed []executedToolCall, loopCfg LoopConfig, state *loopRuntimeState, sess *session.Session, userRequest string) []provider.Message {
+	if a == nil || a.Delegate() == nil || !shouldHandOffExploration(loopCfg, state, executed) {
+		return messages
+	}
+	ownerSessionID := ""
+	if sess != nil {
+		ownerSessionID = sess.ID
+	}
+	taskID, summary, err := a.Delegate().RunExplorationHandoff(
+		context.Background(),
+		ownerSessionID,
+		explorationHandoffDescription(userRequest),
+		explorationHandoffContext(executed),
+		loopCfg.Timeout,
+	)
+	state.handoffUsed = true
+	state.explorationBytes = 0
+	if err != nil {
+		logger.Warn("exploration handoff failed", "error", err, "task_id", taskID)
+		return messages
+	}
+	replaced := replaceExplorationToolResults(messages, executed)
+	return append(replaced, provider.Message{
+		Role:    "user",
+		Content: explorationHandoffNote(taskID, summary),
+	})
+}
+
+func explorationHandoffDescription(userRequest string) string {
+	request := strings.TrimSpace(userRequest)
+	if request == "" {
+		request = "Continue the current investigation."
+	}
+	return "Continue this investigation in a clean context. Return only the conclusion, key paths, failures, and unfinished work.\n\n" + request
+}
+
+func explorationHandoffContext(executed []executedToolCall) string {
+	var b strings.Builder
+	b.WriteString("Already observed in the parent context:\n")
+	for _, execResult := range executed {
+		if !isExplorationTool(execResult.ToolCall.Name) {
+			continue
+		}
+		fmt.Fprintf(&b, "- %s (%d bytes)\n", execResult.ToolCall.Name, len(execResult.Result))
+	}
+	b.WriteString("Do not paste raw tool output. Cite paths and say what remains unverified.")
+	return b.String()
+}
+
+func explorationHandoffNote(taskID, summary string) string {
+	summary = strings.TrimSpace(summary)
+	runes := []rune(summary)
+	if len(runes) > explorationHandoffSummaryBytes {
+		summary = string(runes[:explorationHandoffSummaryBytes]) + "..."
+	}
+	return fmt.Sprintf("%s task=%s. Parent tool output was removed from context; the full transcript stays in the sub-agent session.\n%s", explorationHandoffMarker, taskID, summary)
+}
+
+func replaceExplorationToolResults(messages []provider.Message, executed []executedToolCall) []provider.Message {
+	replaced := make(map[string]executedToolCall, len(executed))
+	for _, execResult := range executed {
+		if isExplorationTool(execResult.ToolCall.Name) && len(execResult.Result) > 0 {
+			replaced[execResult.ToolCall.ID] = execResult
+		}
+	}
+	out := make([]provider.Message, len(messages))
+	copy(out, messages)
+	for i := range out {
+		execResult, ok := replaced[out[i].ToolCallID]
+		if !ok || out[i].Role != "tool" {
+			continue
+		}
+		out[i].Content = fmt.Sprintf("[Tool Summary]\n- tool: %s\n- finding: output removed after exploration handoff (%d bytes)", execResult.ToolCall.Name, len(execResult.Result))
+	}
+	return out
+}
+
 func compactToolResultForContext(toolName, result string) string {
 	out := strings.TrimSpace(result)
 	if out == "" {
@@ -1214,17 +1348,39 @@ func isExplicitRequiredToolMention(input string, pos int, name string) bool {
 	if end > len(input) {
 		end = len(input)
 	}
+	if isNegatedToolMention(input, pos) {
+		return false
+	}
 	window := strings.ToLower(input[start:end])
+	lowerName := strings.ToLower(name)
 	return strings.Contains(window, "必须调用") ||
 		strings.Contains(window, "强制调用") ||
-		strings.Contains(window, "调用 "+name) ||
-		strings.Contains(window, "调用"+name) ||
-		strings.Contains(window, "用 "+name) ||
-		strings.Contains(window, "用"+name) ||
-		strings.Contains(window, "use "+strings.ToLower(name)) ||
-		strings.Contains(window, "call "+strings.ToLower(name)) ||
-		strings.Contains(window, "tool "+strings.ToLower(name)) ||
-		strings.Contains(window, "to="+strings.ToLower(name))
+		strings.Contains(window, "调用 "+lowerName) ||
+		strings.Contains(window, "调用"+lowerName) ||
+		strings.Contains(window, "调用一次 "+lowerName) ||
+		strings.Contains(window, "调用一次"+lowerName) ||
+		strings.Contains(window, "调用一下 "+lowerName) ||
+		strings.Contains(window, "调用一下"+lowerName) ||
+		strings.Contains(window, "用 "+lowerName) ||
+		strings.Contains(window, "用"+lowerName) ||
+		strings.Contains(window, "use "+lowerName) ||
+		strings.Contains(window, "call "+lowerName) ||
+		strings.Contains(window, "tool "+lowerName) ||
+		strings.Contains(window, "to="+lowerName)
+}
+
+func isNegatedToolMention(input string, pos int) bool {
+	runes := []rune(input[:pos])
+	if len(runes) > 24 {
+		runes = runes[len(runes)-24:]
+	}
+	before := strings.ToLower(string(runes))
+	for _, phrase := range []string{"不要", "禁止", "不用", "不能", "不可", "别用", "别调用", "do not", "don't", "never "} {
+		if strings.Contains(before, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // fitContextWindow 裁剪消息列表到上下文窗口内

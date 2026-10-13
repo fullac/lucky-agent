@@ -325,10 +325,10 @@ func TestExtractRequiredToolNames(t *testing.T) {
 	a := &Agent{tools: reg}
 	got := a.extractRequiredToolNames("请必须调用 file_read 和 current_time，最后不要用 terminal")
 
-	if len(got) != 3 {
-		t.Fatalf("expected 3 required tools, got %d (%v)", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 required tools, got %d (%v)", len(got), got)
 	}
-	if got[0] != "file_read" || got[1] != "current_time" || got[2] != "terminal" {
+	if got[0] != "file_read" || got[1] != "current_time" {
 		t.Fatalf("unexpected order: %v", got)
 	}
 }

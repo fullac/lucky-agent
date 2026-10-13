@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/yurika0211/luckyagent/internal/provider"
@@ -35,6 +36,48 @@ func TestAppendLatestComputerObservationKeepsOnlyNewestFrame(t *testing.T) {
 	}
 	if observations[0].ContentParts[0].Image.FilePath != "/tmp/frame-2.png" {
 		t.Fatalf("expected newest frame path, got %#v", observations[0].ContentParts)
+	}
+}
+
+func TestRepeatedObservationKeepsTheFrameAlreadyShown(t *testing.T) {
+	messages := []provider.Message{
+		{Role: "tool", Name: "computer_act", Content: "clicked"},
+		{Role: "user", Content: "[Computer Observation frame-2]", ContentParts: []provider.ContentPart{{Type: "image", Image: &provider.ImagePart{FilePath: "/tmp/frame-2.png"}}}},
+	}
+	repeated := []executedToolCall{{
+		ToolCall:     provider.ToolCall{Name: "computer_observe", Arguments: `{"format":"image"}`},
+		Observations: []tool.Observation{{Kind: "image", FrameID: "frame-3", FilePath: "/tmp/frame-3.png", MimeType: "image/png"}},
+	}}
+	got := appendLatestComputerObservation(messages, repeated)
+	var observations []provider.Message
+	for _, msg := range got {
+		if isTransientComputerObservation(msg) {
+			observations = append(observations, msg)
+		}
+	}
+	if len(observations) != 1 || observations[0].Content != "[Computer Observation frame-2]" {
+		t.Fatalf("repeated observation replaced the current frame: %#v", got)
+	}
+	if !strings.Contains(got[len(got)-1].Content, "[computer observation reused]") {
+		t.Fatalf("missing reuse guidance: %#v", got)
+	}
+
+	observed := []provider.Message{
+		{Role: "tool", Name: "computer_observe", Content: "observed"},
+		{Role: "user", Content: "[Computer Observation frame-2]", ContentParts: []provider.ContentPart{{Type: "image", Image: &provider.ImagePart{FilePath: "/tmp/frame-2.png"}}}},
+	}
+	switched := appendLatestComputerObservation(observed, []executedToolCall{{
+		ToolCall:     provider.ToolCall{Name: "computer_observe", Arguments: `{"window":"Feishu"}`},
+		Observations: []tool.Observation{{Kind: "image", FrameID: "frame-4", FilePath: "/tmp/frame-4.png", MimeType: "image/png"}},
+	}})
+	observations = nil
+	for _, msg := range switched {
+		if isTransientComputerObservation(msg) {
+			observations = append(observations, msg)
+		}
+	}
+	if len(observations) != 1 || observations[0].Content != "[Computer Observation frame-4]" {
+		t.Fatalf("a different target did not replace the frame: %#v", switched)
 	}
 }
 
