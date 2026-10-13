@@ -1348,17 +1348,39 @@ func isExplicitRequiredToolMention(input string, pos int, name string) bool {
 	if end > len(input) {
 		end = len(input)
 	}
+	if isNegatedToolMention(input, pos) {
+		return false
+	}
 	window := strings.ToLower(input[start:end])
+	lowerName := strings.ToLower(name)
 	return strings.Contains(window, "必须调用") ||
 		strings.Contains(window, "强制调用") ||
-		strings.Contains(window, "调用 "+name) ||
-		strings.Contains(window, "调用"+name) ||
-		strings.Contains(window, "用 "+name) ||
-		strings.Contains(window, "用"+name) ||
-		strings.Contains(window, "use "+strings.ToLower(name)) ||
-		strings.Contains(window, "call "+strings.ToLower(name)) ||
-		strings.Contains(window, "tool "+strings.ToLower(name)) ||
-		strings.Contains(window, "to="+strings.ToLower(name))
+		strings.Contains(window, "调用 "+lowerName) ||
+		strings.Contains(window, "调用"+lowerName) ||
+		strings.Contains(window, "调用一次 "+lowerName) ||
+		strings.Contains(window, "调用一次"+lowerName) ||
+		strings.Contains(window, "调用一下 "+lowerName) ||
+		strings.Contains(window, "调用一下"+lowerName) ||
+		strings.Contains(window, "用 "+lowerName) ||
+		strings.Contains(window, "用"+lowerName) ||
+		strings.Contains(window, "use "+lowerName) ||
+		strings.Contains(window, "call "+lowerName) ||
+		strings.Contains(window, "tool "+lowerName) ||
+		strings.Contains(window, "to="+lowerName)
+}
+
+func isNegatedToolMention(input string, pos int) bool {
+	runes := []rune(input[:pos])
+	if len(runes) > 24 {
+		runes = runes[len(runes)-24:]
+	}
+	before := strings.ToLower(string(runes))
+	for _, phrase := range []string{"不要", "禁止", "不用", "不能", "不可", "别用", "别调用", "do not", "don't", "never "} {
+		if strings.Contains(before, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // fitContextWindow 裁剪消息列表到上下文窗口内
