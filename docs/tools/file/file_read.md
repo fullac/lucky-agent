@@ -161,8 +161,7 @@ offset <N> exceeds file length <M>
 - 移动文件：使用 `file_move`。
 - 创建目录：使用 `file_mkdir`。
 - 读取 PDF、DOCX、PPTX：使用 `document_read`。
-- 查询 JSON 字段：使用 `json_query`。
-- 查询 YAML 字段：使用 `yaml_query`。
+- 查询 JSON 或 YAML 字段：使用 `data_query`。
 - 查询 CSV 行：使用 `csv_query`。
 - 查看 SQLite schema：使用 `db_schema`。
 - 执行需要 shell 的检查：使用 `terminal`。

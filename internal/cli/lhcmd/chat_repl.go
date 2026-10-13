@@ -603,6 +603,7 @@ func handleCronCommand(arg string, engine *cron.Engine, store *cron.Store, a *ag
 			}
 		}
 		args := map[string]any{
+			"action":   "add",
 			"id":       spec.ID,
 			"schedule": spec.ScheduleText,
 			"mode":     string(spec.Mode),
@@ -620,7 +621,7 @@ func handleCronCommand(arg string, engine *cron.Engine, store *cron.Store, a *ag
 		if spec.ReplyToMsgID != "" {
 			args["reply_to_message_id"] = spec.ReplyToMsgID
 		}
-		if _, err := a.Tools().Call("cron_add", args); err != nil {
+		if _, err := a.Tools().Call("cron", args); err != nil {
 			fmt.Printf("❌ %v\n", err)
 		} else {
 			fmt.Printf("✅ 定时任务已添加: %s (%s) [%s]\n", spec.ID, spec.Schedule, spec.Mode)
@@ -664,7 +665,7 @@ func handleCronCommand(arg string, engine *cron.Engine, store *cron.Store, a *ag
 			fmt.Println("用法: /cron remove <id>")
 			return true
 		}
-		if err := callCronMutationTool(a, "cron_remove", map[string]any{"id": parts[1]}); err != nil {
+		if err := callCronMutationTool(a, "remove", parts[1]); err != nil {
 			fmt.Printf("❌ %v\n", err)
 		} else {
 			fmt.Printf("✅ 定时任务已移除: %s\n", parts[1])
@@ -675,7 +676,7 @@ func handleCronCommand(arg string, engine *cron.Engine, store *cron.Store, a *ag
 			fmt.Println("用法: /cron pause <id>")
 			return true
 		}
-		if err := callCronMutationTool(a, "cron_pause", map[string]any{"id": parts[1]}); err != nil {
+		if err := callCronMutationTool(a, "pause", parts[1]); err != nil {
 			fmt.Printf("❌ %v\n", err)
 		} else {
 			fmt.Printf("⏸️ 定时任务已暂停: %s\n", parts[1])
@@ -686,7 +687,7 @@ func handleCronCommand(arg string, engine *cron.Engine, store *cron.Store, a *ag
 			fmt.Println("用法: /cron resume <id>")
 			return true
 		}
-		if err := callCronMutationTool(a, "cron_resume", map[string]any{"id": parts[1]}); err != nil {
+		if err := callCronMutationTool(a, "resume", parts[1]); err != nil {
 			fmt.Printf("❌ %v\n", err)
 		} else {
 			fmt.Printf("▶️ 定时任务已恢复: %s\n", parts[1])
@@ -720,13 +721,13 @@ func currentSessionID(currentSession **session.Session) string {
 	return strings.TrimSpace((*currentSession).ID)
 }
 
-func callCronMutationTool(a *agent.Agent, name string, args map[string]any) error {
-	if a == nil || a.Tools() == nil {
-		return fmt.Errorf("agent cron service is not initialized")
+	func callCronMutationTool(a *agent.Agent, action, id string) error {
+		if a == nil || a.Tools() == nil {
+			return fmt.Errorf("agent cron service is not initialized")
+		}
+		_, err := a.Tools().Call("cron", map[string]any{"action": action, "id": id})
+		return err
 	}
-	_, err := a.Tools().Call(name, args)
-	return err
-}
 
 func saveCronStore(store *cron.Store, engine *cron.Engine) error {
 	if store == nil {

@@ -108,7 +108,7 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 	if err := save(); err != nil {
 		return result, err
 	}
-	guard := newTurnToolGuard(input.RoutingText, cfg.DisabledTools, snapshotMode(cfg.Sandbox))
+	guard := newTurnToolGuard(input.RoutingText, cfg.DisabledTools, cfg.BlockedActions, snapshotMode(cfg.Sandbox))
 	memoryGate := a.buildMemoryToolGate(input.RoutingText, input.Scope, cfg.DisabledTools)
 	artifactGuard := newArtifactFinalizationGuard(input.RoutingText)
 	for _, op := range task.Operations {
@@ -495,7 +495,7 @@ func (a *Agent) verifyDurableCandidate(ctx context.Context, goal string, criteri
 			return nil, 0, fmt.Errorf("%w: unresolved tool operation %s", autonomy.ErrBlocked, op.ID)
 		}
 		if !op.Failed {
-			delegates.recordDelegateTaskToolResult(op.Name, op.Output)
+			delegates.recordDelegateTaskToolResult(op.Name, op.Arguments, op.Output)
 		}
 	}
 	if message, pending := delegates.pendingDelegateWaitMessage(); pending {

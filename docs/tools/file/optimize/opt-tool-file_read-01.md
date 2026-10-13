@@ -111,8 +111,7 @@ file appears to be binary; use document_read or a media-specific tool when appro
 
 `file_read` 适合读“原始文本事实”，但对于 JSON、YAML、CSV、SQLite，已有更窄工具：
 
-- `json_query`
-- `yaml_query`
+- `data_query`
 - `csv_query`
 - `db_schema`
 - `sql_query`

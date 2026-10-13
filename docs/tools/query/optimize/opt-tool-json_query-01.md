@@ -1,5 +1,7 @@
 # opt-tool-json_query-01
 
+> 历史优化记录。对应能力现在属于 `data_query` 的 `format=json`，当前说明见 [data_query.md](../data_query.md)。
+
 ## 目标
 
 优化 `json_query` 的大文件保护、查询语法、输出控制和错误诊断，让它继续保持“只读查询本地 JSON 文件”的定位，同时降低整文件加载风险、点路径语法不足、输出过长和路径错误难排查的问题。

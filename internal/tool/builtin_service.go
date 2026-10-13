@@ -58,18 +58,10 @@ func (s *BuiltinToolService) RegisterTools(r *Registry) {
 	r.Register(OpenCLITool(s.opencliCfg, s.searchCfg))
 	r.Register(CurrentTimeTool())
 	r.Register(CalculateTool())
-	r.Register(ImageAnalyzeTool(s.mediaProcessor, s.defaultImageProvider))
-	r.Register(ImageReadTool())
-	r.Register(ImageGenerateTool(s.imageGenerator, s.imageGenDefaults))
+	r.Register(ImageTool(s.mediaProcessor, s.defaultImageProvider, s.imageGenerator, s.imageGenDefaults))
 	r.Register(TextToSpeechTool(s.speechSynthesizer, s.ttsDefaults))
-	r.Register(LogTailTool())
-	r.Register(LogGrepTool())
+	r.Register(DataTool())
 	r.Register(HTTPRequestTool())
-	r.Register(JSONQueryTool())
-	r.Register(YAMLQueryTool())
-	r.Register(CSVQueryTool())
-	r.Register(SQLQueryTool())
-	r.Register(DBSchemaTool())
 	if s.computerUse != nil {
 		s.computerUse.RegisterTools(r)
 	}
@@ -103,7 +95,6 @@ func (s *BuiltinToolService) ReloadMedia(r *Registry, defaultImageProvider strin
 	synthesizer := s.speechSynthesizer
 	speechDefaults := s.ttsDefaults
 	s.mu.Unlock()
-	r.Register(ImageAnalyzeTool(processor, providerName))
-	r.Register(ImageGenerateTool(generator, imageDefaults))
+	r.Register(ImageTool(processor, providerName, generator, imageDefaults))
 	r.Register(TextToSpeechTool(synthesizer, speechDefaults))
 }

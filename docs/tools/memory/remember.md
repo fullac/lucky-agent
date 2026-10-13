@@ -1,6 +1,6 @@
 # remember Tool
 
-`remember` 是 LuckyAgent 的内置记忆写入工具，用来把稳定的用户事实、偏好、长期项目约束或可复用结论保存到 LuckyAgent 的 Obsidian-compatible Markdown memory vault。
+记忆写入现在是 `memory` 的 `action=remember`。它把稳定的用户事实、偏好、长期项目约束或可复用结论保存到 LuckyAgent 的 Obsidian-compatible Markdown memory vault。
 
 这是对持久记忆库的写入工具，但当前注册权限是自动批准。使用时仍应只保存明确、稳定、值得之后召回的信息。
 

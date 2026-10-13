@@ -62,9 +62,9 @@ func (a *Agent) applySandboxToolPolicy(cfg *LoopConfig, snapshot *sandbox.Snapsh
 		"web_search", "web_fetch", "http_request", "opencli",
 		"grok.start_session", "grok.resume_session", "grok.start_turn",
 		"grok.subscribe_events", "grok.respond_approval", "grok.get_turn_summary",
-		"cron", "cron_add", "cron_remove", "cron_pause", "cron_resume",
+		"cron",
 		"autonomy", "autonomy_queue_add", "autonomy_queue_update", "autonomy_worker_spawn",
-		"delegate_task", "delegate_cancel",
+		"subagent",
 	}
 	if a.tools != nil {
 		for _, item := range a.tools.ListEnabled() {

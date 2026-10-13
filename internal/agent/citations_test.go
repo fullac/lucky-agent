@@ -60,7 +60,7 @@ func TestAppendNaturalCitationsAddsWebSearchFooter(t *testing.T) {
 func TestAppendNaturalCitationsSkipsErrorsAndMutatingTools(t *testing.T) {
 	got := appendNaturalCitations("完成", []toolCallLog{
 		{Name: "web_search", Arguments: `{"query":"x"}`, Result: "Error: unavailable"},
-		{Name: "remember", Arguments: `{"content":"x"}`, Result: "saved"},
+		{Name: "memory", Arguments: `{"action":"remember","content":"x"}`, Result: "saved"},
 	})
 	if got != "完成" {
 		t.Fatalf("expected no citations for skipped tools, got %q", got)

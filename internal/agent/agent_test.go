@@ -2824,7 +2824,7 @@ func TestBuildDelegateRuntimeConfigUsesConfig(t *testing.T) {
 	if childLoop.MaxIterations != 12 || childLoop.Timeout != 90*time.Second || !childLoop.AutoApprove || childLoop.RepeatToolCallLimit != 4 || childLoop.ToolOnlyIterationLimit != 5 || childLoop.DuplicateFetchLimit != 2 {
 		t.Fatalf("unexpected child loop config: %#v", childLoop)
 	}
-	for _, name := range []string{"terminal", "delegate_task", "delegate_parallel", "delegate_to_skill", "delegate_to_mcp"} {
+	for _, name := range []string{"terminal", "subagent", "delegate_parallel", "delegate_to_skill", "delegate_to_mcp"} {
 		found := false
 		for _, disabled := range childLoop.DisabledTools {
 			if disabled == name {
@@ -3504,7 +3504,8 @@ func TestCronToolsLifecycle(t *testing.T) {
 	}
 	defer a.Close()
 
-	addResp, err := a.Tools().Call("cron_add", map[string]any{
+	addResp, err := a.Tools().Call("cron", map[string]any{
+		"action":   "add",
 		"id":       "job1",
 		"schedule": "每小时",
 		"mode":     "shell",
@@ -3527,7 +3528,7 @@ func TestCronToolsLifecycle(t *testing.T) {
 		t.Fatalf("expected shell mode metadata, got %q", got)
 	}
 
-	listResp, err := a.Tools().Call("cron_list", nil)
+	listResp, err := a.Tools().Call("cron", map[string]any{"action": "list"})
 	if err != nil {
 		t.Fatalf("cron_list error = %v", err)
 	}
@@ -3539,7 +3540,7 @@ func TestCronToolsLifecycle(t *testing.T) {
 		t.Fatalf("expected at least one cron job, got %v", listed["total"])
 	}
 
-	if _, err := a.Tools().Call("cron_pause", map[string]any{"id": "job1"}); err != nil {
+	if _, err := a.Tools().Call("cron", map[string]any{"action": "pause", "id": "job1"}); err != nil {
 		t.Fatalf("cron_pause error = %v", err)
 	}
 	job, _ = a.CronEngine().GetJob("job1")
@@ -3547,7 +3548,7 @@ func TestCronToolsLifecycle(t *testing.T) {
 		t.Fatalf("expected paused status, got %s", job.Status)
 	}
 
-	if _, err := a.Tools().Call("cron_resume", map[string]any{"id": "job1"}); err != nil {
+	if _, err := a.Tools().Call("cron", map[string]any{"action": "resume", "id": "job1"}); err != nil {
 		t.Fatalf("cron_resume error = %v", err)
 	}
 	job, _ = a.CronEngine().GetJob("job1")
@@ -3555,7 +3556,7 @@ func TestCronToolsLifecycle(t *testing.T) {
 		t.Fatalf("expected idle status, got %s", job.Status)
 	}
 
-	if _, err := a.Tools().Call("cron_remove", map[string]any{"id": "job1"}); err != nil {
+	if _, err := a.Tools().Call("cron", map[string]any{"action": "remove", "id": "job1"}); err != nil {
 		t.Fatalf("cron_remove error = %v", err)
 	}
 	if _, ok := a.CronEngine().GetJob("job1"); ok {
@@ -3623,7 +3624,8 @@ func TestCronAddAgentModeExecutesLoop(t *testing.T) {
 	defer a.Close()
 	a.provider = &mockProvider{name: "test-mock"}
 
-	if _, err := a.Tools().Call("cron_add", map[string]any{
+	if _, err := a.Tools().Call("cron", map[string]any{
+		"action":   "add",
 		"id":       "agent-job",
 		"schedule": "每小时",
 		"mode":     "agent",
@@ -3666,7 +3668,8 @@ func TestCronAddAgentModeCanBindExplicitSession(t *testing.T) {
 	a.provider = &mockProvider{name: "test-mock"}
 
 	sess := a.Sessions().NewWithTitle("bound cron context")
-	if _, err := a.Tools().Call("cron_add", map[string]any{
+	if _, err := a.Tools().Call("cron", map[string]any{
+		"action":     "add",
 		"id":         "agent-job-bound",
 		"schedule":   "每小时",
 		"mode":       "agent",
@@ -3738,7 +3741,8 @@ func TestCronAddAgentModeSendsTelegramNotification(t *testing.T) {
 	}
 	a.msgGateway = gm
 
-	if _, err := a.Tools().Call("cron_add", map[string]any{
+	if _, err := a.Tools().Call("cron", map[string]any{
+		"action":              "add",
 		"id":                  "agent-job-tg",
 		"schedule":            "每小时",
 		"mode":                "agent",
@@ -3807,7 +3811,8 @@ func TestCronAgentNotificationFailureReturnsJobError(t *testing.T) {
 	}
 	a.msgGateway = gm
 
-	if _, err := a.Tools().Call("cron_add", map[string]any{
+	if _, err := a.Tools().Call("cron", map[string]any{
+		"action":   "add",
 		"id":       "agent-job-napcat-delivery-failure",
 		"schedule": "每小时",
 		"mode":     "agent",
@@ -3925,7 +3930,8 @@ func TestCronNotificationFallsBackToRecentTelegramTarget(t *testing.T) {
 	a.msgGateway = gm
 	a.RecordRecentChatTarget("telegram", "12345", "77")
 
-	if _, err := a.Tools().Call("cron_add", map[string]any{
+	if _, err := a.Tools().Call("cron", map[string]any{
+		"action":   "add",
 		"id":       "agent-job-fallback-tg",
 		"schedule": "每小时",
 		"mode":     "agent",
@@ -4107,7 +4113,8 @@ func TestCronToolsPersistAcrossAgentRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first New() error = %v", err)
 	}
-	if _, err := a1.Tools().Call("cron_add", map[string]any{
+	if _, err := a1.Tools().Call("cron", map[string]any{
+		"action":   "add",
 		"id":       "persisted-job",
 		"schedule": "每小时",
 		"mode":     "shell",

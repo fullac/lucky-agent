@@ -433,7 +433,7 @@ func appendLatestComputerObservation(messages []provider.Message, executed []exe
 	for i := range executed {
 		for j := range executed[i].Observations {
 			obs := executed[i].Observations[j]
-			if executed[i].ToolCall.Name == "image_read" {
+			if imageReadCall(executed[i].ToolCall) {
 				part := provider.ContentPart{Type: "image", Image: &provider.ImagePart{FilePath: obs.FilePath, URL: obs.ImageURL, MimeType: obs.MimeType}}
 				if part.Image.FilePath == "" && len(obs.ImageData) > 0 {
 					part.Image.URL = "data:" + imageMimeType(obs.MimeType) + ";base64," + base64.StdEncoding.EncodeToString(obs.ImageData)
@@ -656,7 +656,7 @@ func emitObservationEvents(emit func(ChatEvent), result executedToolCall) {
 	for _, obs := range result.Observations {
 		// image_read supplies model input, not a new artifact to send back to
 		// the user. Computer tools use the same image observation payload.
-		if result.ToolCall.Name == "image_read" {
+		if imageReadCall(result.ToolCall) {
 			continue
 		}
 		if strings.TrimSpace(obs.FrameID) == "" && strings.TrimSpace(obs.FilePath) == "" && len(obs.ImageData) == 0 {

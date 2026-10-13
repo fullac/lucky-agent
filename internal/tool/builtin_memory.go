@@ -1,6 +1,83 @@
 package tool
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// MemoryTool stores, searches, and cleans durable memory through one entry.
+func MemoryTool(remember, hygiene func(args map[string]any) (string, error), recall func(args map[string]any) (string, error), recallDetailed func(args map[string]any) (ToolCallResult, error)) *Tool {
+	rememberTool := RememberTool(remember)
+	recallTool := RecallTool(recall, recallDetailed)
+	hygieneTool := MemoryHygieneTool(hygiene)
+	return &Tool{
+		Name:        "memory",
+		Description: "Read or change durable memory. action=remember stores a fact, action=recall searches the vault, action=hygiene audits or cleans it. For hygiene, operation is audit, quarantine, delete, or restore.",
+		Category:    CatBuiltin,
+		Source:      "builtin",
+		Permission:  PermAuto,
+		PermissionFor: func(args map[string]any) PermissionLevel {
+			action, _ := args["action"].(string)
+			if strings.EqualFold(strings.TrimSpace(action), "hygiene") {
+				return PermApprove
+			}
+			return PermAuto
+		},
+		Parameters: mergedToolParams(map[string]Param{
+			"action":    {Type: "string", Description: "Action: remember, recall, or hygiene.", Required: true},
+			"operation": {Type: "string", Description: "For action=hygiene: audit, quarantine, delete, or restore. Defaults to audit.", Required: false, Default: "audit"},
+		}, rememberTool.Parameters, recallTool.Parameters, hygieneTool.Parameters),
+		Handler: func(args map[string]any) (string, error) {
+			switch toolAction(args) {
+			case "remember":
+				return rememberTool.Handler(args)
+			case "recall":
+				return recallTool.Handler(args)
+			case "hygiene":
+				next := cloneToolArgs(args)
+				if operation, _ := next["operation"].(string); strings.TrimSpace(operation) != "" {
+					next["action"] = operation
+				} else {
+					next["action"] = "audit"
+				}
+				return hygieneTool.Handler(next)
+			default:
+				return "", fmt.Errorf("invalid memory action %q (use remember, recall, or hygiene)", args["action"])
+			}
+		},
+		DetailedHandler: func(args map[string]any) (ToolCallResult, error) {
+			if toolAction(args) == "recall" && recallTool.DetailedHandler != nil {
+				return recallTool.DetailedHandler(args)
+			}
+			out, err := MemoryTool(remember, hygiene, recall, recallDetailed).Handler(args)
+			return ToolCallResult{Output: out}, err
+		},
+		ParallelSafe: true,
+	}
+}
+
+func toolAction(args map[string]any) string {
+	action, _ := args["action"].(string)
+	return strings.ToLower(strings.TrimSpace(action))
+}
+
+func mergedToolParams(base map[string]Param, groups ...map[string]Param) map[string]Param {
+	out := map[string]Param{}
+	for key, value := range base {
+		out[key] = value
+	}
+	for _, group := range groups {
+		for key, value := range group {
+			if key == "action" {
+				continue
+			}
+			if _, exists := out[key]; !exists {
+				out[key] = value
+			}
+		}
+	}
+	return out
+}
 
 // RememberTool 保存记忆工具
 func RememberTool(handler func(args map[string]any) (string, error)) *Tool {

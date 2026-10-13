@@ -113,7 +113,7 @@ func naturalCitationsFromToolLogs(toolCalls []toolCallLog) []naturalCitation {
 	citations := make([]naturalCitation, 0, len(toolCalls))
 	seen := make(map[string]struct{}, len(toolCalls))
 	for _, call := range toolCalls {
-		if shouldSkipCitationTool(call.Name, call.Result) {
+		if shouldSkipCitationTool(call) {
 			continue
 		}
 		citation, ok := naturalCitationFromToolLog(call)
@@ -133,12 +133,12 @@ func naturalCitationsFromToolLogs(toolCalls []toolCallLog) []naturalCitation {
 	return citations
 }
 
-func shouldSkipCitationTool(name, result string) bool {
-	name = strings.TrimSpace(name)
+	func shouldSkipCitationTool(call toolCallLog) bool {
+	name := strings.TrimSpace(call.Name)
 	if name == "" {
 		return true
 	}
-	out := strings.TrimSpace(result)
+	out := strings.TrimSpace(call.Result)
 	if out == "" {
 		return true
 	}
@@ -150,11 +150,19 @@ func shouldSkipCitationTool(name, result string) bool {
 		return true
 	}
 	switch name {
-	case "remember", "rag_index", "cron_add", "cron_remove", "cron_pause", "cron_resume":
+	case "rag_index":
 		return true
-	default:
-		return false
+	case "memory":
+		action, _ := parseCitationArgs(call.Arguments)["action"].(string)
+		return strings.EqualFold(strings.TrimSpace(action), "remember")
+	case "cron":
+		action, _ := parseCitationArgs(call.Arguments)["action"].(string)
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "add", "remove", "pause", "resume":
+			return true
+		}
 	}
+	return false
 }
 
 func naturalCitationFromToolLog(call toolCallLog) (naturalCitation, bool) {

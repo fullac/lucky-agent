@@ -56,7 +56,8 @@ func TestCSVQueryStreamingProjectionFiltersAndMeta(t *testing.T) {
 		t.Fatalf("write csv: %v", err)
 	}
 
-	result, err := r.Call("csv_query", map[string]any{
+	result, err := r.Call("data", map[string]any{
+		"action":  "csv",
 		"path":    csvPath,
 		"columns": []any{"name", "email"},
 		"filters": []any{
@@ -88,7 +89,8 @@ func TestCSVQueryDelimiterAndLegacyContains(t *testing.T) {
 		t.Fatalf("write tsv: %v", err)
 	}
 
-	result, err := r.Call("csv_query", map[string]any{
+	result, err := r.Call("data", map[string]any{
+		"action":    "csv",
 		"path":      tsvPath,
 		"delimiter": `\t`,
 		"column":    "email",
@@ -108,14 +110,15 @@ func TestSQLQueryReadOnlyMetadataAndBlob(t *testing.T) {
 
 	dbPath := seedQuerySQLite(t)
 
-	if _, err := r.Call("sql_query", map[string]any{"path": dbPath, "query": "SELECT name FROM users; DELETE FROM users"}); err == nil {
+	if _, err := r.Call("data", map[string]any{"action": "sql", "path": dbPath, "query": "SELECT name FROM users; DELETE FROM users"}); err == nil {
 		t.Fatalf("expected multi-statement query to be rejected")
 	}
-	if _, err := r.Call("sql_query", map[string]any{"path": dbPath, "query": "PRAGMA query_only=OFF"}); err == nil {
+	if _, err := r.Call("data", map[string]any{"action": "sql", "path": dbPath, "query": "PRAGMA query_only=OFF"}); err == nil {
 		t.Fatalf("expected write-like pragma to be rejected")
 	}
 
-	result, err := r.Call("sql_query", map[string]any{
+	result, err := r.Call("data", map[string]any{
+		"action":       "sql",
 		"path":         dbPath,
 		"query":        "SELECT name, avatar FROM users ORDER BY id",
 		"limit":        1,
@@ -136,7 +139,8 @@ func TestDBSchemaIncludesIndexesForeignKeysAndDefaults(t *testing.T) {
 	RegisterBuiltinTools(r)
 
 	dbPath := seedQuerySQLite(t)
-	result, err := r.Call("db_schema", map[string]any{
+	result, err := r.Call("data", map[string]any{
+		"action":      "schema",
 		"path":        dbPath,
 		"table":       "users",
 		"include":     "columns,indexes,foreign_keys,triggers",
