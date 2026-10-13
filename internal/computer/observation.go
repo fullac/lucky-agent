@@ -16,6 +16,10 @@ type Target struct {
 	Window    string `json:"window,omitempty"`
 	// Region is relative to the selected window/display, before downscaling.
 	Region *Rect `json:"region,omitempty"`
+	// MaxWidth asks a backend that can scale during capture to do so. Zero
+	// keeps the backend's full frame. The delivered image stays the coordinate
+	// space used for later pointer actions.
+	MaxWidth int `json:"max_width,omitempty"`
 }
 
 type ObserveRequest struct {
@@ -84,6 +88,10 @@ type Observation struct {
 	Accessibility *AccessibilityTree `json:"accessibility,omitempty"`
 	Stable        bool               `json:"stable,omitempty"`
 	ActionResults []ActionExecution  `json:"action_results,omitempty"`
+	// Unchanged reports that the post-action image matches the image the action
+	// was aimed at. The new frame is still captured and persisted; callers can
+	// avoid sending that duplicate image back to the model.
+	Unchanged bool `json:"unchanged,omitempty"`
 
 	// Original capture dimensions, retained by Manager for action mapping when
 	// the delivered screenshot has been downscaled. Zero means no transform.

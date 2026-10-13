@@ -44,7 +44,7 @@ func (b *WaylandBackend) Capture(ctx context.Context, target Target) (Observatio
 	path := f.Name()
 	_ = f.Close()
 	obs := Observation{FilePath: path, MimeType: "image/png", CleanupFile: true}
-	err = b.helper.call(ctx, map[string]any{"op": "wayland_capture", "path": path, "observe_only": b.observeOnly, "display_id": target.DisplayID}, &obs)
+	err = b.helper.call(ctx, map[string]any{"op": "wayland_capture", "path": path, "observe_only": b.observeOnly, "display_id": target.DisplayID, "max_width": target.MaxWidth}, &obs)
 	if err != nil {
 		_ = os.Remove(path)
 		return Observation{}, err
@@ -70,7 +70,7 @@ func (b *WaylandBackend) ValidateObservation(ctx context.Context, obs Observatio
 	if action.ElementID != "" {
 		return nil
 	}
-	return b.helper.call(ctx, map[string]any{"op": "wayland_validate", "display_id": obs.DisplayID, "width": obs.CaptureBounds.Width, "height": obs.CaptureBounds.Height}, nil)
+	return b.helper.call(ctx, map[string]any{"op": "wayland_validate", "display_id": obs.DisplayID}, nil)
 }
 func (b *WaylandBackend) Accessibility(ctx context.Context, target Target) (AccessibilityTree, error) {
 	var tree AccessibilityTree

@@ -205,9 +205,13 @@ func (m *Manager) StepBatch(ctx context.Context, sessionID string, actions []Act
 	if m.config.FrameTTL > 0 && time.Since(s.latest.CapturedAt) >= m.config.FrameTTL {
 		return Observation{}, fmt.Errorf("%w: observation expired; observe again", ErrStaleFrame)
 	}
-	for i, action := range actions {
+	performedBefore := 0
+	for _, action := range actions {
 		if err := action.Validate(); err != nil {
 			return Observation{}, err
+		}
+		if action.Kind == ActionWait {
+			continue
 		}
 		if s.request.Format == "tree" && action.Kind != ActionInvoke && action.Kind != ActionSetText && action.Kind != ActionFocus {
 			return Observation{}, errors.New("computer: tree-only observations support invoke, set_text, and focus; observe an image before keyboard or pointer actions")
@@ -218,9 +222,10 @@ func (m *Manager) StepBatch(ctx context.Context, sessionID string, actions []Act
 		if action.DisplayID != "" && action.DisplayID != s.latest.DisplayID {
 			return Observation{}, errors.New("computer: action display differs from observed display")
 		}
-		if i > 0 && (pointerAction(action.Kind) || action.Kind == ActionInvoke || action.Kind == ActionFocus) {
+		if performedBefore > 0 && (pointerAction(action.Kind) || action.Kind == ActionInvoke || action.Kind == ActionFocus) {
 			return Observation{}, errors.New("computer: only the first batch action may point, invoke, or focus; observe again before choosing another target")
 		}
+		performedBefore++
 		if pointerAction(action.Kind) && (s.latest.Width <= 0 || s.latest.Height <= 0) {
 			return Observation{}, errors.New("computer: pointer actions require an image observation")
 		}
@@ -234,7 +239,10 @@ func (m *Manager) StepBatch(ctx context.Context, sessionID string, actions []Act
 	if err := validateAllowedWindow(s.latest.ActiveWindow, m.config.AllowedWindows); err != nil {
 		return Observation{}, err
 	}
-	if m.config.MaxSteps > 0 && len(actions) > m.config.MaxSteps-s.steps {
+	if performedBefore == 0 {
+		return Observation{}, errors.New("computer: wait_ms only delays a desktop action; it cannot be the whole batch")
+	}
+	if m.config.MaxSteps > 0 && performedBefore > m.config.MaxSteps-s.steps {
 		return Observation{}, ErrStepLimit
 	}
 	if err := m.lockDesktop(ctx); err != nil {
@@ -246,13 +254,21 @@ func (m *Manager) StepBatch(ctx context.Context, sessionID string, actions []Act
 	}
 	requestID := m.nextActionRequestID()
 	executions := make([]ActionExecution, 0, len(actions))
+	performed := 0
+	beforeHash := s.latest.SHA256
 	for i, action := range actions {
 		if err := ctx.Err(); err != nil {
-			return Observation{}, &BatchError{Completed: i, Err: err}
+			return Observation{}, &BatchError{Completed: performed, Err: err}
+		}
+		if action.Kind == ActionWait {
+			if err := waitContext(ctx, time.Duration(action.DurationMS)*time.Millisecond); err != nil {
+				return Observation{}, &BatchError{Completed: performed, Err: err}
+			}
+			continue
 		}
 		if validator, ok := m.backend.(observationValidator); ok {
 			if err := validator.ValidateObservation(ctx, s.latest, action); err != nil {
-				return Observation{}, &BatchError{Completed: i, Err: err}
+				return Observation{}, &BatchError{Completed: performed, Err: err}
 			}
 		}
 		// Even a failed backend call may have injected part of an action.
@@ -285,16 +301,17 @@ func (m *Manager) StepBatch(ctx context.Context, sessionID string, actions []Act
 			execution.DurationMS = execution.CompletedAt.Sub(startedAt).Milliseconds()
 			execution.Error = err.Error()
 			logger.Warn("computer action failed", "request_id", requestID, "action_index", i, "action", action.Kind, "duration_ms", execution.DurationMS, "error", err)
-			return Observation{}, &BatchError{Completed: i, Err: fmt.Errorf("request_id=%s action_index=%d: %w", requestID, i, err)}
+			return Observation{}, &BatchError{Completed: performed, Err: fmt.Errorf("request_id=%s action_index=%d: %w", requestID, i, err)}
 		}
+		performed++
 		execution.CompletedAt = time.Now().UTC()
 		execution.DurationMS = execution.CompletedAt.Sub(startedAt).Milliseconds()
 		execution.Completed = true
 		executions = append(executions, execution)
 		logger.Info("computer action executed", "request_id", requestID, "action_index", i, "action", action.Kind, "input_x", action.X, "input_y", action.Y, "backend_x", movedAction.X, "backend_y", movedAction.Y, "duration_ms", execution.DurationMS)
-		if i+1 < len(actions) && m.config.ActionSettle > 0 {
+		if i+1 < len(actions) && m.config.ActionSettle > 0 && actions[i+1].Kind != ActionWait {
 			if err := waitContext(ctx, m.config.ActionSettle); err != nil {
-				return Observation{}, &BatchError{Completed: i + 1, Err: err}
+				return Observation{}, &BatchError{Completed: performed, Err: err}
 			}
 		}
 	}
@@ -308,6 +325,7 @@ func (m *Manager) StepBatch(ctx context.Context, sessionID string, actions []Act
 		executions[i].CursorAfterY = obs.CursorY
 	}
 	obs.ActionResults = executions
+	obs.Unchanged = beforeHash != "" && obs.SHA256 != "" && obs.SHA256 == beforeHash
 	return obs, nil
 }
 
@@ -367,7 +385,9 @@ func (m *Manager) captureUnlocked(ctx context.Context, sessionID string, s *sess
 	var obs Observation
 	var err error
 	if req.Format != "tree" {
-		obs, err = m.captureSettled(ctx, req.Target, settle)
+		target := req.Target
+		target.MaxWidth = m.config.MaxScreenshotWidth
+		obs, err = m.captureSettled(ctx, target, settle)
 	} else if settle && m.config.Settle > 0 {
 		err = waitContext(ctx, m.config.Settle)
 	}
@@ -402,7 +422,13 @@ func (m *Manager) captureUnlocked(ctx context.Context, sessionID string, s *sess
 	if err != nil {
 		return Observation{}, err
 	}
-	obs, err = fitScreenshot(ctx, obs, m.config.MaxScreenshotWidth, m.config.MaxObservationBytes)
+	fitWidth := m.config.MaxScreenshotWidth
+	if targetWidth := req.Target.MaxWidth; targetWidth > 0 && obs.Width > 0 && obs.Width <= targetWidth {
+		// The backend already scaled while encoding. Fitting again would map
+		// pointer coordinates through a transform that never happened.
+		fitWidth = 0
+	}
+	obs, err = fitScreenshot(ctx, obs, fitWidth, m.config.MaxObservationBytes)
 	if err != nil {
 		return Observation{}, err
 	}

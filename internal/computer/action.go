@@ -19,6 +19,10 @@ const (
 	ActionInvoke      ActionKind = "invoke"
 	ActionSetText     ActionKind = "set_text"
 	ActionFocus       ActionKind = "focus"
+	// ActionWait pauses the batch without reaching a backend. Models follow the
+	// prompt and insert it between a click and later typing; rejecting it used
+	// to discard the pointer action in front of it.
+	ActionWait ActionKind = "wait_ms"
 	// Short aliases keep adapters readable while preserving the wire names.
 	ActionType = ActionTypeText
 	ActionKey  = ActionKeypress
@@ -82,6 +86,10 @@ func (a Action) Validate() error {
 	case ActionInvoke, ActionSetText, ActionFocus:
 		if a.ElementID == "" {
 			return fmt.Errorf("computer: %s requires an element_id from the latest accessibility tree", a.Kind)
+		}
+	case ActionWait:
+		if a.DurationMS <= 0 {
+			return fmt.Errorf("computer: wait_ms requires duration_ms between 1 and 10000")
 		}
 	default:
 		return fmt.Errorf("computer: unsupported action kind %q", a.Kind)

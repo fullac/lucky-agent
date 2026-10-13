@@ -428,7 +428,14 @@ func isComputerUseToolName(name string) bool {
 // helper is called so the function-calling protocol remains well-formed.
 // Older transient frames are removed to prevent screenshot accumulation.
 func appendLatestComputerObservation(messages []provider.Message, executed []executedToolCall) []provider.Message {
+	if redundant, target := redundantComputerObservation(messages, executed); redundant {
+		// The model already has this display from the preceding action. Replacing
+		// it with another full screenshot costs a model turn and shows nothing new.
+		messages = append(removeComputerObservationReuse(messages), provider.Message{Role: "user", Content: computerObservationReuseNote(target)})
+		return messages
+	}
 	messages = removeTransientComputerObservations(messages)
+	messages = removeComputerObservationReuse(messages)
 	var latest *tool.Observation
 	for i := range executed {
 		for j := range executed[i].Observations {
@@ -484,6 +491,87 @@ func removeTransientComputerObservations(messages []provider.Message) []provider
 
 func isTransientComputerObservation(msg provider.Message) bool {
 	return msg.Role == "user" && strings.HasPrefix(strings.TrimSpace(msg.Content), "[Computer Observation")
+}
+
+// redundantComputerObservation reports a computer_observe that only repeats a
+// frame already shown to the model. A different display or window is a new
+// target and still needs its screenshot. The capture itself has already run;
+// this only stops the duplicate image from starting another model turn.
+func redundantComputerObservation(messages []provider.Message, executed []executedToolCall) (bool, string) {
+	if !computerFrameCameFromAction(messages) {
+		return false, ""
+	}
+	var observeTarget string
+	observed := false
+	for _, call := range executed {
+		switch strings.TrimSpace(call.ToolCall.Name) {
+		case "computer_act":
+			return false, ""
+		case "computer_observe":
+			observed = true
+			observeTarget = computerObservationTarget(call.ToolCall.Arguments)
+		}
+	}
+	if !observed {
+		return false, ""
+	}
+	return true, observeTarget
+}
+
+func computerFrameCameFromAction(messages []provider.Message) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if !isTransientComputerObservation(msg) {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			previous := messages[j]
+			if previous.Role != "tool" {
+				continue
+			}
+			switch strings.TrimSpace(previous.Name) {
+			case "computer_act":
+				return true
+			case "computer_observe":
+				return false
+			}
+		}
+		return false
+	}
+	return false
+}
+
+func computerObservationReuseNote(target string) string {
+	note := "[computer observation reused] The current frame is already in context. Use it; do not request another screenshot of the same display unless the target changed."
+	if target != "" {
+		note += " Requested target: " + target + "."
+	}
+	return note
+}
+
+func removeComputerObservationReuse(messages []provider.Message) []provider.Message {
+	out := messages[:0]
+	for _, msg := range messages {
+		if msg.Role == "user" && strings.HasPrefix(strings.TrimSpace(msg.Content), "[computer observation reused]") {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+func computerObservationTarget(arguments string) string {
+	var args struct {
+		DisplayID string `json:"display_id"`
+		Window    string `json:"window"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return ""
+	}
+	if target := strings.TrimSpace(args.Window); target != "" {
+		return target
+	}
+	return strings.TrimSpace(args.DisplayID)
 }
 
 func imageMimeType(mime string) string {

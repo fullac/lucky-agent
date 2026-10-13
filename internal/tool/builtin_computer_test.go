@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,8 +10,9 @@ import (
 )
 
 type fakeComputerManager struct {
-	observed bool
-	stepped  computer.Action
+	observed  bool
+	stepped   computer.Action
+	unchanged bool
 }
 
 func (f *fakeComputerManager) Observe(_ context.Context, sessionID string, _ computer.ObserveRequest) (computer.Observation, error) {
@@ -25,8 +27,8 @@ func (f *fakeComputerManager) Step(_ context.Context, sessionID string, action c
 		panic("session id must be forwarded")
 	}
 	f.stepped = action
-	return computer.Observation{FrameID: "frame-2", FilePath: "/tmp/frame-2.png", MimeType: "image/png", Width: 100, Height: 80}, nil
-}
+		return computer.Observation{FrameID: "frame-2", FilePath: "/tmp/frame-2.png", MimeType: "image/png", Width: 100, Height: 80, Unchanged: f.unchanged}, nil
+	}
 
 func TestComputerToolsObserveAndAct(t *testing.T) {
 	fake := &fakeComputerManager{}
@@ -71,6 +73,25 @@ func TestComputerToolPolicies(t *testing.T) {
 	_, err = r.CallDetailedWithContext("computer_observe", nil, ExecutionContext{SessionID: "s1", Source: "telegram"})
 	if err == nil {
 		t.Fatal("expected source policy rejection")
+	}
+}
+
+func TestUnchangedActionDoesNotReturnTheScreenshot(t *testing.T) {
+	fake := &fakeComputerManager{unchanged: true}
+	service := NewComputerUseToolService(fake, ComputerUseConfig{Enabled: true, Mode: "control"})
+	r := NewRegistry()
+	service.RegisterTools(r)
+	result, err := r.CallDetailedWithContext("computer_act", map[string]any{
+		"action": "click", "frame_id": "frame-1", "x": float64(4), "y": float64(5), "reason": "send",
+	}, ExecutionContext{Context: context.Background(), SessionID: "s1", Source: "cli", AutoApprove: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Observations) != 0 {
+		t.Fatalf("unchanged action still returned an image: %+v", result.Observations)
+	}
+	if !strings.Contains(result.Output, "Screen unchanged") {
+		t.Fatalf("missing unchanged guidance: %q", result.Output)
 	}
 }
 

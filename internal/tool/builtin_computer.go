@@ -92,8 +92,8 @@ func (s *ComputerUseToolService) ActTool() *Tool {
 		Permission:   PermApprove,
 		ParallelSafe: false,
 		Parameters: map[string]Param{
-			"action":         {Type: "string", Description: "Single action: click, double_click, move, drag, type, keypress, scroll, or accessibility invoke/set_text/focus. Supply either action or actions."},
-			"actions":        {Type: "array", Description: "Optional array of action objects, e.g. [{action:click,x:100,y:80},{action:type,text:hello}]. Default maximum 5. Only the first action may point, invoke, or focus; subsequent steps may type, set_text, keypress, or scroll. All use the outer frame_id. No branching or blind replay."},
+			"action":         {Type: "string", Description: "Single action: click, double_click, move, drag, type, keypress, scroll, or accessibility invoke/set_text/focus. Supply either action or actions. wait_ms is only valid inside actions."},
+			"actions":        {Type: "array", Description: "Optional array of action objects, e.g. [{action:click,x:100,y:80},{action:wait_ms,duration_ms:800},{action:type,text:hello}]. Default maximum 5 performed actions. wait_ms only delays the next item and is not sent to the desktop. Only the first performed action may point, invoke, or focus; subsequent steps may type, set_text, keypress, or scroll. All use the outer frame_id. No branching or blind replay."},
 			"element_id":     {Type: "string", Description: "ID from the latest accessibility tree for invoke, set_text, or focus."},
 			"element_action": {Type: "string", Description: "For invoke, an action name listed on the observed element, such as click or press."},
 			"frame_id":       {Type: "string", Description: "Frame ID from the latest computer_observe result.", Required: true},
@@ -230,9 +230,16 @@ func (s *ComputerUseToolService) act(exec ExecutionContext, args map[string]any)
 		return ToolCallResult{}, err
 	}
 	result := observationResult(obs)
+	if obs.Unchanged {
+		// The post-action frame matches the frame the action targeted. Keep the
+		// capture for diagnostics, but do not spend another model turn on it.
+		result.Observations = nil
+		result.Output += "\nScreen unchanged: this action did not change the image. Do not repeat it at the same coordinate. Observe once, then choose a different target."
+	}
 	if result.Metadata == nil {
 		result.Metadata = map[string]any{}
 	}
+	result.Metadata["screen_unchanged"] = obs.Unchanged
 	result.Metadata["reason"] = computerStringArg(args, "reason")
 	result.Metadata["completed_actions"] = len(actions)
 	result.Metadata["action_results"] = obs.ActionResults
@@ -294,9 +301,12 @@ func (s *ComputerUseToolService) parseActions(args map[string]any) ([]computer.A
 			}
 			argsCopy[key] = args[key]
 		}
-		action, err := parseComputerAction(argsCopy)
+			action, err := parseComputerAction(argsCopy)
 		if err != nil {
 			return nil, err
+		}
+		if action.Kind == computer.ActionWait && action.DurationMS <= 0 {
+			return nil, fmt.Errorf("computer: wait_ms requires duration_ms between 1 and 10000")
 		}
 		if err := action.Validate(); err != nil {
 			return nil, err
@@ -458,6 +468,8 @@ func normalizeComputerActionKind(raw string) computer.ActionKind {
 		return computer.ActionScroll
 	case "text", "type_text", "write":
 		return computer.ActionTypeText
+	case "wait", "wait_ms", "sleep":
+		return computer.ActionWait
 	default:
 		return computer.ActionKind(strings.TrimSpace(raw))
 	}
