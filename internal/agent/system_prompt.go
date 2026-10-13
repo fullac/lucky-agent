@@ -264,7 +264,6 @@ func (a *Agent) buildToolInventoryPromptBlock(toolNames []string) string {
 	}
 	lines := make([]string, 0, len(toolNames)+1)
 	lines = append(lines, "Model-visible tools:")
-	count := 0
 	for _, name := range toolNames {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -278,11 +277,6 @@ func (a *Agent) buildToolInventoryPromptBlock(toolNames []string) string {
 			lines = append(lines, "- "+name)
 		} else {
 			lines = append(lines, fmt.Sprintf("- %s: %s", name, utils.Truncate(desc, 80)))
-		}
-		count++
-		if count >= 24 {
-			lines = append(lines, fmt.Sprintf("- … %d more tools are callable; use the tool schema rather than guessing.", len(toolNames)-count))
-			break
 		}
 	}
 	if len(lines) == 1 {
