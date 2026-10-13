@@ -38,13 +38,9 @@ func getCronNotificationSystemPrompt() string {
 	return loader.LoadOrDefault("functions/cron_notification.md", defaultPrompt)
 }
 
-var cronAgentDisabledTools = []string{
-	"cron",
-	"cron_add",
-	"cron_remove",
-	"cron_pause",
-	"cron_resume",
-}
+	var cronAgentDisabledTools = []string{
+		"cron",
+	}
 
 const cronNotificationForwardChunkLimit = 1200
 

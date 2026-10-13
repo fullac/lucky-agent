@@ -43,11 +43,10 @@ func TestExpandedDatasetCoversRealToolDomains(t *testing.T) {
 		"text_to_speech":   false,
 		"sql_query":        false,
 		"db_schema":        false,
-		"cron_add":         false,
-		"cron_list":        false,
+		"cron":             false,
 		"autonomy_status":  false,
 		"delegate_task":    false,
-		"heartbeat_status": false,
+		"heartbeat":        false,
 	}
 	for _, task := range tasks {
 		for _, opName := range task.RequiredOperations {

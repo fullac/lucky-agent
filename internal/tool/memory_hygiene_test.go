@@ -16,12 +16,15 @@ func TestMemoryHygieneToolRegistration(t *testing.T) {
 	registry := NewRegistry()
 	services.RegisterCoreTools(registry)
 
-	tool, ok := registry.Get("memory_hygiene")
+	got, ok := registry.Get("memory")
 	if !ok {
-		t.Fatal("memory_hygiene tool not registered")
+		t.Fatal("memory tool not registered")
 	}
-	if tool.Permission != PermApprove {
-		t.Fatalf("permission = %s, want approve", tool.Permission)
+	if got.EffectivePermission(map[string]any{"action": "hygiene"}) != PermApprove {
+		t.Fatal("memory hygiene should require approval")
+	}
+	if got.EffectivePermission(map[string]any{"action": "recall"}) != PermAuto {
+		t.Fatal("memory recall should be auto")
 	}
 }
 

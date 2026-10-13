@@ -10,6 +10,7 @@ import (
 
 type toolExecutionGuard struct {
 	disabledTools      []string
+	blockedActions     map[string][]string
 	text               string
 	readOnly           bool
 	readOnlyExternal   bool
@@ -87,12 +88,17 @@ func (g *toolExecutionGuard) blockMessage(call provider.ToolCall) (string, bool)
 
 func (g *toolExecutionGuard) blockReason(call provider.ToolCall) string {
 	name := strings.TrimSpace(call.Name)
+	args := parseToolCallArgs(call.Arguments)
 	for _, disabled := range g.disabledTools {
 		if name == disabled {
 			return "the tool is disabled for this turn; use the available tools and current image input"
 		}
 	}
-	args := parseToolCallArgs(call.Arguments)
+	for _, blocked := range g.blockedActions[name] {
+		if strings.EqualFold(guardStringArg(args, "action"), blocked) {
+			return "the " + blocked + " action is disabled for this turn; use the available image action"
+		}
+	}
 
 	switch name {
 	case "terminal":
@@ -118,49 +124,40 @@ func (g *toolExecutionGuard) blockReason(call provider.ToolCall) string {
 			return "the user requested image recognition only, not opening linked content"
 		}
 		return g.blockOpenCLIReason(args)
-	case "remember":
-		if g.noRemember {
+	case "memory":
+		if strings.EqualFold(guardStringArg(args, "action"), "remember") && g.noRemember {
 			return "the user explicitly disallowed writing to memory"
 		}
 	case "rag_index":
 		if g.noRAGIndex || g.noRemember || g.readOnly {
 			return "the user requested no indexing or persistent memory writes"
 		}
-	case "sql_query":
-		if g.noSQLQuery {
+	case "data":
+		if strings.EqualFold(guardStringArg(args, "action"), "sql") && g.noSQLQuery {
 			return "the user requested schema-only inspection without querying user data"
-		}
-	case "cron_add":
-		if g.noCronAdd {
-			return "the user requested cron inspection without adding jobs"
-		}
-	case "cron_pause":
-		if g.noCronPause {
-			return "the user explicitly disallowed pausing cron jobs"
-		}
-	case "cron_remove":
-		if g.noCronRemove || g.noDelete {
-			return "the user explicitly disallowed removing cron jobs"
-		}
-	case "cron_resume":
-		if g.readOnly {
-			return "the user requested cron inspection only"
 		}
 	case "cron":
 		return g.blockCronActionReason(guardStringArg(args, "action"))
-	case "heartbeat_trigger", "autonomy_heartbeat_trigger":
+	case "heartbeat":
+		if strings.EqualFold(guardStringArg(args, "action"), "trigger") && g.noHeartbeatTrigger {
+			return "the user explicitly disallowed manual heartbeat triggering"
+		}
+	case "autonomy_heartbeat_trigger":
 		if g.noHeartbeatTrigger {
 			return "the user explicitly disallowed manual heartbeat triggering"
 		}
 	case "autonomy", "autonomy_queue_add", "autonomy_queue_update", "autonomy_worker_spawn":
 		return g.blockAutonomyActionReason(name, guardStringArg(args, "action"))
-	case "delegate_task":
-		if g.noDelegateMutation {
-			return "the user requested delegate task inspection without creating a new task"
-		}
-	case "delegate_cancel":
-		if g.noDelegateMutation || g.readOnly {
-			return "the user requested delegate task inspection without changing tasks"
+	case "subagent":
+		switch strings.ToLower(guardStringArg(args, "action")) {
+		case "delegate":
+			if g.noDelegateMutation {
+				return "the user requested delegate task inspection without creating a new task"
+			}
+		case "cancel":
+			if g.noDelegateMutation || g.readOnly {
+				return "the user requested delegate task inspection without changing tasks"
+			}
 		}
 	case "codex.start_turn", "codex.steer_turn":
 		if g.mutationBlocked() {

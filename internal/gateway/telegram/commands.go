@@ -45,7 +45,6 @@ func telegramCommandSpecs() []telegramCommandSpec {
 		{Command: "deny", Usage: "/deny <tool>", Description: "Deny a tool", Group: commandGroupSystem},
 		{Command: "cron", Usage: "/cron [list|add|remove|pause|resume|start|stop]", Description: "Manage scheduled tasks", Group: commandGroupSystem},
 		{Command: "watch", Usage: "/watch [list|add|remove|start|stop]", Description: "Manage file watches", Group: commandGroupSystem},
-		{Command: "dashboard", Usage: "/dashboard [status]", Description: "Show dashboard status", Group: commandGroupSystem},
 		{Command: "msg_gateway", Usage: "/msg_gateway [status]", Description: "Show message gateway status", Group: commandGroupSystem},
 		{Command: "rag", Usage: "/rag [stats|search|list|remove|index]", Description: "Manage RAG knowledge base", Group: commandGroupSystem},
 		{Command: "context", Usage: "/context", Description: "Show context window status", Group: commandGroupSystem},

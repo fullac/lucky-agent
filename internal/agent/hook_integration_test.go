@@ -109,7 +109,7 @@ func TestExecuteGuardedPolicyResolvesOpenAICompatibleName(t *testing.T) {
 	results := a.executeToolCallsOrderedGuarded(
 		[]provider.ToolCall{{Name: "codex_start_turn", Arguments: "{}"}},
 		true, nil, map[string]int{}, map[string]string{}, 1, false,
-		newTurnToolGuard("不要修改文件", nil),
+		newTurnToolGuard("不要修改文件", nil, nil),
 	)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))

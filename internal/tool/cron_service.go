@@ -42,7 +42,8 @@ func (s *CronToolService) RegisterTools(r *Registry) {
 		Description: "Unified cron management tool. Use action=list|status|validate|add|remove|pause|resume to manage scheduled jobs through one high-level interface.",
 		Category:    CatDelegate,
 		Source:      "builtin",
-		Permission:  PermApprove,
+		Permission:    PermApprove,
+		PermissionFor: cronPermission,
 		Parameters: map[string]Param{
 			"action":              {Type: "string", Description: "Action: list, status, validate, add, remove, pause, resume", Required: true},
 			"id":                  {Type: "string", Description: "Job ID for add/remove/pause/resume", Required: false},
@@ -59,91 +60,18 @@ func (s *CronToolService) RegisterTools(r *Registry) {
 		},
 		Handler: s.HandleCron,
 	})
-	r.Register(&Tool{
-		Name:        "cron_add",
-		Description: "Add a scheduled job. Accepts natural language schedules like 每天9点, 每30分钟, 工作日18点, 明天10点, or a 5-field cron expression like 0 9 * * *. Mode can be shell or agent.",
-		Category:    CatDelegate,
-		Source:      "builtin",
-		Permission:  PermApprove,
-		Parameters: map[string]Param{
-			"id":                  {Type: "string", Description: "Optional job ID. Auto-generated when omitted.", Required: false},
-			"schedule":            {Type: "string", Description: "Natural language schedule or 5-field cron expression", Required: true},
-			"mode":                {Type: "string", Description: "Execution mode: shell or agent", Required: false, Default: "shell"},
-			"command":             {Type: "string", Description: "Shell command to run, or agent prompt when mode=agent", Required: true},
-			"dry_run":             {Type: "boolean", Description: "Preview the job without adding, starting, or saving it", Required: false, Default: false},
-			"start_engine":        {Type: "boolean", Description: "Start the cron engine after adding the job", Required: false, Default: true},
-			"platform":            {Type: "string", Description: "Optional notification platform, e.g. telegram", Required: false},
-			"chat_id":             {Type: "string", Description: "Optional target chat ID for notification delivery", Required: false},
-			"reply_to_message_id": {Type: "string", Description: "Optional reply target message ID", Required: false},
-			"session_id":          {Type: "string", Description: "Optional existing session ID to use as agent-mode context. Omit to run cron out of chat sessions.", Required: false},
-		},
-		Handler: s.HandleAdd,
-	})
-	r.Register(&Tool{
-		Name:        "cron_validate",
-		Description: "Validate a cron schedule and preview upcoming run times without creating a job.",
-		Category:    CatDelegate,
-		Source:      "builtin",
-		Permission:  PermAuto,
-		Parameters: map[string]Param{
-			"schedule":  {Type: "string", Description: "Natural language schedule or 5-field cron expression", Required: true},
-			"mode":      {Type: "string", Description: "Execution mode to validate: shell or agent", Required: false, Default: "shell"},
-			"command":   {Type: "string", Description: "Optional shell command or agent prompt for risk preview", Required: false},
-			"next_runs": {Type: "number", Description: "Number of future run times to preview", Required: false, Default: 3},
-		},
-		Handler: s.HandleValidate,
-	})
-	r.Register(&Tool{
-		Name:        "cron_list",
-		Description: "List all scheduled jobs and their current status.",
-		Category:    CatDelegate,
-		Source:      "builtin",
-		Permission:  PermAuto,
-		Parameters:  map[string]Param{},
-		Handler:     s.HandleList,
-	})
-	r.Register(&Tool{
-		Name:        "cron_remove",
-		Description: "Remove a scheduled job by ID.",
-		Category:    CatDelegate,
-		Source:      "builtin",
-		Permission:  PermApprove,
-		Parameters: map[string]Param{
-			"id": {Type: "string", Description: "Job ID", Required: true},
-		},
-		Handler: s.HandleRemove,
-	})
-	r.Register(&Tool{
-		Name:        "cron_pause",
-		Description: "Pause a scheduled job by ID.",
-		Category:    CatDelegate,
-		Source:      "builtin",
-		Permission:  PermApprove,
-		Parameters: map[string]Param{
-			"id": {Type: "string", Description: "Job ID", Required: true},
-		},
-		Handler: s.HandlePause,
-	})
-	r.Register(&Tool{
-		Name:        "cron_resume",
-		Description: "Resume a paused scheduled job by ID.",
-		Category:    CatDelegate,
-		Source:      "builtin",
-		Permission:  PermApprove,
-		Parameters: map[string]Param{
-			"id": {Type: "string", Description: "Job ID", Required: true},
-		},
-		Handler: s.HandleResume,
-	})
-	r.Register(&Tool{
-		Name:        "cron_status",
-		Description: "Get cron engine running status and job counts.",
-		Category:    CatDelegate,
-		Source:      "builtin",
-		Permission:  PermAuto,
-		Parameters:  map[string]Param{},
-		Handler:     s.HandleStatus,
-	})
+}
+
+// cronPermission keeps inspection auto-approved after the split cron tools
+// were folded into cron. Mutations still require approval.
+func cronPermission(args map[string]any) PermissionLevel {
+	action, _ := args["action"].(string)
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "list", "status", "validate", "preview":
+		return PermAuto
+	default:
+		return PermApprove
+	}
 }
 
 func (s *CronToolService) HandleCron(args map[string]any) (string, error) {

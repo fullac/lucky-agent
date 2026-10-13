@@ -1,6 +1,6 @@
 # heartbeat Tools
 
-LuckyAgent 的 heartbeat 工具组用于手动触发 HEARTBEAT.md 评估，以及查看 heartbeat 运行状态。它包含两个工具：`heartbeat_trigger` 和 `heartbeat_status`。
+LuckyAgent 用一个 `heartbeat` 工具查看 HEARTBEAT.md 运行状态，或手动触发评估。`action=status` 查看状态，`action=trigger` 触发评估。
 
 这组工具依赖外部注入的 handler。工具层负责注册、参数校验、安全默认值和最小 JSON 输出 schema；真实 heartbeat 执行仍由注入 handler 完成。
 
@@ -16,12 +16,12 @@ LuckyAgent 的 heartbeat 工具组用于手动触发 HEARTBEAT.md 评估，以�
 
 工具列表：
 
-| 工具 | 权限 | 说明 |
+| action | 权限 | 说明 |
 | --- | --- | --- |
-| `heartbeat_trigger` | `PermAuto` | 预览或手动触发 HEARTBEAT.md evaluation。默认 dry-run，不执行 active periodic tasks。 |
-| `heartbeat_status` | `PermAuto` | 返回 HEARTBEAT.md runtime status 和最新 routed external chat target。 |
+| `status` | `PermAuto` | 返回 HEARTBEAT.md runtime status 和最新 routed external chat target。 |
+| `trigger` | `PermAuto` | 预览或手动触发 HEARTBEAT.md evaluation。默认 dry-run，不执行 active periodic tasks。 |
 
-两个工具的 `Category` 都是 `CatDelegate`，`Source` 都是 `builtin`。
+工具的 `Category` 是 `CatDelegate`，`Source` 是 `builtin`，权限是 `PermAuto`。
 
 ## heartbeat_trigger
 

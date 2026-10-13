@@ -1,6 +1,6 @@
 # cron Tools
 
-LuckyAgent 的 cron 工具组用于管理定时任务。它包含一个统一入口 `cron`，以及多个细分工具：`cron_validate`、`cron_add`、`cron_list`、`cron_remove`、`cron_pause`、`cron_resume`、`cron_status`。
+LuckyAgent 用一个 `cron` 工具管理定时任务。`action` 取 `list`、`status`、`validate`、`add`、`remove`、`pause`、`resume`。
 
 cron 任务可以按 shell 模式执行命令，也可以按 agent 模式执行 prompt。调度表达式支持自然语言和 5 字段 cron 表达式。
 
@@ -17,16 +17,17 @@ cron 任务可以按 shell 模式执行命令，也可以按 agent 模式执行 
 
 工具列表：
 
-| 工具 | 权限 | 说明 |
+| action | 权限 | 说明 |
 | --- | --- | --- |
-| `cron` | `PermApprove` | 统一入口，通过 `action` 分发到 list/status/validate/add/remove/pause/resume。 |
-| `cron_validate` | `PermAuto` | 校验 schedule、预览 next runs 和 command risk，不创建任务。 |
-| `cron_add` | `PermApprove` | 添加定时任务。 |
-| `cron_list` | `PermAuto` | 列出所有定时任务。 |
-| `cron_remove` | `PermApprove` | 删除定时任务。 |
-| `cron_pause` | `PermApprove` | 暂停定时任务。 |
-| `cron_resume` | `PermApprove` | 恢复暂停任务。 |
-| `cron_status` | `PermAuto` | 查看 cron engine 状态和任务计数。 |
+| `list` | `PermAuto` | 列出所有定时任务。 |
+| `status` | `PermAuto` | 查看 cron engine 状态和任务计数。 |
+| `validate` | `PermAuto` | 校验 schedule、预览 next runs 和 command risk，不创建任务。 |
+| `add` | `PermApprove` | 添加定时任务。 |
+| `remove` | `PermApprove` | 删除定时任务。 |
+| `pause` | `PermApprove` | 暂停定时任务。 |
+| `resume` | `PermApprove` | 恢复暂停任务。 |
+
+工具本身的 `Permission` 是 `PermApprove`。`list`、`status`、`validate`、`preview` 通过 `PermissionFor` 降为 `PermAuto`，所以只读调用不会跟着写操作一起要求审批。
 
 这些工具的 `Category` 都是 `CatDelegate`，`Source` 都是 `builtin`。
 

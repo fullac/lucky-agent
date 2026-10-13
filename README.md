@@ -4,7 +4,7 @@
 
 # LuckyAgent
 
-LuckyAgent 是一个用 Go 构建的长期运行 Agent runtime。它把 Agent loop、模型路由、工具和技能、长期记忆、RAG、HTTP API、TUI、GUI 以及消息网关放在同一个运行时里，支持从本地调试逐步走向容器和线上部署。
+LuckyAgent 是一个用 Go 构建的长期运行 Agent runtime。它把 Agent loop、模型路由、工具和技能、长期记忆、RAG、HTTP API 以及消息网关放在同一个运行时里，支持从本地调试逐步走向容器和线上部署。
 
 它不是只提供一个聊天窗口，而是提供一套可以观察、配置和持续运行的 Agent 基础设施。
 
@@ -49,12 +49,12 @@ go run ./examples/embed_minimal
 
 ## 核心能力
 
-- **统一运行时**：CLI、HTTP API、GUI、TUI 和消息网关共享同一个 Agent 核心。
+- **统一运行时**：CLI、HTTP API 和消息网关共享同一个 Agent 核心。
 - **长期记忆**：用 Obsidian-compatible Markdown vault 保存用户画像、事实、规则、决策和会话轨迹。
 - **RAG 知识库**：索引项目文档、个人笔记和运维资料，并在 Agent 运行时检索。
 - **工具与技能**：支持内置工具、技能加载、技能安装、MCP 和 OpenCLI。
 - **多平台入口**：支持 Telegram、QQ Official、NapCat、飞书、微信和 OpenClaw Weixin。
-- **可观察运行态**：GUI 提供会话、工具轨迹、Memory Graph、技能和网关工作区。
+- **外部客户端**：会话、工具轨迹、Memory Graph、技能和网关通过 HTTP API 提供。手机工作区在独立仓库 `luckyagent-android`。
 - **多 Agent 能力**：提供协作、委派和实验/benchmark 相关运行能力。
 
 ## 快速开始
@@ -63,7 +63,6 @@ go run ./examples/embed_minimal
 
 - Go 1.25+
 - 一个可用的模型服务和对应 API 凭证
-- 如果需要构建 GUI/TUI，需要 Node.js 和 npm
 
 ### 从源码运行
 
@@ -121,35 +120,6 @@ ${HOME}/.luckyagent/config.json
 
 容器或 systemd 部署时，请明确设置 `HOME`，并确保这个目录及其下的 `config.json`、sessions、memory、RAG 和 runtime 数据可持久化。
 
-### GUI 和 TUI
-
-构建 GUI 和 TUI：
-
-```bash
-cd UI
-npm ci
-npm run build
-```
-
-开发 GUI：
-
-```bash
-cd UI
-npm run dev --workspace GUI
-```
-
-安装发行版后，可直接启动 TUI：
-
-```bash
-lh tui
-```
-
-源码运行 TUI：
-
-```bash
-go run ./cmd/la tui --api-base http://127.0.0.1:9090 --session dashboard-main
-```
-
 ## 部署与安装
 
 完整部署知识库已经独立到网页，包含：
@@ -198,7 +168,6 @@ lh chat
 lh chat "Summarize this repository"
 lh serve
 lh qr
-lh tui
 lh msg-gateway start --platform telegram
 lh msg-gateway start --platform qqofficial
 lh msg-gateway start --platform napcat
@@ -209,7 +178,7 @@ lh rag search "deployment"
 ## 文档导航
 
 - [部署知识库](https://yurika0211.github.io/lucky-agent/)
-- [使用指南](docs/wiki/使用指南.md)：初始化、配置、CLI、API、GUI、TUI、网关和 Docker
+- [使用指南](docs/wiki/使用指南.md)：初始化、配置、CLI、API、网关和 Docker
 - [特色功能](docs/wiki/特色功能.md)：记忆、RAG、工具、自动化和多 Agent
 - [使用场景](docs/wiki/使用场景.md)：本地调试、知识库问答、机器人和团队 API
 - [HTTP API](docs/API.md)
@@ -260,10 +229,8 @@ internal/config          配置加载、默认值和运行目录
 internal/memory          Markdown 记忆 vault 和召回
 internal/rag             RAG 索引、检索和持久化
 internal/tool            工具、技能、MCP 和 OpenCLI
-internal/server           HTTP API、SSE、WebSocket 和 Dashboard
+internal/server           HTTP API、SSE 和 WebSocket
 internal/gateway          Telegram、QQ、飞书、微信等消息网关
-UI/GUI                   GUI workspace
-UI/TUI                   TUI workspace
 docker-compose.yml       开发环境 Compose
 docker-compose.prod.yml  生产环境 Compose
 config.example.json      配置模板
@@ -275,14 +242,6 @@ config.example.json      配置模板
 
 ```bash
 go test ./...
-```
-
-运行 GUI 校验：
-
-```bash
-cd UI/GUI
-npm run typecheck
-npm run build
 ```
 
 如果需要修改 API、记忆、RAG、技能或消息网关，建议先阅读对应 package 和 `docs/` 下的专题文档，再运行相关 focused tests。

@@ -482,13 +482,10 @@ func lowRiskSupportTools(task benchTask, tools map[string]toolSpec) []string {
 		out = append(out, "rag_search")
 	}
 	if containsAny(terms, "log", "runtime") {
-		out = append(out, "log_grep", "log_tail")
+		out = append(out, "log_file")
 	}
-	if containsAny(terms, "json") {
-		out = append(out, "json_query")
-	}
-	if containsAny(terms, "yaml", "config") {
-		out = append(out, "yaml_query")
+	if containsAny(terms, "json", "yaml", "config") {
+		out = append(out, "data_query")
 	}
 	if containsAny(terms, "csv") {
 		out = append(out, "csv_query")
@@ -497,13 +494,13 @@ func lowRiskSupportTools(task benchTask, tools map[string]toolSpec) []string {
 		out = append(out, "db_schema")
 	}
 	if containsAny(terms, "cron", "schedule") {
-		out = append(out, "cron_list", "cron_status")
+		out = append(out, "cron")
 	}
 	if containsAny(terms, "autonomy", "worker") {
 		out = append(out, "autonomy_status")
 	}
 	if containsAny(terms, "heartbeat") {
-		out = append(out, "heartbeat_status")
+		out = append(out, "heartbeat")
 	}
 	if containsAny(terms, "delegate", "subagent") {
 		out = append(out, "task_status", "list_tasks")

@@ -283,9 +283,6 @@
     "progress_summary_with_llm": false,
     "progress_summary_prompt": ""
   },
-  "dashboard": {
-    "addr": ":8765"
-  },
   "autonomy": {
     "enabled": false,
     "queue_buffer": 64,

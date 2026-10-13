@@ -934,7 +934,7 @@ func buildDelegateChildLoopConfig(delegateCfg tool.DelegateConfig, allowRecursiv
 	loopCfg.DisabledTools = append([]string(nil), delegateCfg.ChildDisabledTools...)
 	if !allowRecursive {
 		loopCfg.DisabledTools = append(loopCfg.DisabledTools,
-			"delegate_task",
+			"subagent",
 			"delegate_parallel",
 			"delegate_to_skill",
 			"delegate_to_mcp",
@@ -2315,7 +2315,7 @@ func (s *streamConvergenceState) pendingDelegateWaitMessage() (string, bool) {
 	return "Delegated tasks have not been collected yet. Call wait_for_tasks with task_ids=" + string(encoded) + " and include_result=true. Do not finalize until it returns all_terminal=true; then synthesize the returned results.", true
 }
 
-func (s *streamConvergenceState) recordDelegateTaskToolResult(name, result string) {
+func (s *streamConvergenceState) recordDelegateTaskToolResult(name, arguments, result string) {
 	if s == nil {
 		return
 	}
@@ -2330,15 +2330,22 @@ func (s *streamConvergenceState) recordDelegateTaskToolResult(name, result strin
 	if err := json.Unmarshal([]byte(result), &payload); err != nil {
 		return
 	}
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "delegate_task":
+	action := ""
+	if strings.EqualFold(strings.TrimSpace(name), "subagent") {
+		var args map[string]any
+		_ = json.Unmarshal([]byte(arguments), &args)
+		action, _ = args["action"].(string)
+		action = strings.ToLower(strings.TrimSpace(action))
+	}
+	switch action {
+	case "delegate":
 		if taskID := strings.TrimSpace(payload.TaskID); taskID != "" {
 			if s.pendingDelegateTaskIDs == nil {
 				s.pendingDelegateTaskIDs = make(map[string]struct{})
 			}
 			s.pendingDelegateTaskIDs[taskID] = struct{}{}
 		}
-	case "wait_for_tasks":
+	case "wait":
 		if !payload.AllTerminal {
 			return
 		}
@@ -2348,6 +2355,33 @@ func (s *streamConvergenceState) recordDelegateTaskToolResult(name, result strin
 			}
 		}
 	}
+}
+
+func subagentAction(call provider.ToolCall, action string) bool {
+	if !strings.EqualFold(strings.TrimSpace(call.Name), "subagent") {
+		return false
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
+		return false
+	}
+	got, _ := args["action"].(string)
+	return strings.EqualFold(strings.TrimSpace(got), action)
+}
+
+func imageReadCall(call provider.ToolCall) bool {
+	if strings.EqualFold(strings.TrimSpace(call.Name), "image_read") {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(call.Name), "image") {
+		return false
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
+		return false
+	}
+	got, _ := args["action"].(string)
+	return strings.EqualFold(strings.TrimSpace(got), "read")
 }
 
 func isTerminalDelegateTaskStatus(status string) bool {
@@ -2425,7 +2459,7 @@ func (s *streamConvergenceState) trackToolCallPattern(toolCalls []provider.ToolC
 	for _, tc := range toolCalls {
 		sig := s.toolCallSig(tc.Name, tc.Arguments)
 		repeatedSigs = append(repeatedSigs, sig)
-		if strings.EqualFold(tc.Name, "wait_for_tasks") {
+		if subagentAction(tc, "wait") {
 			// A timed-out wait may need another wait call. Let the outer
 			// iteration budget, rather than duplicate-call protection, bound it.
 			allRepeated = false
@@ -2479,7 +2513,7 @@ func (s *streamConvergenceState) rememberToolCallResult(name, arguments, result 
 	if s.artifactGuard != nil {
 		s.artifactGuard.recordToolResult(name, arguments, result)
 	}
-	s.recordDelegateTaskToolResult(name, result)
+	s.recordDelegateTaskToolResult(name, arguments, result)
 }
 
 func (a *Agent) continueAfterPendingDelegateTasks(
@@ -2650,7 +2684,7 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 			duplicateFetchLimit:    loopCfg.DuplicateFetchLimit,
 			disabledTools:          append([]string(nil), loopCfg.DisabledTools...),
 			memoryGate:             a.buildMemoryToolGate(routingText, input.Scope, loopCfg.DisabledTools),
-			toolExecutionGuard:     newTurnToolGuard(routingText, loopCfg.DisabledTools, snapshotMode(loopCfg.Sandbox)),
+			toolExecutionGuard:     newTurnToolGuard(routingText, loopCfg.DisabledTools, loopCfg.BlockedActions, snapshotMode(loopCfg.Sandbox)),
 			iterationTimeout:       loopCfg.Timeout,
 			artifactGuard:          newArtifactFinalizationGuard(routingText),
 		}

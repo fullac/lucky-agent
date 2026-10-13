@@ -97,20 +97,14 @@ func (s *Services) RegisterCoreTools(r *Registry) {
 	}
 
 	if s.Memory != nil {
-		r.Register(RememberTool(s.Memory.HandleRemember))
-		r.Register(RecallTool(s.Memory.HandleRecall, s.Memory.HandleRecallDetailed))
-		r.Register(MemoryHygieneTool(s.Memory.HandleHygiene))
+		r.Register(MemoryTool(s.Memory.HandleRemember, s.Memory.HandleHygiene, s.Memory.HandleRecall, s.Memory.HandleRecallDetailed))
 	}
 	if s.RAG != nil {
 		r.Register(RAGSearchTool(s.RAG.HandleSearch))
 		r.Register(RAGIndexTool(s.RAG.HandleIndex))
 	}
 	if s.Delegate != nil {
-		r.Register(DelegateTaskTool(s.Delegate))
-		r.Register(TaskStatusTool(s.Delegate))
-		r.Register(WaitForTasksTool(s.Delegate))
-		r.Register(ListTasksTool(s.Delegate))
-		r.Register(DelegateCancelTool(s.Delegate))
+		r.Register(SubagentTool(s.Delegate))
 	}
 	if s.Cron != nil {
 		s.Cron.RegisterTools(r)

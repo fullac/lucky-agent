@@ -317,7 +317,7 @@ git reset --hard
 
 - `file_read` 比 `cat` 更适合读文件。
 - `file_patch` 比 `sed -i` 更适合可审计的小修改。
-- `json_query` 比 `jq` 更适合简单 JSON 字段读取。
+- `data_query` 比 `jq` 更适合简单 JSON 或 YAML 字段读取。
 - `db_schema` 比 `sqlite3 .schema` 更适合只看 SQLite schema。
 - `web_fetch` 比 `curl` 更适合提取网页正文。
 

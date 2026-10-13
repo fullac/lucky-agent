@@ -81,8 +81,8 @@ func TestApplyIntentToolGatingConceptHidesTools(t *testing.T) {
 	}
 	assertDisabledTools(t, loopCfg.DisabledTools,
 		"terminal", "file_write", "file_patch", "file_delete", "web_search",
-		"web_fetch", "http_request", "sql_query", "rag_index", "image_generate",
-		"text_to_speech", "remember",
+		"web_fetch", "http_request", "data", "rag_index", "image",
+		"text_to_speech", "memory",
 	)
 }
 
@@ -98,7 +98,7 @@ func TestApplyIntentToolGatingReadOnlyKeepsInspectionTools(t *testing.T) {
 	assertEnabledTools(t, visible, "terminal", "file_read", "file_list")
 	assertDisabledTools(t, loopCfg.DisabledTools,
 		"file_write", "file_patch", "file_delete", "web_search", "web_fetch",
-		"http_request", "remember", "rag_index", "image_generate", "text_to_speech",
+		"http_request", "memory", "rag_index", "image", "text_to_speech",
 	)
 }
 
@@ -124,7 +124,7 @@ func TestApplyIntentToolGatingHybridTerminalAndComputerUseKeepsBothToolsets(t *t
 		"terminal", "file_read", "file_list", "computer_observe", "computer_act",
 	)
 	assertDisabledTools(t, loopCfg.DisabledTools,
-		"web_search", "web_fetch", "file_write", "file_delete", "sql_query",
+		"web_search", "web_fetch", "file_write", "file_delete", "data",
 	)
 }
 
@@ -182,8 +182,8 @@ func TestApplyIntentToolGatingToolSystemQuestionDoesNotCollapseToImageTool(t *te
 	opts := a.buildLoopCallOptions("现在我做一个任务，lh说它只有图片分析工具怎么办？", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "terminal", "file_read", "file_list", "json_query", "yaml_query")
-	assertDisabledTools(t, loopCfg.DisabledTools, "image_analyze", "image_generate", "web_search", "web_fetch")
+	assertEnabledTools(t, visible, "terminal", "file_read", "file_list", "data")
+	assertDisabledTools(t, loopCfg.DisabledTools, "image", "web_search", "web_fetch")
 	if len(visible) == 1 && visible[0] == "image_analyze" {
 		t.Fatalf("tool-system diagnosis should not expose only image_analyze, got %v", visible)
 	}
@@ -246,7 +246,7 @@ func TestApplyIntentToolGatingMetricExplanationDoesNotEnableMemory(t *testing.T)
 	if len(opts.Tools) != 0 {
 		t.Fatalf("expected metric explanation to expose no tools, got %v", toolNamesFromSchemas(opts.Tools))
 	}
-	assertDisabledTools(t, loopCfg.DisabledTools, "recall", "rag_search", "web_search", "terminal")
+	assertDisabledTools(t, loopCfg.DisabledTools, "memory", "rag_search", "web_search", "terminal")
 }
 
 func TestApplyIntentToolGatingAllowsMemoryHygiene(t *testing.T) {
@@ -258,8 +258,11 @@ func TestApplyIntentToolGatingAllowsMemoryHygiene(t *testing.T) {
 	opts := a.buildLoopCallOptions("帮我清洗脏记忆和记忆污染，先审计一下", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "memory_hygiene", "recall")
-	assertDisabledTools(t, loopCfg.DisabledTools, "terminal", "file_write", "remember", "rag_index")
+	assertEnabledTools(t, visible, "memory")
+	assertDisabledTools(t, loopCfg.DisabledTools, "terminal", "file_write", "rag_index")
+	if toolNameInSet(makeToolNameSet(loopCfg.DisabledTools), "memory") {
+		t.Fatal("memory should stay available for hygiene")
+	}
 }
 
 func TestApplyIntentToolGatingOptimizationIntentKeepsEditTools(t *testing.T) {
@@ -334,8 +337,8 @@ func TestApplyIntentToolGatingDatabaseSchemaOnlyBlocksSQLQuery(t *testing.T) {
 	opts := a.buildLoopCallOptions("只检查数据库表结构，不要查询用户数据。", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "db_schema")
-	assertDisabledTools(t, loopCfg.DisabledTools, "sql_query", "file_write", "terminal")
+	assertEnabledTools(t, visible, "data")
+	assertDisabledTools(t, loopCfg.DisabledTools, "file_write", "terminal")
 }
 
 func TestApplyIntentToolGatingReadOnlyFilePromptBlocksPatch(t *testing.T) {
@@ -347,7 +350,7 @@ func TestApplyIntentToolGatingReadOnlyFilePromptBlocksPatch(t *testing.T) {
 	opts := a.buildLoopCallOptions("检查 config.yaml 里工具权限字段，不要修改文件。", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "file_read", "file_list", "yaml_query")
+	assertEnabledTools(t, visible, "file_read", "file_list", "data")
 	assertDisabledTools(t, loopCfg.DisabledTools, "terminal", "file_patch", "file_write", "file_delete")
 }
 
@@ -361,7 +364,7 @@ func TestApplyIntentToolGatingWebSummaryBlocksRemember(t *testing.T) {
 	visible := toolNamesFromSchemas(opts.Tools)
 
 	assertEnabledTools(t, visible, "web_fetch")
-	assertDisabledTools(t, loopCfg.DisabledTools, "remember", "rag_index", "http_request", "terminal")
+	assertDisabledTools(t, loopCfg.DisabledTools, "memory", "rag_index", "http_request", "terminal")
 }
 
 func TestApplyIntentToolGatingCronListBlocksMutations(t *testing.T) {
@@ -373,8 +376,8 @@ func TestApplyIntentToolGatingCronListBlocksMutations(t *testing.T) {
 	opts := a.buildLoopCallOptions("列出 cron 任务，但不要暂停或删除任何任务。", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "cron_list", "cron_status")
-	assertDisabledTools(t, loopCfg.DisabledTools, "cron_add", "cron_pause", "cron_remove", "file_delete")
+	assertEnabledTools(t, visible, "cron")
+	assertDisabledTools(t, loopCfg.DisabledTools, "file_delete")
 }
 
 func TestApplyIntentToolGatingHeartbeatStatusBlocksTrigger(t *testing.T) {
@@ -386,8 +389,7 @@ func TestApplyIntentToolGatingHeartbeatStatusBlocksTrigger(t *testing.T) {
 	opts := a.buildLoopCallOptions("检查 heartbeat 状态，不要手动触发。", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "heartbeat_status")
-	assertDisabledTools(t, loopCfg.DisabledTools, "heartbeat_trigger")
+	assertEnabledTools(t, visible, "heartbeat")
 }
 
 func TestApplyIntentToolGatingDelegateListBlocksNewTask(t *testing.T) {
@@ -399,8 +401,7 @@ func TestApplyIntentToolGatingDelegateListBlocksNewTask(t *testing.T) {
 	opts := a.buildLoopCallOptions("查看子代理任务列表，不要新建委派任务。", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "list_tasks", "task_status", "wait_for_tasks")
-	assertDisabledTools(t, loopCfg.DisabledTools, "delegate_task")
+	assertEnabledTools(t, visible, "subagent")
 }
 
 func TestApplyIntentToolGatingDelegateCancel(t *testing.T) {
@@ -412,7 +413,7 @@ func TestApplyIntentToolGatingDelegateCancel(t *testing.T) {
 	opts := a.buildLoopCallOptions("取消子代理任务 task-1。", loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "task_status", "wait_for_tasks", "list_tasks", "delegate_cancel")
+	assertEnabledTools(t, visible, "subagent")
 }
 
 func TestApplyIntentToolGatingDelegateSubtasks(t *testing.T) {
@@ -425,7 +426,7 @@ func TestApplyIntentToolGatingDelegateSubtasks(t *testing.T) {
 	opts := a.buildLoopCallOptions(prompt, loopCfg)
 	visible := toolNamesFromSchemas(opts.Tools)
 
-	assertEnabledTools(t, visible, "delegate_task", "wait_for_tasks", "task_status", "list_tasks")
+	assertEnabledTools(t, visible, "subagent")
 }
 
 func TestApplyIntentToolGatingDelegateToolInspectionKeepsReadOnly(t *testing.T) {
@@ -438,7 +439,7 @@ func TestApplyIntentToolGatingDelegateToolInspectionKeepsReadOnly(t *testing.T) 
 	visible := toolNamesFromSchemas(opts.Tools)
 
 	assertEnabledTools(t, visible, "file_read", "file_list", "terminal")
-	assertDisabledTools(t, loopCfg.DisabledTools, "delegate_task")
+	assertEnabledTools(t, visible, "file_read", "file_list", "terminal")
 }
 
 func agentWithIntentGateTools(t *testing.T) *Agent {
@@ -448,13 +449,12 @@ func agentWithIntentGateTools(t *testing.T) *Agent {
 	for _, name := range []string{
 		"terminal", "file_read", "document_read", "file_list", "file_write", "file_mkdir", "file_move",
 		"file_patch", "file_delete", "web_search", "web_fetch", "opencli", "http_request",
-		"current_time", "calculate", "remember", "recall", "memory_hygiene", "rag_search", "rag_index",
-		"log_grep", "log_tail", "json_query", "yaml_query", "csv_query", "sql_query",
-		"db_schema", "image_analyze", "image_generate", "text_to_speech", "skill_read",
-		"skill_obsidian_run", "cron", "cron_add", "cron_list", "cron_status",
-		"cron_remove", "cron_pause", "cron_resume", "autonomy", "autonomy_status",
-		"autonomy_queue_add", "autonomy_worker_spawn", "heartbeat_status",
-		"heartbeat_trigger", "delegate_task", "task_status", "wait_for_tasks", "list_tasks", "delegate_cancel",
+		"current_time", "calculate", "memory", "rag_search", "rag_index",
+		"data",
+		"image", "text_to_speech", "skill_read",
+		"skill_obsidian_run", "cron", "autonomy", "autonomy_status",
+		"autonomy_queue_add", "autonomy_worker_spawn", "heartbeat",
+		"subagent",
 		"computer_observe", "computer_act",
 	} {
 		reg.Register(&tool.Tool{

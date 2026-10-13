@@ -11,15 +11,19 @@ LuckyAgent is a Go agent runtime, not only a chat wrapper. The main binary is
 
 Primary entry points:
 
-- `lh`: starts the TUI when run in an interactive terminal.
+- `lh`: prints command help.
 - `lh init`: initializes `${HOME}/.luckyagent`.
 - `lh chat [message]`: local one-shot chat or REPL debugging.
 - `lh serve`: HTTP API server.
 - `lh msg-gateway start`: external chat gateways.
 - `lh rag`: RAG index/search/stats commands.
 - `lh session`: list/migrate/gc/export/roll/compact session storage.
-- `lh config`, `lh soul`, `lh dashboard`, and `lh tui`: runtime management
-  surfaces.
+- `lh qr`: start the API and show a temporary phone-pairing QR code.
+- `lh config` and `lh soul`: runtime management surfaces.
+
+Desktop GUI, TUI, and Electron are not part of this repository. Session,
+tool-trace, memory graph, skill, and gateway views are HTTP/WebSocket APIs.
+The Android client lives in `yurika0211/luckyagent-android`.
 
 The runtime home defaults to `${HOME}/.luckyagent`. Source checkouts may also
 contain a local `config.json`, but deployed runtime state belongs under the
@@ -59,8 +63,6 @@ Important context behavior:
 - `internal/gateway/telegram`, `qqofficial`, `napcat`, `feishu`, `weixin`,
   `openclawweixin`: platform adapters.
 - `internal/cli/lhcmd`: Cobra command definitions and command handlers.
-- `UI/GUI` and `UI/TUI`: frontend workspaces. Run Node commands from the
-  relevant UI subdirectory, not the repository root.
 
 ## HTTP API Surface
 
@@ -147,7 +149,6 @@ High-impact keys:
 - `agent.max_iterations`, `agent.timeout_seconds`, `agent.auto_approve`,
   `agent.context_debug`
 - `server.addr`, `server.api_keys`, `server.enable_cors`
-- `dashboard.addr`
 - `msg_gateway.*`
 - `autonomy.*`
 - `hooks.*`
@@ -179,8 +180,7 @@ go test ./internal/memory ./internal/rag
 ```
 
 Large `go test ./...` runs may be noisy or slow; prefer focused packages unless
-the change crosses package boundaries. For UI work, run commands inside
-`UI/GUI` or `UI/TUI`.
+the change crosses package boundaries.
 
 ## Response Rules For Agents
 

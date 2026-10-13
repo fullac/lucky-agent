@@ -19,7 +19,7 @@ func (a *Agent) appendRunningTaskNotice(response string) string {
 	for _, task := range tasks {
 		ids = append(ids, task.ID)
 	}
-	note := fmt.Sprintf("Pending multi-agent work remains: %s. Use wait_for_tasks with these IDs to collect terminal results before finalizing, or use task_status/list_tasks to inspect progress.", strings.Join(ids, ", "))
+	note := fmt.Sprintf("Pending multi-agent work remains: %s. Use subagent action=wait with these IDs to collect terminal results before finalizing, or action=status/list to inspect progress.", strings.Join(ids, ", "))
 	response = strings.TrimSpace(response)
 	if response == "" {
 		return note

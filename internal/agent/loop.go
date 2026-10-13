@@ -119,6 +119,7 @@ type LoopConfig struct {
 	ToolOnlyIterationLimit int                 // 连续纯工具轮次上限
 	DuplicateFetchLimit    int                 // 同一 URL 抓取上限
 	DisabledTools          []string            // 本轮对模型隐藏的工具名
+	BlockedActions         map[string][]string // 工具名到本轮禁止的 action
 	Ephemeral              bool                // 临时后台执行，不写会话外持久化上下文
 	Source                 string              // 调用入口，例如 cli、tui、http、telegram
 	SessionID              string              // 当前回合的会话作用域（临时工具使用）
@@ -484,7 +485,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	}
 	loopState := newLoopRuntimeState()
 	loopState.provider = turnProvider
-	loopState.toolExecutionGuard = newTurnToolGuard(routingText, loopCfg.DisabledTools, snapshotMode(loopCfg.Sandbox))
+	loopState.toolExecutionGuard = newTurnToolGuard(routingText, loopCfg.DisabledTools, loopCfg.BlockedActions, snapshotMode(loopCfg.Sandbox))
 	loopState.artifactGuard = newArtifactFinalizationGuard(routingText)
 	memoryGate := a.buildMemoryToolGate(routingText, turnInput.Scope, loopCfg.DisabledTools)
 

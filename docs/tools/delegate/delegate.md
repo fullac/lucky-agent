@@ -1,6 +1,6 @@
 # delegate Tools
 
-LuckyAgent 的 delegate 工具组用于把任务委派给子代理、查询任务状态、列出委派任务，以及在扩展路径中委派给 skill 或 MCP。它们属于 `CatDelegate`，用于异步或并行任务执行，不是普通查询工具。
+子代理现在用一个 `subagent` 工具。`action=delegate` 创建任务并返回 `task_id`，`status` 查一个任务，`wait` 等待一组任务结束，`list` 列出任务，`cancel` 取消任务。创建和取消需要批准，查询和等待自动放行。
 
 ## 工具定义
 

@@ -188,15 +188,15 @@ func TestComputerActDirectiveForcesActionAfterActionIntent(t *testing.T) {
 
 func TestStreamConvergenceRequiresWaitForDelegatedTasks(t *testing.T) {
 	state := &streamConvergenceState{}
-	state.rememberToolCallResult("delegate_task", "", `{"task_id":"task-1"}`, 0)
+	state.rememberToolCallResult("subagent", `{"action":"delegate"}`, `{"task_id":"task-1"}`, 0)
 	if !state.hasPendingDelegateTasks() {
 		t.Fatal("expected delegated task to require collection")
 	}
-	state.rememberToolCallResult("task_status", "", `{"task_id":"task-1","status":"completed"}`, 0)
+	state.rememberToolCallResult("subagent", `{"action":"status"}`, `{"task_id":"task-1","status":"completed"}`, 0)
 	if _, blocked := state.pendingDelegateWaitMessage(); !blocked {
 		t.Fatal("task_status must not replace an explicit wait_for_tasks call")
 	}
-	state.rememberToolCallResult("wait_for_tasks", "", `{"all_terminal":true,"tasks":[{"task_id":"task-1","status":"completed"}]}`, 0)
+	state.rememberToolCallResult("subagent", `{"action":"wait"}`, `{"all_terminal":true,"tasks":[{"task_id":"task-1","status":"completed"}]}`, 0)
 	if state.hasPendingDelegateTasks() {
 		t.Fatal("expected terminal wait result to clear delegated task")
 	}

@@ -1,6 +1,6 @@
 # image_generate Tool
 
-`image_generate` 是 LuckyAgent 的内置图片生成工具，用来根据文本 prompt 生成图片，也可以在提供输入图片时执行 image-to-image 或多图参考生成。生成结果会写入 LuckyAgent workspace。
+图片生成现在是 `image` 的 `action=generate`。它根据文本 prompt 生成图片，也可以在提供输入图片时执行 image-to-image 或多图参考生成。生成结果会写入 LuckyAgent workspace。
 
 这是会访问外部生成服务并写入文件的工具，因此被标记为需要批准。
 

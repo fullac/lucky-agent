@@ -41,7 +41,6 @@ func qqCommandSpecs() []qqCommandSpec {
 		{Command: "deny", Usage: "/deny <tool>", Description: "禁用工具", Group: qqCommandGroupSystem},
 		{Command: "cron", Usage: "/cron [list|add|remove|pause|resume|start|stop]", Description: "管理定时任务", Group: qqCommandGroupSystem},
 		{Command: "watch", Usage: "/watch [list|add|remove|start|stop]", Description: "管理文件监控", Group: qqCommandGroupSystem},
-		{Command: "dashboard", Usage: "/dashboard [status]", Description: "查看 Dashboard 状态", Group: qqCommandGroupSystem},
 		{Command: "msg_gateway", Usage: "/msg_gateway [status]", Description: "查看消息网关状态", Group: qqCommandGroupSystem},
 		{Command: "rag", Usage: "/rag [stats|search|list|remove|index]", Description: "管理 RAG 知识库", Group: qqCommandGroupSystem},
 		{Command: "context", Usage: "/context", Description: "查看上下文窗口状态", Group: qqCommandGroupSystem},

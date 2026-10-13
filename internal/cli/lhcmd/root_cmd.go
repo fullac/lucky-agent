@@ -43,10 +43,7 @@ func newRootCmd() *cobra.Command {
 		Short: "LuckyAgent bot-first CLI",
 		Long:  "LuckyAgent 精简版命令行入口，面向聊天与消息网关工作流。",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !isInteractiveTerminal() {
-				return cmd.Help()
-			}
-			return runTUI("", "http://127.0.0.1:9090", "dashboard-main", "")
+			return cmd.Help()
 		},
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			initCommandLogger()
@@ -395,8 +392,6 @@ func newRootCmd() *cobra.Command {
 	proactiveKernelsCmd.Flags().Int("limit", 20, "最多显示的 kernel 权重数量")
 	proactiveCmd.AddCommand(proactiveStatusCmd, proactiveSampleCmd, proactiveDryRunCmd, proactiveActCmd, proactiveFeedbackCmd, proactiveEventsCmd, proactiveExecutionsCmd, proactiveKernelsCmd)
 
-	addDashboardCmd(rootCmd)
-	addTUICmd(rootCmd)
 	rootCmd.AddCommand(initCmd, chatCmd, configCmd, credentialCmd, diagCmd, soulCmd, versionCmd, newUpdateCmd(), serveCmd, qrCmd, msgGatewayCmd, ragCmd, memoryCmd, proactiveCmd, newSessionCmd())
 
 	return rootCmd

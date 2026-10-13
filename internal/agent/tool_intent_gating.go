@@ -121,23 +121,14 @@ func (a *Agent) intentAllowedTools(input string) (map[string]struct{}, bool) {
 		if (!negatedExecution || needsTerminal) && !readOnlySourceIntent && !readOnlyMutationBlocked {
 			addIntentTools(allowed, "terminal")
 		}
-		if intentTextContainsAny(intentText, "日志", ".log", "logs", "log file", "stack trace", "trace") {
-			addIntentTools(allowed, "log_grep", "log_tail")
-		}
-		if intentTextContainsAny(intentText, ".json", "json") {
-			addIntentTools(allowed, "json_query")
-		}
-		if intentTextContainsAny(intentText, ".yaml", ".yml", "yaml", "yml") {
-			addIntentTools(allowed, "yaml_query")
-		}
-		if intentTextContainsAny(intentText, ".csv", "csv") {
-			addIntentTools(allowed, "csv_query")
+		if intentTextContainsAny(intentText, "\u65e5\u5fd7", ".log", "logs", "log file", "stack trace", "trace", ".json", "json", ".yaml", ".yml", "yaml", "yml", ".csv", "csv") {
+			addIntentTools(allowed, "data")
 		}
 		if intentTextContainsAny(intentText, ".pdf", ".docx", ".pptx", "pdf", "docx", "pptx", "word", "powerpoint", "文档", "幻灯片") {
 			addIntentTools(allowed, "document_read")
 		}
 		if toolSystemIntent {
-			addIntentTools(allowed, "json_query", "yaml_query")
+			addIntentTools(allowed, "data")
 		}
 		if editIntent && !readOnlySourceIntent && !readOnlyMutationBlocked {
 			addIntentTools(allowed, "file_patch", "file_write", "file_mkdir", "file_move")
@@ -183,14 +174,11 @@ func (a *Agent) intentAllowedTools(input string) (map[string]struct{}, bool) {
 	if calcIntent {
 		addIntentTools(allowed, "calculate")
 	}
+	if memoryIntent || memoryHygieneIntent || (rememberIntent && !intentTextContainsAny(intentText, "不要写入记忆", "不要记住", "不要保存到记忆")) {
+		addIntentTools(allowed, "memory")
+	}
 	if memoryIntent {
-		addIntentTools(allowed, "recall", "rag_search")
-	}
-	if memoryHygieneIntent {
-		addIntentTools(allowed, "recall", "memory_hygiene")
-	}
-	if rememberIntent && !intentTextContainsAny(intentText, "不要写入记忆", "不要记住", "不要保存到记忆") {
-		addIntentTools(allowed, "remember")
+		addIntentTools(allowed, "rag_search")
 	}
 	if ragIndexIntent && !intentTextContainsAny(intentText, "不要索引", "不要建立索引", "不要写入 rag", "不要写入rag") {
 		addIntentTools(allowed, "rag_index")
@@ -202,34 +190,19 @@ func (a *Agent) intentAllowedTools(input string) (map[string]struct{}, bool) {
 		}
 	}
 	if mediaIntent {
-		if intentTextContainsAny(intentText, "图片", "图像", "截图", "image", "vision", "看图") {
-			addIntentTools(allowed, "image_analyze", "image_read")
-		}
-		if intentTextContainsAny(intentText, "生成图片", "画图", "配图", "image_generate") {
-			addIntentTools(allowed, "image_generate")
+		if intentTextContainsAny(intentText, "图片", "图像", "截图", "image", "vision", "看图", "生成图片", "画图", "配图") {
+			addIntentTools(allowed, "image")
 		}
 		if intentTextContainsAny(intentText, "语音", "朗读", "tts", "text_to_speech", "音频") {
 			addIntentTools(allowed, "text_to_speech")
 		}
 	}
 	if dbIntent {
-		addIntentTools(allowed, "db_schema")
-		if !intentTextContainsAny(intentText, "只看 schema", "只看schema", "只检查数据库表结构", "不要查询用户数据") {
-			addIntentTools(allowed, "sql_query")
-		}
+		addIntentTools(allowed, "data")
 	}
 	if delegateIntent {
 		if intentTextContainsAny(intentText, "定时", "cron", "计划任务", "周期") {
-			addIntentTools(allowed, "cron_list", "cron_status")
-			if !intentTextContainsAny(intentText, "只查看", "只列出", "列出", "查看", "状态", "不要新增") {
-				addIntentTools(allowed, "cron", "cron_add")
-			}
-			if !intentTextContainsAny(intentText, "不要暂停", "不要暂停或删除") {
-				addIntentTools(allowed, "cron_pause")
-			}
-			if !intentTextContainsAny(intentText, "不要删除", "不要移除", "不要暂停或删除") {
-				addIntentTools(allowed, "cron_remove")
-			}
+			addIntentTools(allowed, "cron")
 		}
 		if intentTextContainsAny(intentText, "后台", "自主", "autonomy", "worker", "队列") {
 			addIntentTools(allowed, "autonomy", "autonomy_status")
@@ -238,19 +211,10 @@ func (a *Agent) intentAllowedTools(input string) (map[string]struct{}, bool) {
 			}
 		}
 		if intentTextContainsAny(intentText, "心跳", "heartbeat") {
-			addIntentTools(allowed, "heartbeat_status")
-			if !intentTextContainsAny(intentText, "不要手动触发", "不要触发", "只检查") {
-				addIntentTools(allowed, "heartbeat_trigger")
-			}
+			addIntentTools(allowed, "heartbeat")
 		}
 		if intentTextContainsAny(intentText, "子代理", "子任务", "委派", "delegate", "multi-agent", "multi agent", "sub-agent", "sub agent", "subtask") {
-			addIntentTools(allowed, "task_status", "wait_for_tasks", "list_tasks")
-			if intentTextContainsAny(intentText, "取消", "停止", "cancel") {
-				addIntentTools(allowed, "delegate_cancel")
-			}
-			if !intentTextContainsAny(intentText, "不要新建", "不要委派", "只查看", "只列出", "工具", "实现", "代码", "源码", "在哪里", "在哪", "位置", "定义") {
-				addIntentTools(allowed, "delegate_task")
-			}
+			addIntentTools(allowed, "subagent")
 		}
 	}
 

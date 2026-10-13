@@ -316,9 +316,6 @@ func classifyReload(oldCfg, newCfg *Config) (hotReloaded, restartRequired []stri
 	if !reflect.DeepEqual(oldCfg.Server, newCfg.Server) {
 		restartRequired = append(restartRequired, "server")
 	}
-	if oldCfg.Dashboard != newCfg.Dashboard {
-		restartRequired = append(restartRequired, "dashboard")
-	}
 	if !reflect.DeepEqual(oldCfg.MsgGateway, newCfg.MsgGateway) {
 		restartRequired = append(restartRequired, "msg_gateway")
 	}

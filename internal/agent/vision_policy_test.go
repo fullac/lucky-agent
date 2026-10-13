@@ -71,12 +71,12 @@ func TestVisionPolicyRoutesImagesExactlyOnce(t *testing.T) {
 			}
 			loop := DefaultLoopConfig()
 			a.applyVisionToolPolicy(&loop, a.baseProviderSnapshot())
-			guard := newTurnToolGuard("read image", loop.DisabledTools)
-			blocked := "image_read"
+			guard := newTurnToolGuard("read image", loop.DisabledTools, loop.BlockedActions)
+			blocked := "read"
 			if tc.direct {
-				blocked = "image_analyze"
+				blocked = "analyze"
 			}
-			if _, ok := guard.blockMessage(provider.ToolCall{Name: blocked}); !ok {
+			if _, ok := guard.blockMessage(provider.ToolCall{Name: "image", Arguments: `{"action":"` + blocked + `"}`}); !ok {
 				t.Fatalf("%s was not blocked", blocked)
 			}
 		})

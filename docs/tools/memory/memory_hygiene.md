@@ -1,6 +1,6 @@
 # memory_hygiene Tool
 
-`memory_hygiene` 是 LuckyAgent 的内置记忆卫生工具，用来审计、隔离或删除 memory vault 中的脏记忆。默认 `audit` 是只读扫描；`quarantine` 会归档可疑记忆，使其不再参与召回；`delete` 会物理删除匹配条目。
+记忆清理现在是 `memory` 的 `action=hygiene`。`operation=audit` 是只读扫描；`quarantine` 会归档可疑记忆，使其不再参与召回；`delete` 会物理删除匹配条目。
 
 这是可能修改持久记忆库的工具，因此被标记为需要批准。
 
