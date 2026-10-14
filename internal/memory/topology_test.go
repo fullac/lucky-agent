@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -23,11 +24,8 @@ func topologyByTitle(topology GraphTopology) map[string]GraphTopologyNode {
 
 func TestGraphTopologyBuildsEdgesFromWikilinks(t *testing.T) {
 	store := seedVault(t)
-	if err := store.SaveWithMetadata("Hub note about [[Target]]", "concept", TierLong, 0.8, nil, nil, nil); err != nil {
+	if err := store.SaveWithMetadata("Hub note about [[GraphTarget]]", "concept", TierLong, 0.8, nil, nil, nil); err != nil {
 		t.Fatalf("save hub: %v", err)
-	}
-	if err := store.SaveWithMetadata("Target note body", "concept", TierLong, 0.5, nil, nil, []string{"Target"}); err != nil {
-		t.Fatalf("save target: %v", err)
 	}
 
 	topology := store.GraphTopology(GraphTopologyOptions{})
@@ -127,13 +125,8 @@ func hasNodeTitled(nodes []GraphTopologyNode, title string) bool {
 func TestGraphTopologyLimitKeepsTheMostConnectedAndPrunesDanglingEdges(t *testing.T) {
 	store := seedVault(t)
 	// Hub links to three leaves; each leaf has degree 1, the hub degree 3.
-	if err := store.SaveWithMetadata("Hub links [[Leaf A]] [[Leaf B]] [[Leaf C]]", "concept", TierLong, 0.9, nil, nil, nil); err != nil {
+	if err := store.SaveWithMetadata("Hub links [[LeafOne]] [[LeafTwo]] [[LeafThree]]", "concept", TierLong, 0.9, nil, nil, nil); err != nil {
 		t.Fatalf("save hub: %v", err)
-	}
-	for _, name := range []string{"Leaf A", "Leaf B", "Leaf C"} {
-		if err := store.SaveWithMetadata(name+" body", "concept", TierLong, 0.5, nil, nil, []string{name}); err != nil {
-			t.Fatalf("save %s: %v", name, err)
-		}
 	}
 
 	topology := store.GraphTopology(GraphTopologyOptions{Limit: 2})
@@ -208,6 +201,64 @@ func TestGraphTopologyKeepsHeadingBlockDisplayAndEmbedOnOneEdge(t *testing.T) {
 	}
 	if topology.Unresolved != 1 {
 		t.Fatalf("unresolved = %d, want the missing memory id only", topology.Unresolved)
+	}
+}
+
+func TestGraphTopologyAmbiguousAliasDoesNotPickTheFirstNote(t *testing.T) {
+	store := seedVault(t)
+	if err := store.SaveWithMetadata("first login note", "concept", TierLong, 0.9, nil, nil, []string{"SharedName"}); err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	if err := store.SaveWithMetadata("second login note", "concept", TierLong, 0.4, nil, nil, []string{"SharedName"}); err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+	if err := store.SaveWithMetadata("see [[SharedName]]", "fact", TierLong, 0.6, nil, nil, nil); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+
+	topology := store.GraphTopology(GraphTopologyOptions{IncludeIsolated: true})
+	var ambiguous *GraphTopologyNode
+	for i := range topology.Nodes {
+		if topology.Nodes[i].Ambiguous {
+			ambiguous = &topology.Nodes[i]
+			break
+		}
+	}
+	if ambiguous == nil {
+		t.Fatalf("ambiguous name was resolved to one note: %+v", topology.Nodes)
+	}
+	if ambiguous.Resolved || len(ambiguous.Candidates) != 2 {
+		t.Fatalf("ambiguous node = %+v, want two unresolved candidates", *ambiguous)
+	}
+	for _, node := range topology.Nodes {
+		if node.Title == "first login note" || node.Title == "second login note" {
+			if node.Degree != 0 {
+				t.Fatalf("%q degree = %d, ambiguous link must not add degree", node.Title, node.Degree)
+			}
+		}
+	}
+
+	scores := store.Activate("see", ActivationOptions{IncludeGraph: true, UpdateAccessStats: false, Explain: true})
+	for _, score := range scores {
+		if strings.Contains(score.Entry.Content, "login note") && score.Components.GraphBoost > 0 {
+			t.Fatalf("ambiguous alias boosted %q by %f", score.Entry.Content, score.Components.GraphBoost)
+		}
+	}
+}
+
+func TestGraphTopologyUniqueAliasStillResolves(t *testing.T) {
+	store := seedVault(t)
+	if err := store.SaveWithMetadata("see [[UniqueName]]", "fact", TierLong, 0.6, nil, nil, nil); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+	topology := store.GraphTopology(GraphTopologyOptions{})
+	if len(edgesToTitle(t, topology, "UniqueName")) != 1 {
+		t.Fatal("unique alias did not resolve to its note")
+	}
+	for _, node := range topology.Nodes {
+		if node.Ambiguous {
+			t.Fatalf("unique alias marked ambiguous: %+v", node)
+		}
 	}
 }
 

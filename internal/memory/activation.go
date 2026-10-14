@@ -502,6 +502,12 @@ func (s *Store) spreadActivationFromLocked(scores map[string]*ActivationScore, s
 
 	for _, link := range s.graph.Forward[id] {
 		for _, key := range graphKeysForLink(link) {
+			// A name owned by two notes is not evidence for either of them.
+			// Boosting both, or the first one registered, would surface the
+			// wrong memory.
+			if graphNameIsAmbiguous(s.entries, key) {
+				continue
+			}
 			for _, targetID := range s.graph.Names[key] {
 				s.addActivationBoostLocked(scores, source, targetID, id, "wikilink_target", link, 0.55, depth, now, opts)
 				visit(targetID)
@@ -530,6 +536,32 @@ func (s *Store) spreadActivationFromLocked(scores map[string]*ActivationScore, s
 	}
 
 	return touched
+}
+
+// graphNameIsAmbiguous reports a written name that more than one note
+// answers to. Memory IDs are not public names, matching the display graph.
+func graphNameIsAmbiguous(entries map[string]*Entry, key string) bool {
+	if key == "" {
+		return false
+	}
+	count := 0
+	seen := make(map[string]bool)
+	for id, entry := range entries {
+		if seen[id] {
+			continue
+		}
+		for _, name := range graphPublicNamesForEntry(entry) {
+			if graphKey(name) == key {
+				seen[id] = true
+				count++
+				break
+			}
+		}
+		if count > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // graphHopDecay discounts boosts from hops beyond the first so distant notes
