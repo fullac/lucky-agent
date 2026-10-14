@@ -230,6 +230,42 @@ func activationScoresToEntries(scores []ActivationScore) []Entry {
 	return entries
 }
 
+func excerptsForEntries(excerpts map[string][]ActivationExcerpt, entries []Entry) map[string][]ActivationExcerpt {
+	if len(excerpts) == 0 || len(entries) == 0 {
+		return nil
+	}
+	kept := make(map[string][]ActivationExcerpt, len(entries))
+	for _, entry := range entries {
+		if len(excerpts[entry.ID]) == 0 {
+			continue
+		}
+		kept[entry.ID] = excerpts[entry.ID]
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
+
+// activationExcerptsByID keeps link locators beside the entries they name.
+// Search and Route still return the whole note; callers inject the excerpt.
+func activationExcerptsByID(scores []ActivationScore) map[string][]ActivationExcerpt {
+	if len(scores) == 0 {
+		return nil
+	}
+	out := make(map[string][]ActivationExcerpt)
+	for _, score := range scores {
+		if score.EntryID == "" || len(score.Excerpts) == 0 {
+			continue
+		}
+		out[score.EntryID] = append([]ActivationExcerpt(nil), score.Excerpts...)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (s *Store) activateLocked(queryLower string, queryTerms []string, now time.Time, opts ActivationOptions) []ActivationScore {
 	scores := make(map[string]*ActivationScore)
 	collectGraphSeeds := opts.IncludeGraph && s.graph != nil && opts.MaxGraphDepth > 0
@@ -595,6 +631,46 @@ func (s *Store) attachActivationExcerptLocked(score *ActivationScore, link WikiL
 			break
 		}
 	}
+}
+
+// ContextText is the note section to inject. A missing locator keeps the
+// whole note and says the named section was not found, instead of inventing one.
+func (e ActivationExcerpt) ContextText() string {
+	context := strings.TrimSpace(e.Context)
+	if !e.Missing {
+		return context
+	}
+	where := excerptLocator(e.Heading, e.Block)
+	if where == "" {
+		return context
+	}
+	if context == "" {
+		return "(section not found: " + where + ")"
+	}
+	return context + "\n(section not found: " + where + ")"
+}
+
+func excerptLocator(heading, block string) string {
+	if block != "" {
+		return "^" + block
+	}
+	return strings.TrimSpace(heading)
+}
+
+// SelectContextText returns the located section when a wikilink named one.
+// Notes without a heading or block locator keep their whole body. The stored
+// note is unchanged either way.
+func SelectContextText(content string, excerpts []ActivationExcerpt) string {
+	content = strings.TrimSpace(content)
+	for _, excerpt := range excerpts {
+		if excerpt.Heading == "" && excerpt.Block == "" {
+			continue
+		}
+		if selected := excerpt.ContextText(); selected != "" {
+			return selected
+		}
+	}
+	return content
 }
 
 // activationExcerpt returns the heading or block a wikilink named. A missing

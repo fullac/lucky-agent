@@ -90,6 +90,25 @@ func TestActivateExcerptFollowsBlockLink(t *testing.T) {
 	if !found {
 		t.Fatalf("block target was not activated: %+v", scores)
 	}
+
+	route := store.Route("排障指向")
+	var routed bool
+	for _, entry := range route.Entries {
+		if !strings.Contains(entry.Content, "凭据过期") {
+			continue
+		}
+		routed = true
+		if strings.Contains(entry.Content, "无关配置") == false {
+			t.Fatalf("stored note should keep the whole body, got %q", entry.Content)
+		}
+		selected := SelectContextText(entry.Content, route.Excerpts[entry.ID])
+		if !strings.Contains(selected, "凭据过期") || strings.Contains(selected, "无关配置") {
+			t.Fatalf("injected context = %q, want only the linked block", selected)
+		}
+	}
+	if !routed {
+		t.Fatalf("route dropped the linked note: %+v", route.Entries)
+	}
 }
 
 func TestActivateMissingBlockFallsBackToWholeNote(t *testing.T) {
@@ -116,6 +135,10 @@ func TestActivateMissingBlockFallsBackToWholeNote(t *testing.T) {
 		}
 		if len(score.Excerpts) != 1 || !score.Excerpts[0].Missing || score.Excerpts[0].Context != "整篇登录笔记" {
 			t.Fatalf("missing block excerpt = %+v", score.Excerpts)
+		}
+		selected := score.Excerpts[0].ContextText()
+		if !strings.Contains(selected, "整篇登录笔记") || !strings.Contains(selected, "section not found: ^missing") {
+			t.Fatalf("missing locator should keep the note and say so, got %q", selected)
 		}
 		return
 	}

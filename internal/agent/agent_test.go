@@ -806,6 +806,34 @@ func TestShortTermContextIsIsolatedPerSession(t *testing.T) {
 	}
 }
 
+func TestContextPlannerInjectsLinkedBlockNotWholeNote(t *testing.T) {
+	a := newTestAgentWithMemory(t)
+	target := "## 失败原因\n凭据过期\n^block-9\n\n## 无关配置\n不要把这一节注入"
+	if err := a.memory.SaveWithOptions(target, "fact", memory.TierLong, 0.9, memory.SaveOptions{}); err != nil {
+		t.Fatalf("save target: %v", err)
+	}
+	var targetID string
+	for _, entry := range a.memory.Search("凭据过期") {
+		targetID = entry.ID
+		break
+	}
+	if targetID == "" {
+		t.Fatal("target id missing")
+	}
+	if err := a.memory.SaveWithOptions("排障指向 [["+targetID+"#^block-9]]", "fact", memory.TierLong, 0.8, memory.SaveOptions{}); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+
+	planner := newContextPlanner(a, defaultContextBuildOptions())
+	msg := planner.buildRelevantMemoryMessage("排障指向", TurnScope{})
+	if !strings.Contains(msg.Content, "凭据过期") {
+		t.Fatalf("linked block was not injected:\n%s", msg.Content)
+	}
+	if strings.Contains(msg.Content, "无关配置") || strings.Contains(msg.Content, "不要把这一节注入") {
+		t.Fatalf("whole note leaked into model context:\n%s", msg.Content)
+	}
+}
+
 func TestContextPlannerFiltersRawConversationShortMemory(t *testing.T) {
 	a := newTestAgentWithMemory(t)
 	a.memory.SaveWithTier("User: hello about deploy", "conversation", memory.TierShort, 0.9)
