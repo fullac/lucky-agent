@@ -366,10 +366,22 @@ func writeTarEntry(destDir string, hdr *tar.Header, r io.Reader) error {
 
 	switch hdr.Typeflag {
 	case tar.TypeDir:
+		if err := rejectEscapingPath(destDir, target); err != nil {
+			return fmt.Errorf("refusing tar path %s: %w", hdr.Name, err)
+		}
 		return os.MkdirAll(target, 0o755)
 	case tar.TypeReg, tar.TypeRegA:
+		if err := rejectEscapingPath(destDir, target); err != nil {
+			return fmt.Errorf("refusing tar path %s: %w", hdr.Name, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
+		}
+		// O_NOFOLLOW is not portable. Re-check the final path after parent
+		// creation so a symlink planted earlier in this archive cannot redirect
+		// the write.
+		if err := rejectEscapingPath(destDir, target); err != nil {
+			return fmt.Errorf("refusing tar path %s: %w", hdr.Name, err)
 		}
 		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 		if err != nil {
@@ -381,16 +393,62 @@ func writeTarEntry(destDir string, hdr *tar.Header, r io.Reader) error {
 			return copyErr
 		}
 		return closeErr
-	case tar.TypeSymlink:
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		_ = os.Remove(target)
-		return os.Symlink(hdr.Linkname, target)
+	case tar.TypeSymlink, tar.TypeLink:
+		// Never materialize archive links. A later regular file could walk
+		// through them and write outside destDir.
+		return fmt.Errorf("refusing tar link entry: %s", hdr.Name)
 	default:
 		// Skip pax/global/other entries.
 		return nil
 	}
+}
+
+// rejectEscapingPath fails when target, after resolving existing symlinks,
+// does not stay inside base. Missing final components are checked via the
+// nearest existing parent so a not-yet-created file cannot hide a link.
+func rejectEscapingPath(base, target string) error {
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return err
+	}
+	resolvedBase, err := filepath.EvalSymlinks(baseAbs)
+	if err != nil {
+		return err
+	}
+	resolved, err := resolveExistingPrefix(target)
+	if err != nil {
+		return err
+	}
+	if !isWithinDir(resolvedBase, resolved) {
+		return fmt.Errorf("path escapes destination")
+	}
+	return nil
+}
+
+func resolveExistingPrefix(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	parent := filepath.Dir(abs)
+	base := filepath.Base(abs)
+	resolvedParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		if os.IsNotExist(err) && parent != abs {
+			resolvedParent, err = resolveExistingPrefix(parent)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(resolvedParent, base), nil
+		}
+		return "", err
+	}
+	return filepath.Join(resolvedParent, base), nil
 }
 
 func extractZip(archivePath, destDir string) error {
@@ -629,15 +687,7 @@ func copyUpdateTree(srcRoot, dstRoot string) error {
 		// Skip nested install helpers if desired? Keep them; harmless.
 		target := filepath.Join(dstRoot, rel)
 		if info.Mode()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			_ = os.Remove(target)
-			return os.Symlink(link, target)
+			return fmt.Errorf("refusing symlink in update payload: %s", rel)
 		}
 		if info.IsDir() {
 			return os.MkdirAll(target, 0o755)

@@ -645,3 +645,111 @@ func TestManagerCount(t *testing.T) {
 		t.Errorf("expected 2, got %d", m.Count())
 	}
 }
+
+func TestAddMessageOnMetadataOnlySessionKeepsHistory(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSession("keep-history", dir)
+	for i := 0; i < 5; i++ {
+		s.AddMessage("user", fmt.Sprintf("old-%d", i))
+	}
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	mgr, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	loaded, ok := mgr.Get("keep-history")
+	if !ok {
+		t.Fatal("session not loaded")
+	}
+	if loaded.messagesLoaded {
+		t.Fatal("manager stub should stay metadata-only until messages are requested")
+	}
+
+	loaded.AddMessage("user", "new-only")
+	if err := loaded.Save(); err != nil {
+		t.Fatalf("Save after append: %v", err)
+	}
+
+	mgr2, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager2: %v", err)
+	}
+	again, ok := mgr2.Get("keep-history")
+	if !ok {
+		t.Fatal("session missing after reload")
+	}
+	msgs := again.GetMessages()
+	if len(msgs) != 6 {
+		t.Fatalf("message count = %d, want 6 (5 old + new-only)", len(msgs))
+	}
+	if msgs[0].Content != "old-0" || msgs[5].Content != "new-only" {
+		t.Fatalf("history rewritten: first=%q last=%q", msgs[0].Content, msgs[5].Content)
+	}
+}
+
+func TestSaveCorruptSegmentDoesNotWipe(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSession("s1", dir)
+	s.AddMessage("user", "keep-me-please")
+	s.AddMessage("assistant", "still-here")
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	jsonl := filepath.Join(dir, "s1", "messages.jsonl")
+	if _, err := os.ReadFile(jsonl); err != nil {
+		t.Fatalf("read jsonl: %v", err)
+	}
+	corrupt := []byte("{not-json\n")
+	if err := os.WriteFile(jsonl, corrupt, 0600); err != nil {
+		t.Fatalf("corrupt jsonl: %v", err)
+	}
+
+	mgr, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	loaded, ok := mgr.Get("s1")
+	if !ok {
+		t.Fatal("session not loaded")
+	}
+	loaded.SetTitle("touch-title")
+	if err := loaded.Save(); err == nil {
+		t.Fatal("Save on corrupt history succeeded; want error")
+	}
+	after, err := os.ReadFile(jsonl)
+	if err != nil {
+		t.Fatalf("reread jsonl: %v", err)
+	}
+	if string(after) != string(corrupt) {
+		t.Fatalf("corrupt file was rewritten: %q", after)
+	}
+}
+
+func TestSearchMetadataOnlySessionFindsMessage(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSession("search-me", dir)
+	s.SetTitle("ordinary title")
+	s.AddMessage("user", "unique-keyword-zebra-42")
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	mgr, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	loaded, ok := mgr.Get("search-me")
+	if !ok || loaded.messagesLoaded {
+		t.Fatalf("want metadata-only stub, loaded=%v ok=%v", loaded.messagesLoaded, ok)
+	}
+	hits := mgr.Search("unique-keyword-zebra-42")
+	if len(hits) != 1 || hits[0].ID != "search-me" {
+		t.Fatalf("content search missed cold session: %+v", hits)
+	}
+	if again, _ := mgr.Get("search-me"); again.messagesLoaded {
+		t.Fatal("search should not force a full in-memory load")
+	}
+}

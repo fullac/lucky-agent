@@ -700,9 +700,15 @@ findAgentsFile 从环境变量直接验证
 */
 func findAgentsFile(cwd string) string {
 	for _, envName := range []string{"LUCKYAGENT_AGENTS_FILE", "LUCKYHARNESS_AGENTS_FILE"} {
-		if soulPath := strings.TrimSpace(os.Getenv(envName)); soulPath != "" {
+		soulPath := strings.TrimSpace(os.Getenv(envName))
+		if soulPath == "" {
+			continue
+		}
+		if st, err := os.Stat(soulPath); err == nil && !st.IsDir() {
 			return soulPath
 		}
+		// Stale override (rename leftover, deleted file) must not hide the
+		// workspace AGENTS.md.
 	}
 	if strings.TrimSpace(cwd) == "" {
 		return ""

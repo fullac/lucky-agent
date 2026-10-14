@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/logger"
@@ -1283,17 +1284,88 @@ func isExplicitRequiredToolMention(input string, pos int, name string) bool {
 	if end > len(input) {
 		end = len(input)
 	}
-	window := strings.ToLower(input[start:end])
-	return strings.Contains(window, "必须调用") ||
+	window := input[start:end]
+	if toolMentionNegated(window, name) {
+		return false
+	}
+	lower := strings.ToLower(window)
+	lowerName := strings.ToLower(name)
+	if strings.Contains(window, "必须调用") ||
 		strings.Contains(window, "强制调用") ||
 		strings.Contains(window, "调用 "+name) ||
 		strings.Contains(window, "调用"+name) ||
 		strings.Contains(window, "用 "+name) ||
 		strings.Contains(window, "用"+name) ||
-		strings.Contains(window, "use "+strings.ToLower(name)) ||
-		strings.Contains(window, "call "+strings.ToLower(name)) ||
-		strings.Contains(window, "tool "+strings.ToLower(name)) ||
-		strings.Contains(window, "to="+strings.ToLower(name))
+		strings.Contains(lower, "use "+lowerName) ||
+		strings.Contains(lower, "call "+lowerName) ||
+		strings.Contains(lower, "tool "+lowerName) ||
+		strings.Contains(lower, "to="+lowerName) {
+		return true
+	}
+	// "调用一次 file_read" keeps the verb in the same clause without gluing
+	// it to the tool name.
+	return clauseRequestsTool(window, name)
+}
+
+func clauseRequestsTool(window, name string) bool {
+	idx := strings.Index(window, name)
+	if idx < 0 {
+		idx = strings.Index(strings.ToLower(window), strings.ToLower(name))
+	}
+	if idx < 0 {
+		return false
+	}
+	clause := strings.ToLower(clauseBeforeTool(window[:idx]))
+	if clause == "" {
+		return false
+	}
+	for _, verb := range []string{"调用", "使用", "use ", "call "} {
+		if strings.Contains(clause, verb) {
+			return true
+		}
+	}
+	return false
+}
+
+// toolMentionNegated reports whether this occurrence is in a clause that
+// forbids the tool. Only the text between the previous sentence boundary and
+// the tool name counts, so an earlier "不要解释" cannot drop a later
+// "调用 file_read".
+func toolMentionNegated(window, name string) bool {
+	idx := strings.Index(window, name)
+	if idx < 0 {
+		idx = strings.Index(strings.ToLower(window), strings.ToLower(name))
+	}
+	if idx < 0 {
+		return false
+	}
+	clause := clauseBeforeTool(window[:idx])
+	if clause == "" {
+		return false
+	}
+	negatives := []string{
+		"不要调用", "不要用", "别调用", "别用", "禁止调用", "禁止用",
+		"不能调用", "不能用", "不可调用", "不可用", "不用调用",
+		"do not call", "do not use", "don't call", "don't use", "never call", "never use",
+	}
+	lower := strings.ToLower(clause)
+	for _, neg := range negatives {
+		if strings.Contains(lower, strings.ToLower(neg)) {
+			return true
+		}
+	}
+	return false
+}
+
+func clauseBeforeTool(before string) string {
+	cut := 0
+	for i, r := range before {
+		switch r {
+		case '。', '\n', '；', ';', '!', '！', '？', '?':
+			cut = i + utf8.RuneLen(r)
+		}
+	}
+	return strings.TrimSpace(before[cut:])
 }
 
 // fitContextWindow 裁剪消息列表到上下文窗口内

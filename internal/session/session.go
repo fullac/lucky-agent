@@ -257,7 +257,13 @@ func (s *Session) Format() string {
 
 // AddProviderMessage 添加完整 provider 消息（保留 tool_calls / tool_call_id 等结构化字段）
 func (s *Session) AddProviderMessage(msg provider.Message) {
-	s.mu.Lock()
+	// Metadata-only sessions must load the on-disk history before any append.
+	// Treating messagesLoaded=false as an empty slice and then Save() wipes
+	// the file. A load failure must not mark the session loaded.
+	if err := s.loadMessages(); err != nil {
+		return
+	}
+
 	if msg.CreatedAt == nil {
 		now := time.Now().UTC()
 		msg.CreatedAt = &now
@@ -267,21 +273,15 @@ func (s *Session) AddProviderMessage(msg provider.Message) {
 		msg.Content = utils.SanitizeToolProtocolOutput(msg.Content)
 	}
 
-	// 确保消息已加载
-	if !s.messagesLoaded {
-		s.Messages = make([]provider.Message, 0)
-		s.messagesLoaded = true
-	}
-	s.mu.Unlock()
-
 	// Blob I/O outside the session mutex; externalize before appending.
 	_ = s.externalizeLargeContent(&msg)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// loadMessages may have failed to observe a concurrent clear; never invent
+	// an empty history here.
 	if !s.messagesLoaded {
-		s.Messages = make([]provider.Message, 0)
-		s.messagesLoaded = true
+		return
 	}
 
 	s.Messages = append(s.Messages, msg)
@@ -1116,10 +1116,29 @@ func (s *Session) loadMessagesLocked() error {
 		path := s.messagesJSONLPath()
 		loaded, err := readAllMessagesJSONL(path)
 		if err != nil {
-			messages = s.loadLegacyMessagesBestEffort()
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("load segment messages: %w", err)
+			}
+			legacy, legacyErr := s.loadLegacyMessages()
+			if legacyErr != nil {
+				if os.IsNotExist(legacyErr) {
+					messages = []provider.Message{}
+				} else {
+					return fmt.Errorf("load legacy messages: %w", legacyErr)
+				}
+			} else {
+				messages = legacy
+			}
 		} else if len(loaded) == 0 {
 			// Mid-migrate or empty segment: prefer legacy body if present.
-			if legacy := s.loadLegacyMessagesBestEffort(); len(legacy) > 0 {
+			legacy, legacyErr := s.loadLegacyMessages()
+			if legacyErr != nil {
+				if os.IsNotExist(legacyErr) {
+					messages = loaded
+				} else {
+					return fmt.Errorf("load legacy messages: %w", legacyErr)
+				}
+			} else if len(legacy) > 0 {
 				messages = legacy
 			} else {
 				messages = loaded
@@ -1136,14 +1155,13 @@ func (s *Session) loadMessagesLocked() error {
 			shell = meta.ShellContext
 		}
 	default:
-		path := filepath.Join(s.dir, s.ID+".md")
-		var loaded []provider.Message
-		sd, _, err := readSessionFile(path, func(msg provider.Message) error {
-			loaded = append(loaded, msg)
-			return nil
-		})
+		loaded, sd, err := s.loadLegacyMessagesWithMeta()
 		if err != nil {
-			messages = []provider.Message{}
+			if os.IsNotExist(err) {
+				messages = []provider.Message{}
+			} else {
+				return fmt.Errorf("load legacy messages: %w", err)
+			}
 		} else {
 			messages = loaded
 			title = sd.Title
@@ -1186,17 +1204,25 @@ func (s *Session) loadMessagesLocked() error {
 	return nil
 }
 
-func (s *Session) loadLegacyMessagesBestEffort() []provider.Message {
+func (s *Session) loadLegacyMessages() ([]provider.Message, error) {
+	messages, _, err := s.loadLegacyMessagesWithMeta()
+	return messages, err
+}
+
+func (s *Session) loadLegacyMessagesWithMeta() ([]provider.Message, sessionData, error) {
 	path := filepath.Join(s.dir, s.ID+".md")
 	var messages []provider.Message
-	_, _, err := readSessionFile(path, func(msg provider.Message) error {
+	sd, _, err := readSessionFile(path, func(msg provider.Message) error {
 		messages = append(messages, msg)
 		return nil
 	})
 	if err != nil {
-		return []provider.Message{}
+		return nil, sessionData{}, err
 	}
-	return messages
+	if messages == nil {
+		messages = []provider.Message{}
+	}
+	return messages, sd, nil
 }
 
 func readSessionMetadata(dir, id, sessionPath string) (sessionMetadata, bool) {
@@ -1530,6 +1556,41 @@ func (m *Manager) ListInfo() []SessionInfo {
 }
 
 // Search 搜索包含关键词的会话
+func sessionContentMatches(s *Session, lowerQuery string) bool {
+	if s == nil || lowerQuery == "" {
+		return false
+	}
+	s.mu.RLock()
+	format := s.format
+	dir := s.dir
+	id := s.ID
+	s.mu.RUnlock()
+	switch format {
+	case FormatSegmentV1:
+		path := filepath.Join(dir, id, messagesJSONLName)
+		return fileContainsFold(path, lowerQuery)
+	default:
+		return fileContainsFold(filepath.Join(dir, id+".md"), lowerQuery)
+	}
+}
+
+func fileContainsFold(path, lowerQuery string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	sc.Buffer(buf, 8*1024*1024)
+	for sc.Scan() {
+		if strings.Contains(strings.ToLower(sc.Text()), lowerQuery) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) Search(query string) []SessionInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1549,18 +1610,24 @@ func (m *Manager) Search(query string) []SessionInfo {
 			CreatedAt:    s.CreatedAt,
 			UpdatedAt:    s.UpdatedAt,
 		}
+		loaded := s.messagesLoaded
+		messages := s.Messages
 		matched := strings.Contains(strings.ToLower(s.Title), lowerQuery) ||
 			strings.Contains(strings.ToLower(s.Project), lowerQuery) ||
 			strings.Contains(strings.ToLower(s.ID), lowerQuery)
+		s.mu.RUnlock()
 		if !matched {
-			for _, msg := range s.Messages {
-				if strings.Contains(strings.ToLower(msg.Content), lowerQuery) {
-					matched = true
-					break
+			if loaded {
+				for _, msg := range messages {
+					if strings.Contains(strings.ToLower(msg.Content), lowerQuery) {
+						matched = true
+						break
+					}
 				}
+			} else if sessionContentMatches(s, lowerQuery) {
+				matched = true
 			}
 		}
-		s.mu.RUnlock()
 		if matched {
 			results = append(results, info)
 		}

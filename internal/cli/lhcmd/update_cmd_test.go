@@ -276,3 +276,62 @@ func TestUpdateCommandRegistered(t *testing.T) {
 		t.Fatal("update command not registered on root")
 	}
 }
+
+func TestExtractTarGzRejectsSymlinkEscape(t *testing.T) {
+	parent := t.TempDir()
+	outside := filepath.Join(parent, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(parent, "lh-escape.tar.gz")
+	if err := writeTarGzWithSymlinkEscape(archive, outside); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(parent, "extract")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := extractTarGz(archive, dest)
+	if err == nil {
+		t.Fatal("extract succeeded; want symlink escape rejected")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "pwned.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("wrote outside extract dir: %v", statErr)
+	}
+}
+
+func writeTarGzWithSymlinkEscape(path, outside string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz := gzip.NewWriter(f)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+
+	link := &tar.Header{
+		Name:     "linkdir",
+		Mode:     0o777,
+		Typeflag: tar.TypeSymlink,
+		Linkname: outside,
+	}
+	if err := tw.WriteHeader(link); err != nil {
+		return err
+	}
+	payload := []byte("pwned")
+	reg := &tar.Header{
+		Name:     "linkdir/pwned.txt",
+		Mode:     0o644,
+		Size:     int64(len(payload)),
+		Typeflag: tar.TypeReg,
+	}
+	if err := tw.WriteHeader(reg); err != nil {
+		return err
+	}
+	if _, err := tw.Write(payload); err != nil {
+		return err
+	}
+	return nil
+}
