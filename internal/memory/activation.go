@@ -83,6 +83,7 @@ type ActivationScore struct {
 	Score       float64
 	Components  ActivationComponents
 	Paths       []ActivationPath
+	Excerpts    []ActivationExcerpt
 	DirectScore float64
 }
 
@@ -108,13 +109,25 @@ func (c ActivationComponents) MatchScore() float64 {
 
 // ActivationPath records graph spread evidence for an activated memory.
 type ActivationPath struct {
-	FromID string
-	ToID   string
-	Via    string
-	Kind   string
-	Weight float64
-	Depth  int
-	Boost  float64
+	FromID  string
+	ToID    string
+	Via     string
+	Kind    string
+	Heading string
+	Block   string
+	Weight  float64
+	Depth   int
+	Boost   float64
+}
+
+// ActivationExcerpt is the part of a note a wikilink pointed at. Missing is
+// true when the heading or block was written but is not in the note; Context
+// then falls back to the whole note instead of inventing a section.
+type ActivationExcerpt struct {
+	Heading string
+	Block   string
+	Context string
+	Missing bool
 }
 
 func normalizeActivationOptions(opts ActivationOptions) ActivationOptions {
@@ -500,7 +513,8 @@ func (s *Store) spreadActivationFromLocked(scores map[string]*ActivationScore, s
 		}
 	}
 
-	for _, link := range s.graph.Forward[id] {
+	for _, written := range activationWikiLinks(entry) {
+		link := written.Target
 		for _, key := range graphKeysForLink(link) {
 			// A name owned by two notes is not evidence for either of them.
 			// Boosting both, or the first one registered, would surface the
@@ -510,6 +524,7 @@ func (s *Store) spreadActivationFromLocked(scores map[string]*ActivationScore, s
 			}
 			for _, targetID := range s.graph.Names[key] {
 				s.addActivationBoostLocked(scores, source, targetID, id, "wikilink_target", link, 0.55, depth, now, opts)
+				s.attachActivationExcerptLocked(scores[targetID], written)
 				visit(targetID)
 			}
 			for _, targetID := range s.graph.Backlinks[key] {
@@ -536,6 +551,138 @@ func (s *Store) spreadActivationFromLocked(scores map[string]*ActivationScore, s
 	}
 
 	return touched
+}
+
+func activationWikiLinks(entry *Entry) []WikiLink {
+	if entry == nil {
+		return nil
+	}
+	links := parseWikiLinks(entry.Content)
+	seen := make(map[string]bool, len(links)+len(entry.Links))
+	for _, link := range links {
+		seen[activationLinkKey(link)] = true
+	}
+	for _, name := range entry.Links {
+		link := WikiLink{Target: strings.TrimSpace(name)}
+		if link.Target == "" || seen[activationLinkKey(link)] {
+			continue
+		}
+		seen[activationLinkKey(link)] = true
+		links = append(links, link)
+	}
+	return links
+}
+
+func activationLinkKey(link WikiLink) string {
+	return strings.ToLower(link.Target) + "\x00" + link.Heading + "\x00" + link.Block
+}
+
+func (s *Store) attachActivationExcerptLocked(score *ActivationScore, link WikiLink) {
+	if score == nil || (link.Heading == "" && link.Block == "") {
+		return
+	}
+	for _, existing := range score.Excerpts {
+		if existing.Heading == link.Heading && existing.Block == link.Block {
+			return
+		}
+	}
+	excerpt := activationExcerpt(score.Entry.Content, link.Heading, link.Block)
+	score.Excerpts = append(score.Excerpts, excerpt)
+	for i := range score.Paths {
+		if score.Paths[i].Via == link.Target && score.Paths[i].Heading == "" && score.Paths[i].Block == "" {
+			score.Paths[i].Heading = link.Heading
+			score.Paths[i].Block = link.Block
+			break
+		}
+	}
+}
+
+// activationExcerpt returns the heading or block a wikilink named. A missing
+// locator falls back to the whole note and says so, rather than inventing a
+// section.
+func activationExcerpt(content, heading, block string) ActivationExcerpt {
+	excerpt := ActivationExcerpt{Heading: heading, Block: block, Context: strings.TrimSpace(content)}
+	if block != "" {
+		if section, ok := blockExcerpt(content, block); ok {
+			excerpt.Context = section
+			return excerpt
+		}
+		excerpt.Missing = true
+		return excerpt
+	}
+	if heading != "" {
+		if section, ok := headingExcerpt(content, heading); ok {
+			excerpt.Context = section
+			return excerpt
+		}
+		excerpt.Missing = true
+	}
+	return excerpt
+}
+
+func blockExcerpt(content, block string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "^"+block {
+			continue
+		}
+		start := i
+		for start > 0 && strings.TrimSpace(lines[start-1]) != "" {
+			start--
+		}
+		return strings.TrimSpace(strings.Join(lines[start:i], "\n")), true
+	}
+	return "", false
+}
+
+func headingExcerpt(content, heading string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	start := -1
+	level := 0
+	for i, line := range lines {
+		name, ok := markdownHeading(line)
+		if !ok || !strings.EqualFold(name, heading) {
+			continue
+		}
+		start = i
+		level = headingLevel(line)
+		break
+	}
+	if start < 0 {
+		return "", false
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if lvl := headingLevel(lines[i]); lvl > 0 && lvl <= level {
+			end = i
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines[start:end], "\n")), true
+}
+
+func markdownHeading(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	level := headingLevel(trimmed)
+	if level == 0 {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimLeft(trimmed, "#")), true
+}
+
+func headingLevel(line string) int {
+	trimmed := strings.TrimSpace(line)
+	level := 0
+	for _, r := range trimmed {
+		if r != '#' {
+			break
+		}
+		level++
+	}
+	if level == 0 || level > 6 || level >= len(trimmed) || trimmed[level] != ' ' {
+		return 0
+	}
+	return level
 }
 
 // graphNameIsAmbiguous reports a written name that more than one note
