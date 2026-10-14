@@ -928,6 +928,7 @@ func buildDelegateRuntimeConfig(c *config.Config) tool.DelegateConfig {
 
 func buildDelegateChildLoopConfig(delegateCfg tool.DelegateConfig, allowRecursive bool) LoopConfig {
 	loopCfg := DefaultLoopConfig()
+	loopCfg.Source = "subagent"
 	loopCfg.MaxIterations = delegateCfg.ChildMaxIterations
 	loopCfg.Timeout = delegateCfg.ChildTimeout
 	loopCfg.AutoApprove = delegateCfg.ChildAutoApprove

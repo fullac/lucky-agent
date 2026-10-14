@@ -367,7 +367,8 @@ func (s *MemoryToolService) HandleRecall(args map[string]any) (string, error) {
 		if result.Score > 0 {
 			score = fmt.Sprintf(" score=%0.2f", result.Score)
 		}
-		sb.WriteString(fmt.Sprintf("- [%s/%s%s%s%s] %s\n", e.Category, e.Tier.String(), score, graph, ref, utils.Truncate(e.Content, 100)))
+		body := memory.SelectContextText(e.Content, result.Excerpts)
+		sb.WriteString(fmt.Sprintf("- [%s/%s%s%s%s] %s\n", e.Category, e.Tier.String(), score, graph, ref, utils.Truncate(body, 100)))
 	}
 	return sb.String(), nil
 }
@@ -446,19 +447,24 @@ func (s *MemoryToolService) buildRecallTrace(args map[string]any) (memory.Search
 }
 
 type recallEntryJSON struct {
-	ID          string                  `json:"id"`
-	Category    string                  `json:"category"`
-	Tier        string                  `json:"tier"`
-	Content     string                  `json:"content"`
-	Path        string                  `json:"path,omitempty"`
-	BlockID     string                  `json:"block_id,omitempty"`
-	Links       []string                `json:"links,omitempty"`
-	Status      string                  `json:"status,omitempty"`
-	Confidence  float64                 `json:"confidence,omitempty"`
-	Score       float64                 `json:"score,omitempty"`
-	DirectScore float64                 `json:"direct_score,omitempty"`
-	GraphScore  float64                 `json:"graph_score,omitempty"`
-	Paths       []memory.ActivationPath `json:"paths,omitempty"`
+	ID          string                     `json:"id"`
+	Category    string                     `json:"category"`
+	Tier        string                     `json:"tier"`
+	Content     string                     `json:"content"`
+	Context     string                     `json:"context,omitempty"`
+	Heading     string                     `json:"heading,omitempty"`
+	Block       string                     `json:"block,omitempty"`
+	Missing     bool                       `json:"section_missing,omitempty"`
+	Path        string                     `json:"path,omitempty"`
+	BlockID     string                     `json:"block_id,omitempty"`
+	Links       []string                   `json:"links,omitempty"`
+	Status      string                     `json:"status,omitempty"`
+	Confidence  float64                    `json:"confidence,omitempty"`
+	Score       float64                    `json:"score,omitempty"`
+	DirectScore float64                    `json:"direct_score,omitempty"`
+	GraphScore  float64                    `json:"graph_score,omitempty"`
+	Paths       []memory.ActivationPath    `json:"paths,omitempty"`
+	Excerpts    []memory.ActivationExcerpt `json:"excerpts,omitempty"`
 }
 
 func formatRecallSearchJSON(source, query string, graphDepth int, results []memory.SearchResult) (string, error) {
@@ -508,7 +514,7 @@ func formatRecallRecentJSON(source string, entries []memory.Entry) (string, erro
 }
 
 func recallEntryToJSON(entry memory.Entry, result memory.SearchResult) recallEntryJSON {
-	return recallEntryJSON{
+	item := recallEntryJSON{
 		ID:          entry.ID,
 		Category:    entry.Category,
 		Tier:        entry.Tier.String(),
@@ -522,7 +528,19 @@ func recallEntryToJSON(entry memory.Entry, result memory.SearchResult) recallEnt
 		DirectScore: result.DirectScore,
 		GraphScore:  result.GraphScore,
 		Paths:       result.Paths,
+		Excerpts:    result.Excerpts,
 	}
+	for _, excerpt := range result.Excerpts {
+		if excerpt.Heading == "" && excerpt.Block == "" {
+			continue
+		}
+		item.Context = excerpt.ContextText()
+		item.Heading = excerpt.Heading
+		item.Block = excerpt.Block
+		item.Missing = excerpt.Missing
+		break
+	}
+	return item
 }
 
 func filterRecallEntries(entries []memory.Entry, category string, tier *memory.Tier) []memory.Entry {

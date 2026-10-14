@@ -142,22 +142,23 @@ type GraphIndex struct {
 // The Markdown notes remain the source of truth; this is a deterministic layer
 // that helps the agent convert graph recall into tool and answer constraints.
 type RouteAnalysis struct {
-	Query             string                 `json:"query"`
-	Entries           []Entry                `json:"entries"`
-	ToolRequirements  []RouteToolRequirement `json:"tool_requirements,omitempty"`
-	Risks             []RouteRisk            `json:"risks,omitempty"`
-	AppliedPolicies   []AppliedRoutePolicy   `json:"applied_policies,omitempty"`
-	RequiredTools     []string               `json:"required_tools,omitempty"`
-	SuggestedSearches []string               `json:"suggested_searches,omitempty"`
-	RiskFlags         []string               `json:"risk_flags,omitempty"`
-	Constraints       []string               `json:"constraints,omitempty"`
-	Clarifications    []string               `json:"clarifications,omitempty"`
-	TemporalNotes     []string               `json:"temporal_notes,omitempty"`
-	EvidenceRefs      []string               `json:"evidence_refs,omitempty"`
-	SupersededRefs    []string               `json:"superseded_refs,omitempty"`
-	ConflictRefs      []string               `json:"conflict_refs,omitempty"`
-	ExpiredRefs       []string               `json:"expired_refs,omitempty"`
-	FutureRefs        []string               `json:"future_refs,omitempty"`
+	Query             string                         `json:"query"`
+	Entries           []Entry                        `json:"entries"`
+	Excerpts          map[string][]ActivationExcerpt `json:"excerpts,omitempty"`
+	ToolRequirements  []RouteToolRequirement         `json:"tool_requirements,omitempty"`
+	Risks             []RouteRisk                    `json:"risks,omitempty"`
+	AppliedPolicies   []AppliedRoutePolicy           `json:"applied_policies,omitempty"`
+	RequiredTools     []string                       `json:"required_tools,omitempty"`
+	SuggestedSearches []string                       `json:"suggested_searches,omitempty"`
+	RiskFlags         []string                       `json:"risk_flags,omitempty"`
+	Constraints       []string                       `json:"constraints,omitempty"`
+	Clarifications    []string                       `json:"clarifications,omitempty"`
+	TemporalNotes     []string                       `json:"temporal_notes,omitempty"`
+	EvidenceRefs      []string                       `json:"evidence_refs,omitempty"`
+	SupersededRefs    []string                       `json:"superseded_refs,omitempty"`
+	ConflictRefs      []string                       `json:"conflict_refs,omitempty"`
+	ExpiredRefs       []string                       `json:"expired_refs,omitempty"`
+	FutureRefs        []string                       `json:"future_refs,omitempty"`
 }
 
 // SaveOptions carries optional Obsidian and temporal-state metadata.
@@ -573,12 +574,15 @@ type SearchOptions struct {
 }
 
 // SearchResult contains a memory entry plus ranking/explanation signals.
+// Excerpts are injection locators, not stored notes: a heading or block link
+// still selects the whole Entry, and Context is the section to show instead.
 type SearchResult struct {
-	Entry       Entry            `json:"entry"`
-	Score       float64          `json:"score"`
-	DirectScore float64          `json:"direct_score,omitempty"`
-	GraphScore  float64          `json:"graph_score,omitempty"`
-	Paths       []ActivationPath `json:"paths,omitempty"`
+	Entry       Entry               `json:"entry"`
+	Score       float64             `json:"score"`
+	DirectScore float64             `json:"direct_score,omitempty"`
+	GraphScore  float64             `json:"graph_score,omitempty"`
+	Paths       []ActivationPath    `json:"paths,omitempty"`
+	Excerpts    []ActivationExcerpt `json:"excerpts,omitempty"`
 }
 
 // SearchWithOptions searches memory with bounded filters and structured scores.
@@ -629,6 +633,7 @@ func (s *Store) SearchWithOptions(query string, opts SearchOptions) []SearchResu
 			Score:       score.Score,
 			DirectScore: score.DirectScore,
 			GraphScore:  score.Components.GraphBoost,
+			Excerpts:    score.Excerpts,
 		}
 		if opts.Explain {
 			result.Paths = score.Paths
@@ -766,19 +771,24 @@ func (s *Store) Route(query string) RouteAnalysis {
 
 // RouteWithOptions evaluates typed policies on recalled memories visible to the caller.
 func (s *Store) RouteWithOptions(query string, opts RouteOptions) RouteAnalysis {
-	entries := activationScoresToEntries(s.Activate(query, RouteActivationOptions()))
+	scores := s.Activate(query, RouteActivationOptions())
+	entries := activationScoresToEntries(scores)
+	excerpts := activationExcerptsByID(scores)
 	if opts.EntryFilter != nil {
 		filtered := make([]Entry, 0, len(entries))
 		for _, entry := range entries {
 			if opts.EntryFilter(entry) {
 				filtered = append(filtered, entry)
+			} else {
+				delete(excerpts, entry.ID)
 			}
 		}
 		entries = filtered
 	}
 	route := RouteAnalysis{
-		Query:   strings.TrimSpace(query),
-		Entries: entries,
+		Query:    strings.TrimSpace(query),
+		Entries:  entries,
+		Excerpts: excerpts,
 	}
 	if len(entries) == 0 {
 		return route
@@ -786,6 +796,7 @@ func (s *Store) RouteWithOptions(query string, opts RouteOptions) RouteAnalysis 
 	resolution := s.resolveTemporal(query, entries, opts.EntryFilter)
 	entries = resolution.Entries
 	route.Entries = entries
+	route.Excerpts = excerptsForEntries(excerpts, entries)
 	route.TemporalNotes = resolution.Notes
 	route.SupersededRefs = resolution.SupersededRefs
 	route.ConflictRefs = resolution.ConflictRefs
@@ -1310,6 +1321,9 @@ type memoryNoteFrontmatter struct {
 	BlockID       string        `yaml:"block_id,omitempty"`
 }
 
+// wikiLinkPattern is the note-name view of a wikilink. Heading, block, and
+// display text are parsed by parseWikiLinks; this pattern stays for callers
+// that only need the note target.
 var wikiLinkPattern = regexp.MustCompile(`!?\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]`)
 var blockIDPattern = regexp.MustCompile(`(?m)(?:\s+\^[A-Za-z0-9_-]+|\n\^[A-Za-z0-9_-]+\s*)$`)
 
@@ -1791,15 +1805,10 @@ func parseTier(raw string) Tier {
 }
 
 func extractWikiLinks(text string) []string {
-	matches := wikiLinkPattern.FindAllStringSubmatch(text, -1)
-	links := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		link := strings.TrimSpace(m[1])
-		if link != "" {
-			links = append(links, link)
+	links := make([]string, 0)
+	for _, link := range parseWikiLinks(text) {
+		if link.Target != "" {
+			links = append(links, link.Target)
 		}
 	}
 	return normalizeLinks(links)

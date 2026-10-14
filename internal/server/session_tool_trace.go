@@ -10,7 +10,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/tool"
 )
 
-// handleSessionToolTrace returns a completed, annotated trace reconstructed
+// handleSessionToolTrace returns an annotated trace reconstructed
 // from the session's persisted provider messages.
 func (s *Server) handleSessionToolTrace(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	if r.Method != http.MethodGet {
@@ -22,19 +22,42 @@ func (s *Server) handleSessionToolTrace(w http.ResponseWriter, r *http.Request, 
 	if s.agent != nil && s.agent.Config() != nil {
 		templates = s.agent.Config().Get().ToolTrace.Templates
 	}
-	allRecords := sessionToolTraceRecords(sess.GetMessages(), templates)
+	turn := r.URL.Query().Get("turn")
+	if turn != "" && turn != "first" {
+		s.sendError(w, "turn must be first or omitted", http.StatusBadRequest, "")
+		return
+	}
+	messages := sess.GetMessages()
+	if turn == "first" {
+		// Legacy compaction can remove the original turn. Do not relabel a
+		// follow-up as the delegated execution merely because it is now first.
+		for _, message := range messages {
+			if message.Role == "user" {
+				break
+			}
+			if session.IsCompactBoundary(message) {
+				s.sendError(w, "original execution turn is no longer available", http.StatusGone, "")
+				return
+			}
+		}
+		messages = firstSessionTurn(messages)
+	}
+	allRecords := sessionToolTraceRecords(messages, templates)
 	successes := 0
 	failures := 0
+	pending := 0
 	for _, record := range allRecords {
-		if record.Success {
+		if record.Status == "pending" {
+			pending++
+		} else if record.Success {
 			successes++
 		} else {
 			failures++
 		}
 	}
 	rate := 0.0
-	if len(allRecords) > 0 {
-		rate = float64(successes) / float64(len(allRecords))
+	if finished := successes + failures; finished > 0 {
+		rate = float64(successes) / float64(finished)
 	}
 	limit := boundedQueryInt(r, "limit", defaultToolTraceLimit, 1, maxToolTraceLimit)
 	offset := boundedQueryInt(r, "offset", 0, 0, 1_000_000)
@@ -42,17 +65,38 @@ func (s *Server) handleSessionToolTrace(w http.ResponseWriter, r *http.Request, 
 	records := truncateTraceRecords(allRecords[start:end])
 
 	s.sendJSON(w, http.StatusOK, map[string]any{
-		"session_id":   sess.ID,
-		"tools":        records,
-		"total_calls":  len(allRecords),
-		"successes":    successes,
-		"failures":     failures,
-		"success_rate": rate,
-		"limit":        limit,
-		"offset":       offset,
-		"returned":     len(records),
-		"has_more":     start > 0,
+		"session_id":    sess.ID,
+		"turn":          turn,
+		"tools":         records,
+		"total_calls":   len(allRecords),
+		"successes":     successes,
+		"failures":      failures,
+		"pending_calls": pending,
+		"success_rate":  rate,
+		"limit":         limit,
+		"offset":        offset,
+		"returned":      len(records),
+		"has_more":      start > 0,
 	})
+}
+
+// A delegated execution owns the first user turn of its execution session.
+// Later follow-up conversations must not appear as work done by that task.
+func firstSessionTurn(messages []provider.Message) []provider.Message {
+	start := -1
+	for i, message := range messages {
+		if message.Role != "user" {
+			continue
+		}
+		if start >= 0 {
+			return messages[start:i]
+		}
+		start = i
+	}
+	if start < 0 {
+		return nil
+	}
+	return messages[start:]
 }
 
 func tracePageBounds(total, limit, offset int) (int, int) {
@@ -110,7 +154,9 @@ func sessionToolTraceRecords(messages []provider.Message, templateSets ...map[st
 	for _, message := range messages {
 		if message.Role == "assistant" {
 			for _, call := range message.ToolCalls {
-				records = append(records, tool.NewTraceRecordWithTemplates(call.Name, call.Arguments, "", 0, templates))
+				record := tool.NewTraceRecordWithTemplates(call.Name, call.Arguments, "", 0, templates)
+				record.ID, record.Status, record.Success = call.ID, "pending", false
+				records = append(records, record)
 				index := len(records) - 1
 				if call.ID != "" {
 					pendingByID[call.ID] = index
@@ -128,18 +174,22 @@ func sessionToolTraceRecords(messages []provider.Message, templateSets ...map[st
 		if !found {
 			name := strings.TrimSpace(message.Name)
 			for _, candidate := range pendingByName[name] {
-				if records[candidate].Result == "" {
+				if records[candidate].Status == "pending" {
 					index, found = candidate, true
 					break
 				}
 			}
 		}
 		if !found {
-			records = append(records, tool.NewTraceRecordWithTemplates(message.Name, "", message.Content, 0, templates))
+			record := tool.NewTraceRecordWithTemplates(message.Name, "", message.Content, 0, templates)
+			record.ID = message.ToolCallID
+			records = append(records, record)
 			continue
 		}
 
+		id := records[index].ID
 		records[index] = tool.NewTraceRecordWithTemplates(records[index].Name, records[index].Arguments, message.Content, 0, templates)
+		records[index].ID = id
 	}
 	return records
 }

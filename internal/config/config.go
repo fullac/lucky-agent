@@ -1132,7 +1132,7 @@ func DefaultConfig() *Config {
 				SettleMS:                  350,
 				SettleMilliseconds:        350,
 				MaxObservationBytes:       10 << 20,
-				MaxScreenshotWidth:        0,
+				MaxScreenshotWidth:        1280,
 				MaxBatchActions:           5,
 				MaxConsecutiveObserveOnly: 2,
 				SettleMode:                "adaptive",

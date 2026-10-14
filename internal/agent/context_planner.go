@@ -810,7 +810,7 @@ func (p *contextPlanner) buildTypedMemoryBody(route memory.RouteAnalysis, result
 		refs := strings.Join(limitStrings(route.EvidenceRefs, 8), "\n- ")
 		sections = append(sections, "[Evidence Refs]\nMemory refs:\n- "+refs)
 	}
-	if lines := typedMemoryFactLines(results, 6); len(lines) > 0 {
+	if lines := typedMemoryFactLinesFrom(results, route.Excerpts, 6); len(lines) > 0 {
 		sections = append(sections, "[Must Use Facts]\n"+strings.Join(lines, "\n"))
 	}
 	if lines := memoryRouteLines(route); len(lines) > 0 {
@@ -821,15 +821,20 @@ func (p *contextPlanner) buildTypedMemoryBody(route memory.RouteAnalysis, result
 }
 
 func typedMemoryFactLines(entries []memory.Entry, limit int) []string {
+	return typedMemoryFactLinesFrom(entries, nil, limit)
+}
+
+func typedMemoryFactLinesFrom(entries []memory.Entry, excerpts map[string][]memory.ActivationExcerpt, limit int) []string {
 	if limit <= 0 {
 		return nil
 	}
 	lines := make([]string, 0, utils.MinInt(limit, len(entries)))
 	for _, e := range entries {
-		if strings.TrimSpace(e.Content) == "" {
+		body := memory.SelectContextText(e.Content, excerpts[e.ID])
+		if body == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- [%s/%s] %s%s", e.Category, e.Tier.String(), truncate(e.Content, 160), memoryRefHint(e)))
+		lines = append(lines, fmt.Sprintf("- [%s/%s] %s%s", e.Category, e.Tier.String(), truncate(body, 160), memoryRefHint(e)))
 		if len(lines) >= limit {
 			break
 		}

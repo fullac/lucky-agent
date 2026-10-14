@@ -106,6 +106,58 @@ func TestBatchCapturesOnceAndStopsWithoutReplay(t *testing.T) {
 	}
 }
 
+func TestBatchWaitDelaysWithoutConsumingThePointerAction(t *testing.T) {
+	b := &workflowBackend{}
+	m := newTestManager(t, b)
+	m.config.ActionSettle = 0
+	obs, err := m.Observe(context.Background(), "batch", ObserveRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	actions := []Action{
+		{Kind: ActionClick, FrameID: obs.FrameID, X: 4, Y: 5},
+		{Kind: ActionWait, FrameID: obs.FrameID, DurationMS: 40},
+		{Kind: ActionTypeText, FrameID: obs.FrameID, Text: "hello"},
+	}
+	if _, err := m.StepBatch(context.Background(), "batch", actions); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(started) < 40*time.Millisecond {
+		t.Fatal("wait_ms returned without delaying")
+	}
+	if len(b.performs) != 2 || b.performs[0].Kind != ActionClick || b.performs[1].Kind != ActionTypeText {
+		t.Fatalf("wait reached backend or dropped the click: %+v", b.performs)
+	}
+	if _, err := m.StepBatch(context.Background(), "batch", []Action{{Kind: ActionWait, FrameID: obs.FrameID, DurationMS: 10}}); err == nil {
+		t.Fatal("wait-only batch was accepted")
+	}
+}
+
+func TestStepReportsAnUnchangedScreen(t *testing.T) {
+	b := &workflowBackend{}
+	m := newTestManager(t, b)
+	obs, err := m.Observe(context.Background(), "same", ObserveRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := m.Step(context.Background(), "same", Action{Kind: ActionClick, FrameID: obs.FrameID, X: 1, Y: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.Unchanged || after.SHA256 == "" || after.SHA256 != obs.SHA256 {
+		t.Fatalf("unchanged click was not detected: before=%s after=%s flag=%v", obs.SHA256, after.SHA256, after.Unchanged)
+	}
+	b.frames = []Observation{{ImageData: []byte("different-frame"), Width: 100, Height: 80}}
+	after, err = m.Step(context.Background(), "same", Action{Kind: ActionClick, FrameID: after.FrameID, X: 1, Y: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Unchanged {
+		t.Fatal("a changed screen was reported unchanged")
+	}
+}
+
 func TestBatchValidatesEveryActionBeforeInput(t *testing.T) {
 	for _, invalid := range []Action{{Kind: ActionClick, X: 3}, {Kind: ActionTypeText}, {Kind: ActionSetText, ElementID: "unknown"}} {
 		b := &workflowBackend{}
