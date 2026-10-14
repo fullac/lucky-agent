@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/yurika0211/luckyagent/internal/provider"
+	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/tool"
 )
 
@@ -70,6 +71,84 @@ func TestSessionToolTraceRecordsApplyConfiguredTemplates(t *testing.T) {
 	}
 }
 
+func TestSessionToolTraceDistinguishesPendingAndEmptyResults(t *testing.T) {
+	records := sessionToolTraceRecords([]provider.Message{
+		{Role: "assistant", ToolCalls: []provider.ToolCall{
+			{ID: "empty", Name: "terminal"},
+			{ID: "pending", Name: "terminal"},
+			{ID: "failed", Name: "file_read"},
+		}},
+		{Role: "tool", ToolCallID: "empty", Name: "terminal", Content: ""},
+		{Role: "tool", ToolCallID: "failed", Name: "file_read", Content: "Error: not found"},
+	})
+	if len(records) != 3 {
+		t.Fatalf("records = %#v", records)
+	}
+	for i, want := range []struct{ id, status string }{
+		{"empty", "completed"}, {"pending", "pending"}, {"failed", "failed"},
+	} {
+		if records[i].ID != want.id || records[i].Status != want.status {
+			t.Fatalf("record %d = %#v, want %#v", i, records[i], want)
+		}
+	}
+	if records[1].Success {
+		t.Fatal("a call without a result must not be marked successful")
+	}
+}
+
+func TestSessionToolTraceFirstTurnDoesNotIncludeFollowups(t *testing.T) {
+	messages := []provider.Message{
+		{Role: "system", Content: "profile"},
+		{Role: "user", Content: "assigned task"},
+		{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "assigned", Name: "file_read"}}},
+		{Role: "tool", ToolCallID: "assigned", Content: "result"},
+		{Role: "assistant", Content: "done"},
+		{Role: "user", Content: "follow-up"},
+		{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "followup", Name: "terminal"}}},
+	}
+	records := sessionToolTraceRecords(firstSessionTurn(messages))
+	if len(records) != 1 || records[0].ID != "assigned" {
+		t.Fatalf("first turn records = %#v", records)
+	}
+	if got := firstSessionTurn(messages[:1]); len(got) != 0 {
+		t.Fatalf("session without a user turn = %#v", got)
+	}
+}
+
+func TestSessionToolTracePendingDoesNotAffectSuccessRate(t *testing.T) {
+	agent := createTestAgent(t)
+	server := New(agent, DefaultServerConfig())
+	sess := agent.Sessions().Ensure("pending-trace")
+	sess.AddProviderMessage(provider.Message{Role: "user", Content: "task"})
+	sess.AddProviderMessage(provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{
+		{ID: "done", Name: "file_read"}, {ID: "pending", Name: "terminal"},
+	}})
+	sess.AddProviderMessage(provider.Message{Role: "tool", ToolCallID: "done", Content: "ok"})
+	sess.AddProviderMessage(provider.Message{Role: "user", Content: "follow-up"})
+	sess.AddProviderMessage(provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "later", Name: "file_read"}}})
+	writer := httptest.NewRecorder()
+	server.handleSessionByID(writer, httptest.NewRequest(http.MethodGet, "/api/v1/sessions/pending-trace/tools?turn=first", nil))
+	var response struct {
+		Turn         string             `json:"turn"`
+		TotalCalls   int                `json:"total_calls"`
+		PendingCalls int                `json:"pending_calls"`
+		Successes    int                `json:"successes"`
+		Failures     int                `json:"failures"`
+		SuccessRate  float64            `json:"success_rate"`
+		Tools        []tool.TraceRecord `json:"tools"`
+	}
+	if writer.Code != http.StatusOK || json.Unmarshal(writer.Body.Bytes(), &response) != nil {
+		t.Fatalf("response = %d %s", writer.Code, writer.Body.String())
+	}
+	if response.Turn != "first" || response.TotalCalls != 2 || response.PendingCalls != 1 ||
+		response.Successes != 1 || response.Failures != 0 || response.SuccessRate != 1 {
+		t.Fatalf("response = %#v", response)
+	}
+	if response.Tools[1].ID != "pending" || response.Tools[1].Status != "pending" {
+		t.Fatalf("tools = %#v", response.Tools)
+	}
+}
+
 func TestSessionToolTraceEndpointPaginatesAndBoundsPayloads(t *testing.T) {
 	agent := createTestAgent(t)
 	server := New(agent, DefaultServerConfig())
@@ -107,5 +186,19 @@ func TestSessionToolTraceEndpointPaginatesAndBoundsPayloads(t *testing.T) {
 	}
 	if len([]rune(response.Tools[0].Arguments)) > traceArgumentMaxChars || len([]rune(response.Tools[0].Result)) > traceResultMaxChars {
 		t.Fatalf("trace fields were not bounded: args=%d result=%d", len([]rune(response.Tools[0].Arguments)), len([]rune(response.Tools[0].Result)))
+	}
+}
+
+func TestSessionToolTraceRefusesMissingOriginalTurn(t *testing.T) {
+	agent := createTestAgent(t)
+	server := New(agent, DefaultServerConfig())
+	sess := agent.Sessions().Ensure("compacted-delegate")
+	sess.AddProviderMessage(session.CompactBoundaryMessage(session.CompactMetadata{Summary: "original turn removed"}))
+	sess.AddProviderMessage(provider.Message{Role: "user", Content: "follow-up"})
+	sess.AddProviderMessage(provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "followup", Name: "terminal"}}})
+	writer := httptest.NewRecorder()
+	server.handleSessionByID(writer, httptest.NewRequest(http.MethodGet, "/api/v1/sessions/compacted-delegate/tools?turn=first", nil))
+	if writer.Code != http.StatusGone {
+		t.Fatalf("missing original turn must not expose followup tools: %d %s", writer.Code, writer.Body.String())
 	}
 }
