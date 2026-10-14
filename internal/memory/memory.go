@@ -1310,6 +1310,9 @@ type memoryNoteFrontmatter struct {
 	BlockID       string        `yaml:"block_id,omitempty"`
 }
 
+// wikiLinkPattern is the note-name view of a wikilink. Heading, block, and
+// display text are parsed by parseWikiLinks; this pattern stays for callers
+// that only need the note target.
 var wikiLinkPattern = regexp.MustCompile(`!?\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]`)
 var blockIDPattern = regexp.MustCompile(`(?m)(?:\s+\^[A-Za-z0-9_-]+|\n\^[A-Za-z0-9_-]+\s*)$`)
 
@@ -1791,15 +1794,10 @@ func parseTier(raw string) Tier {
 }
 
 func extractWikiLinks(text string) []string {
-	matches := wikiLinkPattern.FindAllStringSubmatch(text, -1)
-	links := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		link := strings.TrimSpace(m[1])
-		if link != "" {
-			links = append(links, link)
+	links := make([]string, 0)
+	for _, link := range parseWikiLinks(text) {
+		if link.Target != "" {
+			links = append(links, link.Target)
 		}
 	}
 	return normalizeLinks(links)

@@ -23,11 +23,23 @@ type GraphTopologyNode struct {
 	Resolved bool `json:"resolved"`
 }
 
-// GraphTopologyEdge is a wikilink from one note to another.
+// GraphLinkRef is one written wikilink on a note-to-note edge. Heading, block,
+// display text, and embed do not create extra edges.
+type GraphLinkRef struct {
+	Heading string `json:"heading,omitempty"`
+	Block   string `json:"block,omitempty"`
+	Display string `json:"display,omitempty"`
+	Embed   bool   `json:"embed,omitempty"`
+}
+
+// GraphTopologyEdge is a wikilink from one note to another. Refs records how
+// that link was written. Old clients can ignore it; the edge is still one
+// note-to-note link.
 type GraphTopologyEdge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Weight int    `json:"weight"`
+	Source string         `json:"source"`
+	Target string         `json:"target"`
+	Weight int            `json:"weight"`
+	Refs   []GraphLinkRef `json:"refs,omitempty"`
 }
 
 // GraphTopology is a read-only snapshot of the wikilink graph.
@@ -94,30 +106,25 @@ func (s *Store) GraphTopology(opts GraphTopologyOptions) GraphTopology {
 	}
 
 	weights := make(map[string]int)
+	refs := make(map[string][]GraphLinkRef)
 	order := make([]string, 0, len(s.entries))
 	unresolved := 0
 
 	for id, entry := range s.entries {
-		for _, link := range normalizeLinks(append(append([]string(nil), entry.Links...), extractWikiLinks(entry.Content)...)) {
-			targetID := ""
-			for _, key := range graphKeysForLink(link) {
-				if resolved, ok := nameToID[key]; ok {
-					targetID = resolved
-					break
-				}
+		for _, written := range noteWikiLinks(entry) {
+			targetID, unresolvedTitle, ok := resolveGraphLink(written.Target, nameToID)
+			if !ok {
+				continue
 			}
 			if targetID == "" {
 				// Surface the dangling link as its own node instead of
-				// dropping the edge and hiding the gap.
-				key := graphKey(link)
-				if key == "" {
-					continue
-				}
-				targetID = "unresolved:" + key
+				// dropping the edge and hiding the gap. Heading and block
+				// stay on the edge; they are not extra nodes.
+				targetID = "unresolved:" + graphKey(written.Target)
 				if _, seen := nodes[targetID]; !seen {
 					nodes[targetID] = &GraphTopologyNode{
 						ID:       targetID,
-						Title:    strings.TrimSpace(link),
+						Title:    unresolvedTitle,
 						Resolved: false,
 					}
 					unresolved++
@@ -131,6 +138,7 @@ func (s *Store) GraphTopology(opts GraphTopologyOptions) GraphTopology {
 				order = append(order, edgeKey)
 			}
 			weights[edgeKey]++
+			refs[edgeKey] = append(refs[edgeKey], written.Ref)
 		}
 	}
 
@@ -182,7 +190,12 @@ func (s *Store) GraphTopology(opts GraphTopologyOptions) GraphTopology {
 		if _, ok := visible[parts[1]]; !ok {
 			continue
 		}
-		edges = append(edges, GraphTopologyEdge{Source: parts[0], Target: parts[1], Weight: weights[edgeKey]})
+		edges = append(edges, GraphTopologyEdge{
+			Source: parts[0],
+			Target: parts[1],
+			Weight: weights[edgeKey],
+			Refs:   graphLinkRefs(refs[edgeKey]),
+		})
 	}
 
 	categorySet := make(map[string]struct{})
@@ -207,6 +220,80 @@ func (s *Store) GraphTopology(opts GraphTopologyOptions) GraphTopology {
 		Truncated:     truncated,
 		Categories:    categories,
 	}
+}
+
+// writtenWikiLink is a wikilink reduced to the note name the graph resolves,
+// plus the heading, block, display text, and embed that stay on that edge.
+type writtenWikiLink struct {
+	Target string
+	Ref    GraphLinkRef
+}
+
+func noteWikiLinks(entry *Entry) []writtenWikiLink {
+	if entry == nil {
+		return nil
+	}
+	out := make([]writtenWikiLink, 0, len(entry.Links))
+	seen := make(map[string]bool)
+	add := func(target string, ref GraphLinkRef) {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			return
+		}
+		key := strings.ToLower(target) + "\x00" + strings.ToLower(ref.Heading) + "\x00" + strings.ToLower(ref.Block) + "\x00" + ref.Display + "\x00"
+		if ref.Embed {
+			key += "embed"
+		}
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, writtenWikiLink{Target: target, Ref: ref})
+	}
+	for _, link := range entry.Links {
+		add(link, GraphLinkRef{})
+	}
+	for _, link := range parseWikiLinks(entry.Content) {
+		add(link.Target, GraphLinkRef{
+			Heading: link.Heading,
+			Block:   link.Block,
+			Display: link.Display,
+			Embed:   link.Embed,
+		})
+	}
+	return out
+}
+
+// resolveGraphLink returns the note ID a link names. An unresolved note name
+// returns ok with an empty ID so the caller can keep the dangling node.
+func resolveGraphLink(link string, nameToID map[string]string) (id, title string, ok bool) {
+	link = strings.TrimSpace(link)
+	if link == "" {
+		return "", "", false
+	}
+	for _, key := range graphKeysForLink(link) {
+		if resolved, found := nameToID[key]; found {
+			return resolved, "", true
+		}
+	}
+	if graphKey(link) == "" {
+		return "", "", false
+	}
+	return "", link, true
+}
+
+func graphLinkRefs(refs []GraphLinkRef) []GraphLinkRef {
+	kept := make([]GraphLinkRef, 0, len(refs))
+	for _, ref := range refs {
+		if ref.Heading == "" && ref.Block == "" && ref.Display == "" && !ref.Embed {
+			continue
+		}
+		kept = append(kept, ref)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 // entryDisplayTitle prefers the note filename, which is what wikilinks point

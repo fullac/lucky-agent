@@ -163,6 +163,88 @@ func TestGraphTopologyLimitKeepsTheMostConnectedAndPrunesDanglingEdges(t *testin
 	}
 }
 
+func TestGraphTopologyKeepsHeadingBlockDisplayAndEmbedOnOneEdge(t *testing.T) {
+	store := seedVault(t)
+	if err := store.SaveWithMetadata("登录笔记", "concept", TierLong, 0.5, nil, nil, []string{"登录"}); err != nil {
+		t.Fatalf("save login: %v", err)
+	}
+	body := "见 [[mem_9999999999]]、[[登录#失败原因]]、[[登录#^block-9]]、[[登录|登录流程]]。\n嵌入 ![[登录]]。"
+	if err := store.SaveWithMetadata(body, "fact", TierLong, 0.7, nil, nil, nil); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+
+	topology := store.GraphTopology(GraphTopologyOptions{IncludeIsolated: true})
+	loginEdges := edgesToTitle(t, topology, "登录笔记")
+	if len(loginEdges) != 1 {
+		t.Fatalf("edges to 登录 = %d, want one note edge: %+v", len(loginEdges), loginEdges)
+	}
+	edge := loginEdges[0]
+	if len(edge.Refs) != 4 {
+		t.Fatalf("refs = %d, want heading, block, display, embed: %+v", len(edge.Refs), edge.Refs)
+	}
+	seen := map[string]bool{}
+	for _, ref := range edge.Refs {
+		switch {
+		case ref.Heading == "失败原因" && ref.Block == "" && ref.Display == "" && !ref.Embed:
+			seen["heading"] = true
+		case ref.Block == "block-9" && ref.Heading == "" && !ref.Embed:
+			seen["block"] = true
+		case ref.Display == "登录流程" && !ref.Embed:
+			seen["display"] = true
+		case ref.Embed && ref.Heading == "" && ref.Block == "" && ref.Display == "":
+			seen["embed"] = true
+		}
+	}
+	for _, kind := range []string{"heading", "block", "display", "embed"} {
+		if !seen[kind] {
+			t.Fatalf("missing %s ref: %+v", kind, edge.Refs)
+		}
+	}
+
+	byTitle := topologyByTitle(topology)
+	missing, ok := byTitle["mem_9999999999"]
+	if !ok || missing.Resolved {
+		t.Fatalf("missing memory link = %+v, present %v", missing, ok)
+	}
+	if topology.Unresolved != 1 {
+		t.Fatalf("unresolved = %d, want the missing memory id only", topology.Unresolved)
+	}
+}
+
+func TestGraphTopologyHeadingOnSelfLinkDoesNotMakeAnEdge(t *testing.T) {
+	store := seedVault(t)
+	if err := store.SaveWithMetadata("自己 [[Selfie#标题]]", "concept", TierLong, 0.5, nil, nil, []string{"Selfie"}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	topology := store.GraphTopology(GraphTopologyOptions{IncludeIsolated: true})
+	for _, edge := range topology.Edges {
+		if edge.Source == edge.Target {
+			t.Fatalf("self-link with a heading became an edge: %+v", edge)
+		}
+	}
+}
+
+func edgesToTitle(t *testing.T, topology GraphTopology, title string) []GraphTopologyEdge {
+	t.Helper()
+	var targetID string
+	for _, node := range topology.Nodes {
+		if node.Title == title && node.Resolved {
+			targetID = node.ID
+			break
+		}
+	}
+	if targetID == "" {
+		t.Fatalf("no resolved node titled %q: %+v", title, topology.Nodes)
+	}
+	var edges []GraphTopologyEdge
+	for _, edge := range topology.Edges {
+		if edge.Target == targetID {
+			edges = append(edges, edge)
+		}
+	}
+	return edges
+}
+
 func TestGraphTopologyIgnoresSelfLinks(t *testing.T) {
 	store := seedVault(t)
 	if err := store.SaveWithMetadata("Self referential [[Selfie]] note", "concept", TierLong, 0.5, nil, nil, []string{"Selfie"}); err != nil {
