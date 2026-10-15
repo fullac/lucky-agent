@@ -34,6 +34,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/soul"
 	taskstore "github.com/yurika0211/luckyagent/internal/task"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -47,9 +48,22 @@ type chatRuntime interface {
 	ProgressFeedbackWithPrompt(ctx context.Context, userInput string, round int, observations []string, presentationPrompt string) (string, error)
 }
 
+// turnChatRuntime is the narrow, provider-independent chat boundary. The
+// legacy methods remain in chatRuntime while adapters are migrated one path at
+// a time, so existing gateway test doubles and command handlers keep working.
+type legacyTurnChatRuntime interface {
+	ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error)
+	ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error)
+}
+
+// turnEventChatRuntime is the neutral stream variant. It is optional during
+// migration so existing command test doubles can keep implementing the legacy
+// stream method while production adapters move to turn.ChatEvent.
+type turnEventChatRuntime = turn.ChatRuntime
+
 type stateRuntime interface {
 	Sessions() *session.Manager
-	Config() agentConfigProvider
+	Config() AgentConfigProvider
 	SwitchModel(modelID string) error
 	Soul() *soul.Soul
 	Tools() *tool.Registry
@@ -66,7 +80,7 @@ type stateRuntime interface {
 	Catalog() *provider.ModelCatalog
 	RAG() *rag.RAGManager
 	ConnectMCPServer(name, url, apiKey string)
-	ContextWindowConfig() contextWindowSnapshot
+	ContextWindowConfig() ContextWindowSnapshot
 	ContextCacheStats() map[string]any
 	EmbedderRegistry() *embedder.Registry
 }
@@ -82,6 +96,33 @@ type unifiedModelRuntime interface {
 type agentProvider interface {
 	chatRuntime
 	stateRuntime
+}
+
+// Runtime is the gateway-facing contract used to build a Telegram handler.
+// The legacy NewHandler constructor still accepts *agent.Agent for source
+// compatibility; new assembly code can provide this contract directly via
+// NewHandlerWithRuntime.
+type Runtime = agentProvider
+
+func chatWithSessionTurn(ctx context.Context, runtime chatRuntime, sessionID string, input agent.UserTurnInput) (string, error) {
+	if narrow, ok := runtime.(turnEventChatRuntime); ok {
+		return narrow.ChatWithSessionTurn(ctx, sessionID, agent.TurnInput(input))
+	}
+	return runtime.ChatWithSessionInput(ctx, sessionID, input)
+}
+
+func chatWithSessionStreamTurn(ctx context.Context, runtime chatRuntime, sessionID string, input agent.UserTurnInput) (<-chan agent.ChatEvent, error) {
+	if neutral, ok := runtime.(turnEventChatRuntime); ok {
+		events, err := neutral.ChatWithSessionStreamTurnEvents(ctx, sessionID, agent.TurnInput(input))
+		if err != nil {
+			return nil, err
+		}
+		return agent.FromTurnChatEventStream(ctx, events), nil
+	}
+	if narrow, ok := runtime.(legacyTurnChatRuntime); ok {
+		return narrow.ChatWithSessionStreamTurn(ctx, sessionID, agent.TurnInput(input))
+	}
+	return runtime.ChatWithSessionStreamInput(ctx, sessionID, input)
 }
 
 type sandboxRuntime interface {
@@ -111,19 +152,26 @@ type restartNoticeSender interface {
 	SendControl(context.Context, string, string) error
 }
 
-// agentConfigProvider 定义 Handler 需要从 config 获得的能力接口。
-type agentConfigProvider interface {
+// AgentConfigProvider defines the configuration view consumed by the
+// Telegram handler. It is exported so an embedding application can provide a
+// Runtime implementation without depending on an unexported return type.
+type AgentConfigProvider interface {
 	Get() agentConfigSnapshot
 }
 
+// agentConfigProvider is retained as an in-package compatibility alias.
+type agentConfigProvider = AgentConfigProvider
+
 type mutableAgentConfigProvider interface {
-	agentConfigProvider
+	AgentConfigProvider
 	Set(key, value string) error
 	Save() error
 }
 
 // agentConfigSnapshot 是 config 快照的最小子集。
-type agentConfigSnapshot struct {
+// AgentConfigSnapshot is the configuration subset exposed to the Telegram
+// command surface.
+type AgentConfigSnapshot struct {
 	HomeDir                   string
 	ConfigFile                string
 	Model                     string
@@ -161,7 +209,11 @@ type agentConfigSnapshot struct {
 	ModelRouterEnabled        bool
 }
 
-type contextWindowSnapshot struct {
+// agentConfigSnapshot is retained as an in-package compatibility alias.
+type agentConfigSnapshot = AgentConfigSnapshot
+
+// ContextWindowSnapshot is the reduced context-window view used by commands.
+type ContextWindowSnapshot struct {
 	MaxTokens            int
 	ReservedTokens       int
 	Strategy             string
@@ -170,6 +222,9 @@ type contextWindowSnapshot struct {
 	MemoryBudget         int
 	SummarizeThreshold   float64
 }
+
+// contextWindowSnapshot is retained as an in-package compatibility alias.
+type contextWindowSnapshot = ContextWindowSnapshot
 
 // agentProviderAdapter 将 *agent.Agent 适配为 agentProvider 接口。
 type agentProviderAdapter struct {
@@ -253,12 +308,24 @@ func (a agentProviderAdapter) ChatWithSessionInput(ctx context.Context, sessionI
 	return a.inner.ChatWithSessionInput(ctx, sessionID, input)
 }
 
+func (a agentProviderAdapter) ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error) {
+	return a.inner.ChatWithSessionTurn(ctx, sessionID, input)
+}
+
 func (a agentProviderAdapter) ChatWithSessionStream(ctx context.Context, sessionID, userInput string) (<-chan agent.ChatEvent, error) {
 	return a.inner.ChatWithSessionStream(ctx, sessionID, userInput)
 }
 
 func (a agentProviderAdapter) ChatWithSessionStreamInput(ctx context.Context, sessionID string, input agent.UserTurnInput) (<-chan agent.ChatEvent, error) {
 	return a.inner.ChatWithSessionStreamInput(ctx, sessionID, input)
+}
+
+func (a agentProviderAdapter) ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan agent.ChatEvent, error) {
+	return a.inner.ChatWithSessionStreamTurn(ctx, sessionID, input)
+}
+
+func (a agentProviderAdapter) ChatWithSessionStreamTurnEvents(ctx context.Context, sessionID string, input turn.Input) (<-chan turn.ChatEvent, error) {
+	return a.inner.ChatWithSessionStreamTurnEvents(ctx, sessionID, input)
 }
 
 func (a agentProviderAdapter) ProgressFeedback(ctx context.Context, userInput string, round int, observations []string) (string, error) {
@@ -340,6 +407,10 @@ func (a agentProviderAdapter) EmbedderRegistry() *embedder.Registry {
 
 func (a agentProviderAdapter) ResolveExternalReplyAnchor(platform, chatID, messageID string) (string, bool) {
 	return a.inner.ResolveExternalReplyAnchor(platform, chatID, messageID)
+}
+
+func (a agentProviderAdapter) RecordRecentChatTarget(platform, chatID, replyToMsgID string) {
+	a.inner.RecordRecentChatTarget(platform, chatID, replyToMsgID)
 }
 
 // agentConfigWrapper 将 *config.Manager 适配为 agentConfigProvider 接口。
@@ -511,15 +582,35 @@ type chatSessionsData struct {
 
 // NewHandler creates a new Telegram command handler.
 func NewHandler(adapter *Adapter, a *agent.Agent) *Handler {
-	var runtime agentProviderAdapter
+	return newHandler(adapter, NewRuntime(a), a)
+}
+
+// NewRuntime adapts the legacy Agent to the gateway runtime contract. Keep
+// this conversion at the assembly boundary while handlers consume Runtime.
+func NewRuntime(a *agent.Agent) Runtime {
+	if a == nil {
+		return nil
+	}
+	return agentProviderAdapter{a}
+}
+
+// NewHandlerWithRuntime creates a Telegram handler from the gateway runtime
+// contract. It lets embedding applications provide a focused runtime without
+// exposing the concrete agent.Agent to gateway assembly code.
+func NewHandlerWithRuntime(adapter *Adapter, runtime Runtime) *Handler {
+	var recorder activeRouteRecorder
+	if candidate, ok := runtime.(activeRouteRecorder); ok {
+		recorder = candidate
+	}
+	return newHandler(adapter, runtime, recorder)
+}
+
+func newHandler(adapter *Adapter, runtime Runtime, recorder activeRouteRecorder) *Handler {
 	var chat chatRuntime
 	var state stateRuntime
-	var recorder activeRouteRecorder
-	if a != nil {
-		runtime = agentProviderAdapter{a}
+	if runtime != nil {
 		chat = runtime
 		state = runtime
-		recorder = a
 	}
 	memeDir, memeProbability, memeCooldown := resolveRandomMemeConfig()
 	maxConcurrentChatWorkers := resolveMaxConcurrentChatWorkers(state)
@@ -1941,7 +2032,7 @@ func (h *Handler) handleLucky(ctx context.Context, msg *gateway.Message) error {
 		if err != nil {
 			return h.sendLuckyNotice(ctx, msg, fmt.Sprintf("Lucky 提交失败：%s", err.Error()))
 		}
-		input := batch.UserTurnInput()
+		input := agent.UserTurnInputFromTurn(batch.UserTurnInput())
 		finalMsg := *msg
 		finalMsg.IsCommand = false
 		finalMsg.Command = ""
@@ -2098,6 +2189,13 @@ func (h *Handler) sendComputerObservation(ctx context.Context, msg *gateway.Mess
 	if err := h.adapter.SendPhoto(ctx, msg.Chat.ID, replyTo, path, caption); err != nil {
 		h.sendProgressMessage(msg, "⚠️ 截图发送失败："+utils.TruncateKeepLength(err.Error(), 160))
 	}
+}
+
+func (h *Handler) sendTurnComputerObservation(ctx context.Context, msg *gateway.Message, obs *turn.ObservationEvent) {
+	if obs == nil {
+		return
+	}
+	h.sendComputerObservation(ctx, msg, agent.FromTurnChatEvent(turn.ChatEvent{Observation: obs}).Observation)
 }
 
 func (h *Handler) sendProgressMessageHTML(msg *gateway.Message, text string) {
@@ -2274,7 +2372,7 @@ func (h *Handler) flushRoundProgressWithEmitter(ctx context.Context, msg *gatewa
 	appendProgressHistory(progressHistory, progress)
 }
 
-func formatGatewayApprovalPrompt(evt agent.ChatEvent) string {
+func formatGatewayApprovalPrompt(evt turn.ChatEvent) string {
 	kind := "approval"
 	requestID := ""
 	prompt := strings.TrimSpace(evt.Content)
@@ -2596,12 +2694,22 @@ func (h *Handler) sendFinalAssistantResponse(msg *gateway.Message, response stri
 	}
 }
 
-func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan agent.ChatEvent, error) {
+func (h *Handler) openTurnChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan turn.ChatEvent, error) {
 	chat := h.chatService()
 	if chat == nil {
 		return nil, fmt.Errorf("chat runtime not available")
 	}
-	events, err := chat.ChatWithSessionStreamInput(ctx, sessionID, input)
+	var events <-chan turn.ChatEvent
+	var err error
+	if neutral, ok := chat.(turnEventChatRuntime); ok {
+		events, err = neutral.ChatWithSessionStreamTurnEvents(ctx, sessionID, agent.TurnInput(input))
+	} else {
+		legacyEvents, legacyErr := chatWithSessionStreamTurn(ctx, chat, sessionID, input)
+		err = legacyErr
+		if legacyErr == nil {
+			events = agent.ToTurnChatEventStream(ctx, legacyEvents)
+		}
+	}
 	if err == nil {
 		return events, nil
 	}
@@ -2611,14 +2719,21 @@ func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input 
 
 	h.resetSession(chatID)
 	retrySessionID := h.getSessionID(chatID)
-	return chat.ChatWithSessionStreamInput(ctx, retrySessionID, input)
+	if neutral, ok := chat.(turnEventChatRuntime); ok {
+		return neutral.ChatWithSessionStreamTurnEvents(ctx, retrySessionID, agent.TurnInput(input))
+	}
+	legacyEvents, retryErr := chatWithSessionStreamTurn(ctx, chat, retrySessionID, input)
+	if retryErr != nil {
+		return nil, retryErr
+	}
+	return agent.ToTurnChatEventStream(ctx, legacyEvents), nil
 }
 
-func runChatEventLoop(
+func runTurnChatEventLoop(
 	chatCtx context.Context,
-	events <-chan agent.ChatEvent,
+	events <-chan turn.ChatEvent,
 	onTimeout func(err error) (sentResult bool),
-	onEvent func(evt agent.ChatEvent) (stop bool, sentResult bool),
+	onEvent func(evt turn.ChatEvent) (stop bool, sentResult bool),
 ) (sentResult bool) {
 	for {
 		select {
@@ -2659,7 +2774,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 	chatCtx, chatCancel := context.WithTimeout(ctx, h.effectiveChatStreamTimeout())
 	defer chatCancel()
 
-	events, err := h.openChatEventStream(chatCtx, telegramConversationScope(msg), input, sessionID)
+	events, err := h.openTurnChatEventStream(chatCtx, telegramConversationScope(msg), input, sessionID)
 	if err != nil {
 		switch {
 		case isTaskTimeoutError(err):
@@ -2686,7 +2801,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 	var progressHistory []string
 	summaryMode := h.effectiveProgressSummaryWithLLM()
 
-	sentResult := runChatEventLoop(
+	sentResult := runTurnChatEventLoop(
 		chatCtx,
 		events,
 		func(err error) bool {
@@ -2697,12 +2812,12 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 			}
 			return true
 		},
-		func(evt agent.ChatEvent) (bool, bool) {
+		func(evt turn.ChatEvent) (bool, bool) {
 			switch evt.Type {
-			case agent.ChatEventObservation:
-				h.sendComputerObservation(chatCtx, msg, evt.Observation)
+			case turn.ChatEventObservation:
+				h.sendTurnComputerObservation(chatCtx, msg, evt.Observation)
 
-			case agent.ChatEventThinking:
+			case turn.ChatEventThinking:
 				if summaryMode {
 					if nextRound := extractRoundNumber(evt.Content); nextRound > currentRound {
 						if progress := h.generateRoundProgressFeedback(chatCtx, msg, routingText, currentRound, roundObservations, progressHistory, lastProgress); progress != "" {
@@ -2724,10 +2839,10 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 					}
 				}
 
-			case agent.ChatEventApprovalRequired:
+			case turn.ChatEventApprovalRequired:
 				emitProgress(formatGatewayApprovalPrompt(evt))
 
-			case agent.ChatEventToolCall:
+			case turn.ChatEventToolCall:
 				toolCallCount++
 				toolTraceSteps = append(toolTraceSteps, telegramToolTraceStep{
 					Name: evt.Name,
@@ -2739,7 +2854,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 					}
 				}
 
-			case agent.ChatEventToolResult:
+			case turn.ChatEventToolResult:
 				if evt.Name == telegramMemoryTraceEventName {
 					if h.effectiveMemoryTrace() {
 						if trace, ok := parseTelegramMemoryTracePayload(evt.Result); ok {
@@ -2766,10 +2881,10 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 					}
 				}
 
-			case agent.ChatEventContent:
+			case turn.ChatEventContent:
 				finalContent.WriteString(evt.Content)
 
-			case agent.ChatEventDone:
+			case turn.ChatEventDone:
 				if summaryMode {
 					h.flushRoundProgressWithEmitter(chatCtx, msg, routingText, currentRound, roundObservations, &progressHistory, &lastProgress, emitProgressForMsg)
 					roundObservations = nil
@@ -2801,7 +2916,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 				h.sendFinalAssistantResponse(msg, wrapFinalConclusion(finalOutput))
 				return true, true
 
-			case agent.ChatEventError:
+			case turn.ChatEventError:
 				fmt.Printf("[telegram] chat event error: chatID=%s sessionID=%s err=%v\n", msg.Chat.ID, sessionID, evt.Err)
 				if isTaskTimeoutError(evt.Err) {
 					emitProgress(h.telegramTimeoutFeedback(evt.Err))
@@ -2842,7 +2957,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 	chatCtx, chatCancel := context.WithTimeout(ctx, h.effectiveChatStreamTimeout())
 	defer chatCancel()
 
-	events, err := h.openChatEventStream(chatCtx, telegramConversationScope(msg), input, sessionID)
+	events, err := h.openTurnChatEventStream(chatCtx, telegramConversationScope(msg), input, sessionID)
 	if err != nil {
 		if isTaskTimeoutError(err) {
 			sender.SetResult(h.telegramTimeoutFeedback(err))
@@ -2874,7 +2989,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 	var roundObservations []string
 	var progressHistory []string
 
-	sentResult := runChatEventLoop(
+	sentResult := runTurnChatEventLoop(
 		chatCtx,
 		events,
 		func(err error) bool {
@@ -2886,12 +3001,12 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 			sender.Finish()
 			return true
 		},
-		func(evt agent.ChatEvent) (bool, bool) {
+		func(evt turn.ChatEvent) (bool, bool) {
 			switch evt.Type {
-			case agent.ChatEventObservation:
-				h.sendComputerObservation(chatCtx, msg, evt.Observation)
+			case turn.ChatEventObservation:
+				h.sendTurnComputerObservation(chatCtx, msg, evt.Observation)
 
-			case agent.ChatEventThinking:
+			case turn.ChatEventThinking:
 				if summaryMode {
 					if nextRound := extractRoundNumber(evt.Content); nextRound > currentRound {
 						if progress := h.generateRoundProgressFeedback(chatCtx, msg, routingText, currentRound, roundObservations, progressHistory, lastProgress); progress != "" {
@@ -2916,10 +3031,10 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 					sender.SetThinking(evt.Content)
 				}
 
-			case agent.ChatEventApprovalRequired:
+			case turn.ChatEventApprovalRequired:
 				emitProgress(formatGatewayApprovalPrompt(evt))
 
-			case agent.ChatEventToolCall:
+			case turn.ChatEventToolCall:
 				toolCallCount++
 				toolTraceSteps = append(toolTraceSteps, telegramToolTraceStep{
 					Name: evt.Name,
@@ -2944,7 +3059,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 					sender.SetToolCall(evt.Name, evt.Args)
 				}
 
-			case agent.ChatEventToolResult:
+			case turn.ChatEventToolResult:
 				if evt.Name == telegramMemoryTraceEventName {
 					if h.effectiveMemoryTrace() {
 						if trace, ok := parseTelegramMemoryTracePayload(evt.Result); ok {
@@ -2975,14 +3090,14 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 					sender.SetThinking(fmt.Sprintf("Continuing... (%d tools used)", toolCallCount))
 				}
 
-			case agent.ChatEventContent:
+			case turn.ChatEventContent:
 				// 内容流式追加
 				finalContent.WriteString(evt.Content)
 				if !narrativeMode {
 					sender.Append(evt.Content)
 				}
 
-			case agent.ChatEventDone:
+			case turn.ChatEventDone:
 				if summaryMode {
 					h.flushRoundProgress(chatCtx, msg, routingText, currentRound, roundObservations, &progressHistory, &lastProgress)
 					roundObservations = nil
@@ -3038,7 +3153,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 				sender.Finish()
 				return true, true
 
-			case agent.ChatEventError:
+			case turn.ChatEventError:
 				fmt.Printf("[telegram] chat event error: chatID=%s sessionID=%s err=%v\n", msg.Chat.ID, sessionID, evt.Err)
 				if isTaskTimeoutError(evt.Err) {
 					sender.SetResult(h.telegramTimeoutFeedback(evt.Err))
@@ -3128,14 +3243,14 @@ func (h *Handler) handleChatSync(ctx context.Context, msg *gateway.Message, inpu
 	if chat == nil {
 		return h.adapter.Send(ctx, msg.Chat.ID, "❌ Chat runtime unavailable")
 	}
-	response, err := chat.ChatWithSessionInput(ctx, sessionID, input)
+	response, err := chatWithSessionTurn(ctx, chat, sessionID, input)
 	if err != nil {
 		// If session is broken, try with a fresh session
 		if strings.Contains(err.Error(), "session not found") {
 			scope := telegramConversationScope(msg)
 			h.resetSession(scope)
 			sessionID = h.getSessionID(scope)
-			response, err = chat.ChatWithSessionInput(ctx, sessionID, input)
+			response, err = chatWithSessionTurn(ctx, chat, sessionID, input)
 		}
 		if err != nil {
 			if isTaskTimeoutError(err) {
@@ -4202,7 +4317,7 @@ func (h *Handler) handleWatch(ctx context.Context, msg *gateway.Message) error {
 	}
 }
 
-	func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
+func (h *Handler) handleMsgGateway(ctx context.Context, msg *gateway.Message) error {
 	parts := strings.Fields(strings.TrimSpace(msg.Args))
 	subcmd := "status"
 	if len(parts) > 0 {

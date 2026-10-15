@@ -77,8 +77,8 @@ func (a *Agent) InspectContext(ctx context.Context, req ContextInspectRequest) C
 func (p *contextPlanner) inspectResult(sess *session.Session, messages []provider.Message, includeMessages bool) ContextInspectResult {
 	report := p.buildContextReport(messages)
 	available := 0
-	if p.agent != nil && p.agent.contextWin != nil {
-		cfg := p.agent.contextWin.Config()
+	if p.agent != nil && p.agent.ContextWindow() != nil {
+		cfg := p.agent.ContextWindow().Config()
 		available = cfg.MaxTokens - cfg.ReservedTokens
 	}
 	if available < 0 {

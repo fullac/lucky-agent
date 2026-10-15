@@ -15,6 +15,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/session"
+	"github.com/yurika0211/luckyagent/internal/turn"
 )
 
 func (a *Agent) useForeground(sess *session.Session, cfg LoopConfig) bool {
@@ -225,13 +226,13 @@ func (a *Agent) runForeground(ctx context.Context, sess *session.Session, input 
 			task, _ = q.Get(task.ID)
 			return last, foregroundInterrupted(task, errors.New("执行预算已用完"))
 		}
-		cfg.Execution = autonomy.NewExecution(q, claimed)
+		cfg.Execution = autonomy.NewTurnExecution(autonomy.NewExecution(q, claimed))
 		if err := cfg.Execution.BindSession(sess.ID); err != nil {
 			return last, err
 		}
 		emitForeground(cfg, ChatEvent{Type: ChatEventThinking, TaskID: task.ID, Content: fmt.Sprintf("前台任务 %s，执行第 %d 段。", task.ID, claimed.Attempts-claimed.BudgetStartAttempt)})
 		last, err = a.runDurableLoop(runCtx, sess, input, cfg, snapshot)
-		outcome := &autonomy.WorkerResult{Error: err}
+		outcome := &turn.DurableResult{Error: err}
 		if last != nil {
 			outcome.Output, outcome.Verified, outcome.Verification = last.Response, last.Verified, last.Verification
 		}

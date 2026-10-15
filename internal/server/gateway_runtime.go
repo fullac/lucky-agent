@@ -360,7 +360,7 @@ func (s *Server) buildGateway(name string, req gatewayStartRequest) (gateway.Gat
 			AdminIDs:            preferStrings(req.AdminIDs, mg.Telegram.AdminIDs),
 			DisableAutoReaction: mg.Telegram.DisableAutoReaction,
 		})
-		h := telegram.NewHandler(adapter, s.agent)
+		h := telegram.NewHandlerWithRuntime(adapter, telegram.NewRuntime(s.agent))
 		if homeDir != "" {
 			h.SetDataDir(filepath.Join(homeDir, "data", "telegram"))
 		}
@@ -553,7 +553,7 @@ func handlePlainLuckyCommand(ctx context.Context, platform string, gw gateway.Ga
 		if err != nil {
 			return gw.SendWithReply(ctx, msg.Chat.ID, msg.ID, "Lucky 提交失败："+err.Error())
 		}
-		return sendPlainGatewayInput(ctx, platform, runtime, gw, msg, batch.UserTurnInput())
+		return sendPlainGatewayInput(ctx, platform, runtime, gw, msg, agent.UserTurnInputFromTurn(batch.UserTurnInput()))
 	case luckycollector.LuckyActionCancel:
 		status, ok := lucky.Cancel(key)
 		if !ok {

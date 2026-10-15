@@ -776,11 +776,24 @@ func (m *Manager) validateCWD(cwd string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if clean == allowed || strings.HasPrefix(clean, strings.TrimRight(allowed, string('/'))+string('/')) {
+		if cwdInside(allowed, clean) {
 			return clean, nil
 		}
 	}
 	return "", fmt.Errorf("cwd %q is outside codex.cwd_allowlist", clean)
+}
+
+// cwdInside reports whether path is allowed or a descendant of allowed.
+// Separator-aware, so /tmp/foo does not admit /tmp/foobar.
+func cwdInside(allowed, path string) bool {
+	rel, err := filepath.Rel(allowed, path)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func filepathAbs(path string) (string, error) {

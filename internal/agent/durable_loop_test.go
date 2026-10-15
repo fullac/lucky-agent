@@ -17,6 +17,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 )
 
 type durableScriptProvider struct {
@@ -61,7 +62,8 @@ func durableHarness(t *testing.T, cp durableCheckpoint) (*Agent, *session.Sessio
 	task := q.Add("perform requested operation", "", autonomy.PriorityNormal, nil)
 	task = q.Pull("worker")
 	exec := autonomy.NewExecution(q, task)
-	if err := exec.BindSession(sess.ID); err != nil {
+	turnExec := autonomy.NewTurnExecution(exec)
+	if err := turnExec.BindSession(sess.ID); err != nil {
 		t.Fatal(err)
 	}
 	cp.Version = 1
@@ -69,11 +71,11 @@ func durableHarness(t *testing.T, cp durableCheckpoint) (*Agent, *session.Sessio
 		cp.Messages = []provider.Message{{Role: "user", Content: "perform requested operation"}}
 	}
 	data, _ := json.Marshal(cp)
-	if err := exec.SaveCheckpoint(data); err != nil {
+	if err := turnExec.SaveCheckpoint(data); err != nil {
 		t.Fatal(err)
 	}
 	loopCfg := DefaultLoopConfig()
-	loopCfg.Execution, loopCfg.AutoApprove = exec, true
+	loopCfg.Execution, loopCfg.AutoApprove = turnExec, true
 	return a, sess, q, task, loopCfg
 }
 
@@ -96,7 +98,7 @@ func resumeDurableQueue(t *testing.T, q *autonomy.TaskQueue, cfg *LoopConfig) *a
 	if task == nil {
 		t.Fatal("task was not restored")
 	}
-	cfg.Execution = autonomy.NewExecution(reloaded, task)
+	cfg.Execution = autonomy.NewTurnExecution(autonomy.NewExecution(reloaded, task))
 	return reloaded
 }
 
@@ -104,7 +106,7 @@ func TestDurableReplayCompletedOperationAfterCrash(t *testing.T) {
 	a, sess, q, _, cfg := durableHarness(t, pendingCheckpoint())
 	calls := 0
 	a.tools.Register(&tool.Tool{Name: "perform_operation", Permission: tool.PermAuto, Handler: func(map[string]any) (string, error) { calls++; return "effect", nil }})
-	_, err := cfg.Execution.BeginOperation(autonomy.Operation{ID: "step-1-1", Name: "perform_operation", Arguments: "{}"})
+	_, err := cfg.Execution.BeginOperation(turn.DurableOperation{ID: "step-1-1", Name: "perform_operation", Arguments: "{}"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +134,7 @@ func TestDurableAmbiguousOperationBlocksUntilReconciled(t *testing.T) {
 	a, sess, q, task, cfg := durableHarness(t, pendingCheckpoint())
 	calls := 0
 	a.tools.Register(&tool.Tool{Name: "perform_operation", Handler: func(map[string]any) (string, error) { calls++; return "effect", nil }})
-	_, err := cfg.Execution.BeginOperation(autonomy.Operation{ID: "step-1-1", Name: "perform_operation", Arguments: "{}"})
+	_, err := cfg.Execution.BeginOperation(turn.DurableOperation{ID: "step-1-1", Name: "perform_operation", Arguments: "{}"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +152,7 @@ func TestDurableAmbiguousOperationBlocksUntilReconciled(t *testing.T) {
 	if err := q.Unblock(task.ID); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Execution = autonomy.NewExecution(q, q.Pull("approved-worker"))
+	cfg.Execution = autonomy.NewTurnExecution(autonomy.NewExecution(q, q.Pull("approved-worker")))
 	result, err := a.RunLoopWithSession(context.Background(), sess, "perform requested operation", cfg)
 	if err != nil || !result.Verified || calls != 1 {
 		t.Fatalf("approved retry failed: calls=%d result=%+v err=%v", calls, result, err)

@@ -40,6 +40,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/soul"
 	taskstore "github.com/yurika0211/luckyagent/internal/task"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -113,6 +114,8 @@ type supportRuntime struct {
 // Agent 是 LuckyAgent 的核心 Agent
 type Agent struct {
 	foregroundActive sync.Map // session ID -> active caller; removed when the request ends
+	loopMu           sync.Mutex
+	loop             *Loop
 	cfg              *config.Manager
 	soul             *soul.Soul
 	tmplMgr          *soul.TemplateManager  // SOUL 模板管理器
@@ -1445,14 +1448,17 @@ func New(cfg *config.Manager) (*Agent, error) {
 		}
 		return sess.Save()
 	})
+	loop := a.loopRunner()
+	sessions := memoryRT.sessions
+	delegateMgr := supportRT.delegateMgr
 	supportRT.delegateMgr.SetAgentExecutorWithOptions(func(ctx context.Context, description, contextStr string, options tool.AgentExecutorOptions) (string, error) {
 		sessionID := tool.DelegateExecutionSessionID(ctx)
 		var sess *session.Session
 		if sessionID != "" {
-			sess = memoryRT.sessions.Ensure(sessionID)
+			sess = sessions.Ensure(sessionID)
 			sess.SetTitle("delegate-task")
 		} else {
-			sess = memoryRT.sessions.NewWithTitle("delegate-task")
+			sess = sessions.NewWithTitle("delegate-task")
 		}
 		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
 		if workspace := tool.ExtractDelegateWorkspace(contextStr); workspace != "" {
@@ -1465,13 +1471,13 @@ func New(cfg *config.Manager) (*Agent, error) {
 			prompt = fmt.Sprintf("%s\n\nContext: %s", description, contextStr)
 		}
 		loopCfg := buildDelegateChildLoopConfig(delegateCfg, options.AllowRecursiveDelegate)
-		result, err := a.RunLoopWithSession(ctx, sess, prompt, loopCfg)
+		result, err := loop.Run(ctx, sess, TextUserTurnInput(prompt), loopCfg)
 		if result != nil {
 			lastTool := ""
 			if n := len(result.ToolCalls); n > 0 {
 				lastTool = result.ToolCalls[n-1].Name
 			}
-			supportRT.delegateMgr.RecordExecutionMetrics(tool.DelegateTaskID(ctx), len(result.ToolCalls), lastTool)
+			delegateMgr.RecordExecutionMetrics(tool.DelegateTaskID(ctx), len(result.ToolCalls), lastTool)
 		}
 		if err != nil {
 			return "", err
@@ -1480,7 +1486,7 @@ func New(cfg *config.Manager) (*Agent, error) {
 	})
 
 	// v0.38.0: 将 executor 注入到已注册工具所绑定的 autonomy 实例，避免启动时替换实例。
-	a.autonomy.SetExecutor(&agentExecutorAdapter{agent: a})
+	a.autonomy.SetExecutor(&agentExecutorAdapter{loop: loop, sessions: sessions})
 
 	// Already queued work carries the original authorization across restarts.
 	// Operators can disable this separately from automatic worker startup.
@@ -1524,6 +1530,12 @@ func (a *Agent) ChatWithSessionInput(ctx context.Context, sessionID string, inpu
 		return "", fmt.Errorf("session not found: %s", sessionID)
 	}
 	return a.chatWithSessionInput(ctx, sess, input)
+}
+
+// ChatWithSessionTurn accepts the provider-independent turn DTO used by edge
+// adapters. Conversion to provider.Message stays inside the agent runtime.
+func (a *Agent) ChatWithSessionTurn(ctx context.Context, sessionID string, input turn.Input) (string, error) {
+	return a.ChatWithSessionInput(ctx, sessionID, UserTurnInputFromTurn(input))
 }
 
 // ProgressFeedback generates a concise model-authored progress update for an unfinished round.
@@ -2601,6 +2613,22 @@ func (a *Agent) ChatWithSessionStreamInput(ctx context.Context, sessionID string
 		loopCfg.Source = "cli"
 	}
 	return a.ChatWithSessionStreamInputWithLoopConfig(ctx, sessionID, input, loopCfg)
+}
+
+// ChatWithSessionStreamTurn is the stream counterpart to ChatWithSessionTurn.
+func (a *Agent) ChatWithSessionStreamTurn(ctx context.Context, sessionID string, input turn.Input) (<-chan ChatEvent, error) {
+	return a.ChatWithSessionStreamInput(ctx, sessionID, UserTurnInputFromTurn(input))
+}
+
+// ChatWithSessionStreamTurnEvents is the neutral-event counterpart to
+// ChatWithSessionStreamTurn. The legacy method remains available for in-process
+// callers while gateway adapters can consume turn.ChatEvent directly.
+func (a *Agent) ChatWithSessionStreamTurnEvents(ctx context.Context, sessionID string, input turn.Input) (<-chan turn.ChatEvent, error) {
+	events, err := a.ChatWithSessionStreamTurn(ctx, sessionID, input)
+	if err != nil {
+		return nil, err
+	}
+	return ToTurnChatEventStream(ctx, events), nil
 }
 
 func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, sessionID string, input UserTurnInput, loopCfg LoopConfig) (<-chan ChatEvent, error) {
@@ -4133,7 +4161,7 @@ func (a *Agent) startAutonomy(ctx context.Context, force bool) error {
 	}
 
 	// Create executor adapter that bridges Agent to AgentExecutor interface
-	executor := &agentExecutorAdapter{agent: a}
+	executor := &agentExecutorAdapter{loop: a.loopRunner(), sessions: a.sessions}
 	a.autonomy.SetExecutor(executor)
 
 	if a.autonomy.Status().Started {
@@ -4157,25 +4185,33 @@ func (a *Agent) startAutonomy(ctx context.Context, force bool) error {
 agentExecutorAdapter 将 Agent 适配为 autonomy 所需的执行器接口。
 */
 type agentExecutorAdapter struct {
-	agent *Agent
+	loop     *Loop
+	sessions *session.Manager
 }
 
 /*
 RunLoopWithSession 按 autonomy 接口要求在指定会话中执行一轮 Agent Loop。
 */
 func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID string, userInput string, cfg autonomy.LoopConfig) (*autonomy.LoopResult, error) {
+	if a == nil || a.loop == nil || a.sessions == nil {
+		return nil, fmt.Errorf("agent loop executor not initialized")
+	}
 	// Look up session by ID
-	sess, ok := a.agent.sessions.Get(sessionID)
+	sess, ok := a.sessions.Get(sessionID)
 	if !ok {
-		sess = a.agent.sessions.Ensure(sessionID)
+		sess = a.sessions.Ensure(sessionID)
 	}
 	profile := strings.TrimSpace(cfg.SystemPrompt)
 	if profile != "" {
 		sess.SetAgentProfile("worker", profile)
 	}
 
+	var execution turn.DurableExecution
+	if cfg.Execution != nil {
+		execution = autonomy.NewTurnExecution(cfg.Execution)
+	}
 	loopCfg := LoopConfig{
-		Execution:              cfg.Execution,
+		Execution:              execution,
 		Source:                 "autonomy",
 		MaxIterations:          cfg.MaxIterations,
 		Timeout:                cfg.Timeout,
@@ -4186,7 +4222,7 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 		DisabledTools:          append([]string(nil), cfg.DisabledTools...),
 	}
 
-	result, err := a.agent.RunLoopWithSession(ctx, sess, userInput, loopCfg)
+	result, err := a.loop.Run(ctx, sess, TextUserTurnInput(userInput), loopCfg)
 	if result == nil {
 		return nil, err
 	}
@@ -4203,7 +4239,10 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 NewSession 创建 autonomy 使用的新会话并返回其 ID。
 */
 func (a *agentExecutorAdapter) NewSession(title string) string {
-	sess := a.agent.sessions.NewWithTitle(title)
+	if a == nil || a.sessions == nil {
+		return ""
+	}
+	sess := a.sessions.NewWithTitle(title)
 	return sess.ID
 }
 
@@ -4211,10 +4250,10 @@ func (a *agentExecutorAdapter) NewSession(title string) string {
 // another runtime-owned actor. Existing history is preserved across process
 // restarts; a new session receives the supplied title.
 func (a *agentExecutorAdapter) EnsureSession(id, title string) string {
-	if a == nil || a.agent == nil {
+	if a == nil || a.sessions == nil {
 		return ""
 	}
-	sess := a.agent.sessions.Ensure(strings.TrimSpace(id))
+	sess := a.sessions.Ensure(strings.TrimSpace(id))
 	if strings.TrimSpace(sess.Title) == "" && strings.TrimSpace(title) != "" {
 		sess.SetTitle(strings.TrimSpace(title))
 	}
@@ -4502,6 +4541,23 @@ func (a *Agent) Config() *config.Manager {
 	return a.cfg
 }
 
+// ContextEstimator returns the token estimator used by context planning.
+// The planner consumes it through its narrow runtime contract.
+func (a *Agent) ContextEstimator() *contextx.TokenEstimator {
+	if a == nil {
+		return nil
+	}
+	return a.contextEst
+}
+
+// ContextCache exposes the planner cache through its minimal storage contract.
+func (a *Agent) ContextCache() contextMessageCacheStore {
+	if a == nil {
+		return nil
+	}
+	return a.contextCache
+}
+
 // Metrics 返回指标收集器
 func (a *Agent) Metrics() *metrics.Metrics {
 	return a.metrics
@@ -4520,6 +4576,29 @@ func (a *Agent) CronStore() *cron.Store {
 // Memory 返回记忆存储
 func (a *Agent) Memory() *memory.Store {
 	return a.memory
+}
+
+// MidTermStore returns the store used for query-aware session summaries.
+func (a *Agent) MidTermStore() *memory.MidTermStore {
+	if a == nil {
+		return nil
+	}
+	return a.midTerm
+}
+
+// ShortTermSummary returns the session-scoped short-term summary used by the
+// context planner. The legacy single-buffer fallback remains for old callers.
+func (a *Agent) ShortTermSummary(sess *session.Session) string {
+	if a == nil {
+		return ""
+	}
+	if a.shortTerms != nil && sess != nil {
+		return a.shortTerms.Summary(sess.ID)
+	}
+	if a.shortTerms == nil && a.shortTerm != nil {
+		return a.shortTerm.Summary()
+	}
+	return ""
 }
 
 // ContextWindow 返回上下文窗口管理器
@@ -4556,6 +4635,14 @@ func (a *Agent) ContextCacheStats() map[string]any {
 // RAG 返回 RAG 管理器
 func (a *Agent) RAG() *rag.RAGManager {
 	return a.ragManager
+}
+
+// MemoryVaultPath returns the configured durable memory vault path.
+func (a *Agent) MemoryVaultPath() string {
+	if a == nil {
+		return ""
+	}
+	return a.memoryVaultPath()
 }
 
 // RAGPersist 返回 RAG 持久化管理器

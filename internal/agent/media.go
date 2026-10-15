@@ -7,16 +7,16 @@ import (
 	"strings"
 
 	"github.com/yurika0211/luckyagent/internal/config"
-	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/multimodal"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
 /*
 AnalyzeAttachments 使用多模态处理器分析附件并返回汇总文本。
 */
-func (a *Agent) AnalyzeAttachments(ctx context.Context, attachments []gateway.Attachment) (string, error) {
+func (a *Agent) AnalyzeAttachments(ctx context.Context, attachments []turn.Attachment) (string, error) {
 	if a == nil || a.currentMediaProcessor() == nil || len(attachments) == 0 {
 		return "", nil
 	}
@@ -49,8 +49,8 @@ func (a *Agent) AnalyzeAttachments(ctx context.Context, attachments []gateway.At
 	return "[Multimodal Analysis]\n" + strings.Join(sections, "\n\n"), nil
 }
 
-func analyzeDocumentAttachment(att gateway.Attachment, idx int) (string, bool) {
-	if att.Type != gateway.AttachmentDocument || strings.TrimSpace(att.FilePath) == "" {
+func analyzeDocumentAttachment(att turn.Attachment, idx int) (string, bool) {
+	if att.Type != turn.AttachmentDocument || strings.TrimSpace(att.FilePath) == "" {
 		return "", false
 	}
 	ext := strings.ToLower(filepath.Ext(att.FilePath))
@@ -121,7 +121,7 @@ func (a *Agent) preferredMultimodalProvider(modality multimodal.Modality) string
 /*
 buildMultimodalInput 将网关附件转换为多模态分析输入。
 */
-func buildMultimodalInput(att gateway.Attachment) (*multimodal.Input, string, error) {
+func buildMultimodalInput(att turn.Attachment) (*multimodal.Input, string, error) {
 	modality := attachmentModality(att)
 	title := attachmentTitle(att, 0)
 
@@ -167,15 +167,15 @@ func buildMultimodalInput(att gateway.Attachment) (*multimodal.Input, string, er
 /*
 attachmentModality 根据附件类型推断多模态处理所需的模态。
 */
-func attachmentModality(att gateway.Attachment) multimodal.Modality {
+func attachmentModality(att turn.Attachment) multimodal.Modality {
 	switch att.Type {
-	case gateway.AttachmentImage:
+	case turn.AttachmentImage:
 		return multimodal.ModalityImage
-	case gateway.AttachmentAudio:
+	case turn.AttachmentAudio:
 		return multimodal.ModalityAudio
-	case gateway.AttachmentVideo:
+	case turn.AttachmentVideo:
 		return multimodal.ModalityVideo
-	case gateway.AttachmentDocument:
+	case turn.AttachmentDocument:
 		if strings.EqualFold(strings.TrimSpace(att.MimeType), "application/pdf") || strings.EqualFold(filepath.Ext(att.FileName), ".pdf") {
 			return multimodal.ModalityDocument
 		}
@@ -188,7 +188,7 @@ func attachmentModality(att gateway.Attachment) multimodal.Modality {
 /*
 attachmentTitle 生成人类可读的附件标题。
 */
-func attachmentTitle(att gateway.Attachment, idx int) string {
+func attachmentTitle(att turn.Attachment, idx int) string {
 	name := strings.TrimSpace(att.FileName)
 	if name == "" {
 		name = "unnamed"
@@ -196,13 +196,13 @@ func attachmentTitle(att gateway.Attachment, idx int) string {
 
 	prefix := "Attachment"
 	switch att.Type {
-	case gateway.AttachmentImage:
+	case turn.AttachmentImage:
 		prefix = "Image"
-	case gateway.AttachmentAudio:
+	case turn.AttachmentAudio:
 		prefix = "Audio"
-	case gateway.AttachmentVideo:
+	case turn.AttachmentVideo:
 		prefix = "Video"
-	case gateway.AttachmentDocument:
+	case turn.AttachmentDocument:
 		prefix = "Document"
 	}
 

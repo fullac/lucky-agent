@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -388,7 +389,7 @@ func (s *Store) RecordRuntimeEvent(event RuntimeEvent) error {
 		if event.CreatedAt.IsZero() {
 			event.CreatedAt = time.Now()
 		}
-		event.ID = fmt.Sprintf("runtime-%d", event.CreatedAt.UnixNano())
+		event.ID = "runtime-" + uuid.NewString()
 	}
 	if strings.TrimSpace(event.Source) == "" {
 		event.Source = "runtime"

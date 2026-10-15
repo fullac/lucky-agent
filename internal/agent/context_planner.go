@@ -8,14 +8,16 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/contextx"
-	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/logger"
 	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
 	"github.com/yurika0211/luckyagent/internal/session"
+	"github.com/yurika0211/luckyagent/internal/soul"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -59,11 +61,47 @@ type contextBudget struct {
 	ToolResult int
 }
 
+// contextRuntime is the small coordinator surface needed while assembling a
+// model context. Keeping this contract separate from Agent makes the planner
+// usable with focused runtime doubles and prevents it from depending on Agent
+// storage fields directly.
+type contextRuntime interface {
+	runContextMemoryHygieneHook()
+	buildSystemPromptWithOptions(*session.Session, systemPromptOptions) string
+	buildSkillRouteSystemHintWithOptions(string, skillRouteOptions) string
+	fitContextWindow([]provider.Message) []provider.Message
+	AnalyzeAttachments(context.Context, []turn.Attachment) (string, error)
+
+	Config() *config.Manager
+	ContextWindow() *contextx.ContextWindow
+	ContextEstimator() *contextx.TokenEstimator
+	ContextCache() contextMessageCacheStore
+	Soul() *soul.Soul
+	Memory() *memory.Store
+	MidTermStore() *memory.MidTermStore
+	ShortTermSummary(*session.Session) string
+	Catalog() *provider.ModelCatalog
+	Tools() *tool.Registry
+	RAG() *rag.RAGManager
+	MemoryVaultPath() string
+}
+
+var _ contextRuntime = (*Agent)(nil)
+
+// contextMessageCacheStore keeps the planner independent from the concrete
+// cache implementation while preserving the existing cache entry shape.
+type contextMessageCacheStore interface {
+	Get(uint64) ([]provider.Message, contextCacheEntry, bool)
+	Set(uint64, contextCacheEntry)
+}
+
 /*
 contextPlanner 负责根据预算组装系统提示、记忆、RAG 与历史消息。
 */
 type contextPlanner struct {
-	agent        *Agent
+	// agent is retained as the field name for in-package compatibility. Its
+	// type is deliberately the narrow runtime contract rather than *Agent.
+	agent        contextRuntime
 	est          *contextx.TokenEstimator
 	budget       contextBudget
 	options      contextBuildOptions
@@ -153,9 +191,13 @@ func newContextPlannerWithProvider(a *Agent, options contextBuildOptions, turnPr
 		cfg = a.contextWin.Config()
 	}
 	budget := computeContextBudget(cfg.MaxTokens, cfg.ReservedTokens, contextBudgetShareFor(a))
+	var runtime contextRuntime
+	if a != nil {
+		runtime = a
+	}
 
 	return &contextPlanner{
-		agent:        a,
+		agent:        runtime,
 		est:          resolveTokenEstimator(a, cfg.MaxTokens),
 		budget:       budget,
 		options:      options,
@@ -186,8 +228,8 @@ func (p *contextPlanner) BuildInput(ctx context.Context, sess *session.Session, 
 	allowCache := !hasStructuredParts && !p.options.ReadOnly && !p.options.OmitUserMessage
 
 	if allowCache {
-		if key, ok := p.cacheKey(sess, routingText); ok && p.agent != nil && p.agent.contextCache != nil {
-			if cached, entry, hit := p.agent.contextCache.Get(key); hit {
+		if key, ok := p.cacheKey(sess, routingText); ok && p.agent != nil && p.agent.ContextCache() != nil {
+			if cached, entry, hit := p.agent.ContextCache().Get(key); hit {
 				p.logContextReport("cache_hit", key, entry)
 				return cached
 			}
@@ -273,8 +315,8 @@ func (p *contextPlanner) BuildInput(ctx context.Context, sess *session.Session, 
 
 	report := p.buildContextReport(messages)
 	if allowCache {
-		if key, ok := p.cacheKey(sess, routingText); ok && p.agent.contextCache != nil {
-			p.agent.contextCache.Set(key, contextCacheEntry{
+		if key, ok := p.cacheKey(sess, routingText); ok && p.agent.ContextCache() != nil {
+			p.agent.ContextCache().Set(key, contextCacheEntry{
 				messages:     messages,
 				totalTokens:  report.totalTokens,
 				bucketTokens: report.bucketTokens,
@@ -309,7 +351,7 @@ func (p *contextPlanner) buildAttachmentMessages(ctx context.Context, input User
 		if p.supportsImageContentParts() {
 			attachments = nil
 			for _, att := range input.Attachments {
-				if att.Type != gateway.AttachmentImage {
+				if att.Type != turn.AttachmentImage {
 					attachments = append(attachments, att)
 				}
 			}
@@ -326,7 +368,7 @@ func (p *contextPlanner) buildAttachmentMessages(ctx context.Context, input User
 	return messages
 }
 
-func attachmentEvidenceManifest(attachments []gateway.Attachment) string {
+func attachmentEvidenceManifest(attachments []turn.Attachment) string {
 	if len(attachments) == 0 {
 		return ""
 	}
@@ -340,9 +382,6 @@ func attachmentEvidenceManifest(attachments []gateway.Attachment) string {
 		}
 		name := strings.TrimSpace(att.FileName)
 		if name == "" {
-			name = strings.TrimSpace(att.FileID)
-		}
-		if name == "" {
 			name = "unnamed"
 		}
 		fmt.Fprintf(&b, "%d. type=%s name=%s", i+1, label, name)
@@ -351,9 +390,6 @@ func attachmentEvidenceManifest(attachments []gateway.Attachment) string {
 		}
 		if strings.TrimSpace(att.FileURL) != "" {
 			fmt.Fprintf(&b, " url=%s", strings.TrimSpace(att.FileURL))
-		}
-		if strings.TrimSpace(att.FileID) != "" {
-			fmt.Fprintf(&b, " file_id=%s", strings.TrimSpace(att.FileID))
 		}
 		if strings.TrimSpace(att.MimeType) != "" {
 			fmt.Fprintf(&b, " mime=%s", strings.TrimSpace(att.MimeType))
@@ -386,27 +422,29 @@ func (p *contextPlanner) supportsImageContentParts() bool {
 
 	// Policy and capability are independent: an external vision model does not
 	// imply that the current chat model can receive images.
-	if p.agent.cfg != nil {
-		cfg := p.agent.cfg.Get()
+	if cfgMgr := p.agent.Config(); cfgMgr != nil {
+		cfg := cfgMgr.Get()
 		if cfg.Models.VisionMode == "external" {
 			return false
 		}
 	}
 
 	// 回退到 catalog 精确匹配
-	if p.agent.catalog == nil {
+	if p.agent.Catalog() == nil {
 		return false
 	}
 
 	model := strings.TrimSpace(p.turnProvider.model)
-	if model == "" && p.agent.cfg != nil {
-		model = strings.TrimSpace(p.agent.cfg.Get().Model)
+	if model == "" {
+		if cfgMgr := p.agent.Config(); cfgMgr != nil {
+			model = strings.TrimSpace(cfgMgr.Get().Model)
+		}
 	}
 	if model == "" {
 		return false
 	}
 
-	info, err := p.agent.catalog.Get(model)
+	info, err := p.agent.Catalog().Get(model)
 	if err == nil && info != nil {
 		for _, capability := range info.Capabilities {
 			if strings.EqualFold(strings.TrimSpace(capability), "vision") {
@@ -472,10 +510,10 @@ func (p *contextPlanner) buildContextReport(messages []provider.Message) context
 logContextReport 在开启调试时输出上下文规划报告。
 */
 func (p *contextPlanner) logContextReport(mode string, key uint64, entry contextCacheEntry) {
-	if p.agent == nil || p.agent.cfg == nil {
+	if p.agent == nil || p.agent.Config() == nil {
 		return
 	}
-	if !p.agent.cfg.Get().Agent.ContextDebug {
+	if !p.agent.Config().Get().Agent.ContextDebug {
 		return
 	}
 
@@ -538,8 +576,8 @@ func (p *contextPlanner) cacheKey(sess *session.Session, userInput string) (uint
 		"budget":     p.budget,
 	}
 
-	if p.agent.soul != nil {
-		payload["system_prompt"] = p.agent.soul.SystemPrompt()
+	if soul := p.agent.Soul(); soul != nil {
+		payload["system_prompt"] = soul.SystemPrompt()
 	}
 	if p.turnProvider.valid() {
 		_, fc := p.turnProvider.provider.(provider.FunctionCallingProvider)
@@ -548,23 +586,19 @@ func (p *contextPlanner) cacheKey(sess *session.Session, userInput string) (uint
 	payload["provider_name"] = p.turnProvider.name()
 	payload["provider_model"] = p.turnProvider.model
 	payload["provider_api_base"] = p.turnProvider.apiBase
-	if p.agent.memory != nil {
-		payload["recent_memory"] = p.agent.memory.Recent(8)
+	if memoryStore := p.agent.Memory(); memoryStore != nil {
+		payload["recent_memory"] = memoryStore.Recent(8)
 	}
-	if p.agent.shortTerms != nil && sess != nil {
+	if summary := p.agent.ShortTermSummary(sess); strings.TrimSpace(summary) != "" {
 		// Short-term state is session-scoped; include only this session's
 		// summary in the cache key so another conversation cannot reuse it.
-		payload["short_summary"] = p.agent.shortTerms.Summary(sess.ID)
-	} else if p.agent.shortTerm != nil && p.agent.shortTerms == nil {
-		// Compatibility for legacy manually-assembled Agents. New production
-		// Agents always have shortTerms, so this cannot reintroduce sharing there.
-		payload["short_summary"] = p.agent.shortTerm.Summary()
+		payload["short_summary"] = summary
 	}
-	if p.agent.midTerm != nil && strings.TrimSpace(userInput) != "" {
-		payload["midterm"] = p.agent.midTerm.SearchSummaries(userInput, 2)
+	if midTerm := p.agent.MidTermStore(); midTerm != nil && strings.TrimSpace(userInput) != "" {
+		payload["midterm"] = midTerm.SearchSummaries(userInput, 2)
 	}
-	if p.agent.ragManager != nil {
-		stats := p.agent.ragManager.Stats()
+	if ragManager := p.agent.RAG(); ragManager != nil {
+		stats := ragManager.Stats()
 		payload["rag_doc_count"] = stats.DocumentCount
 	}
 	if sess != nil {
@@ -600,9 +634,10 @@ func sessionLastMessageSignature(sess *session.Session) string {
 resolveTokenEstimator 解析可用的 token 估算器。
 */
 func resolveTokenEstimator(a *Agent, maxTokens int) *contextx.TokenEstimator {
-	if a != nil && a.contextEst != nil {
-		a.contextEst.SetModelContextWindow(maxTokens)
-		return a.contextEst
+	if a != nil && a.ContextEstimator() != nil {
+		est := a.ContextEstimator()
+		est.SetModelContextWindow(maxTokens)
+		return est
 	}
 	return contextx.NewTokenEstimator(maxTokens)
 }
@@ -611,7 +646,7 @@ func resolveTokenEstimator(a *Agent, maxTokens int) *contextx.TokenEstimator {
 buildToolCatalog 构造供非 function-calling 模型参考的工具目录文本。
 */
 func (p *contextPlanner) buildToolCatalog(disabled []string) string {
-	if p.agent == nil || p.agent.tools == nil {
+	if p.agent == nil || p.agent.Tools() == nil {
 		return ""
 	}
 	tools := p.agent.Tools().ListModelVisible()
@@ -671,10 +706,10 @@ func (p *contextPlanner) buildMemoryMessagesForSession(sess *session.Session, qu
 buildCoreMemoryMessage 构造长期核心记忆消息。
 */
 func (p *contextPlanner) buildCoreMemoryMessage(query string, scope TurnScope) provider.Message {
-	if p.agent == nil || p.agent.memory == nil {
+	if p.agent == nil || p.agent.Memory() == nil {
 		return provider.Message{}
 	}
-	longs := p.agent.memory.ByTier(memory.TierLong)
+	longs := p.agent.Memory().ByTier(memory.TierLong)
 	longs = filterMemoryEntriesForScope(longs, scope)
 	if len(longs) == 0 {
 		return provider.Message{}
@@ -700,13 +735,13 @@ func (p *contextPlanner) buildCoreMemoryMessage(query string, scope TurnScope) p
 buildRelevantMemoryMessage 构造与当前问题相关的普通记忆消息。
 */
 func (p *contextPlanner) buildRelevantMemoryMessage(query string, scope TurnScope) provider.Message {
-	if p.agent == nil || p.agent.memory == nil {
+	if p.agent == nil || p.agent.Memory() == nil {
 		return provider.Message{}
 	}
 	if strings.TrimSpace(query) == "" {
 		return provider.Message{}
 	}
-	route := p.agent.memory.RouteWithOptions(query, memory.RouteOptions{
+	route := p.agent.Memory().RouteWithOptions(query, memory.RouteOptions{
 		EntryFilter: func(entry memory.Entry) bool {
 			return memoryEntryVisibleInScope(entry, scope)
 		},
@@ -729,7 +764,7 @@ func (p *contextPlanner) buildRelevantMemoryMessage(query string, scope TurnScop
 	route.FutureRefs = nil
 	results = prioritizeMemoryForContext(results)
 	header := "[Working Memory — Retrieved Evidence]\nThese active memories were retrieved from the LuckyAgent Obsidian-compatible Markdown memory vault"
-	if vault := p.agent.memoryVaultPath(); vault != "" {
+	if vault := p.agent.MemoryVaultPath(); vault != "" {
 		header += " at " + vault
 	}
 	header += ". Treat them as prior evidence, not as the current task itself. Prefer the latest user message and explicit session history when they conflict with retrieved memory. If a memory says real-time data or external checks are needed and it still matches the current user request, use available tools before the final answer or state exactly what could not be checked."
@@ -747,11 +782,11 @@ func (p *contextPlanner) recordMemoryContextFeedback(query string, results []mem
 	if p == nil || p.options.ReadOnly {
 		return
 	}
-	if p.agent == nil || p.agent.memory == nil || len(results) == 0 {
+	if p.agent == nil || p.agent.Memory() == nil || len(results) == 0 {
 		return
 	}
 	limit := utils.MinInt(6, len(results))
-	p.agent.memory.RecordActivationFeedback(query, results[:limit], "context_selected", 0.15, time.Now())
+	p.agent.Memory().RecordActivationFeedback(query, results[:limit], "context_selected", 0.15, time.Now())
 }
 
 func (p *contextPlanner) buildTypedMemoryBody(route memory.RouteAnalysis, results []memory.Entry, tokenBudget int) string {
@@ -1032,10 +1067,10 @@ func memoryContextRank(e memory.Entry) int {
 buildMidtermSummaryMessage 构造中期会话摘要消息。
 */
 func (p *contextPlanner) buildMidtermSummaryMessage(query string) provider.Message {
-	if p.agent == nil || p.agent.midTerm == nil || strings.TrimSpace(query) == "" {
+	if p.agent == nil || p.agent.MidTermStore() == nil || strings.TrimSpace(query) == "" {
 		return provider.Message{}
 	}
-	summaries := p.agent.midTerm.SearchSummaries(query, 2)
+	summaries := p.agent.MidTermStore().SearchSummaries(query, 2)
 	if len(summaries) == 0 {
 		return provider.Message{}
 	}
@@ -1064,14 +1099,7 @@ func (p *contextPlanner) buildShortTermSummaryMessageForSession(sess *session.Se
 	if p.agent == nil {
 		return provider.Message{}
 	}
-	summary := ""
-	if p.agent.shortTerms != nil && sess != nil {
-		summary = p.agent.shortTerms.Summary(sess.ID)
-	} else if p.agent.shortTerm != nil && p.agent.shortTerms == nil {
-		// Compatibility for old manually-assembled Agents only.
-		summary = p.agent.shortTerm.Summary()
-	}
-	summary = strings.TrimSpace(summary)
+	summary := strings.TrimSpace(p.agent.ShortTermSummary(sess))
 	if summary == "" {
 		return provider.Message{}
 	}
@@ -1083,21 +1111,21 @@ func (p *contextPlanner) buildShortTermSummaryMessageForSession(sess *session.Se
 buildRAGMessage 构造检索增强知识消息。
 */
 func (p *contextPlanner) buildRAGMessage(ctx context.Context, sess *session.Session, query string) provider.Message {
-	if p.agent == nil || p.agent.ragManager == nil || strings.TrimSpace(query) == "" {
+	if p.agent == nil || p.agent.RAG() == nil || strings.TrimSpace(query) == "" {
 		return provider.Message{}
 	}
-	stats := p.agent.ragManager.Stats()
+	stats := p.agent.RAG().Stats()
 	if stats.DocumentCount == 0 {
 		return provider.Message{}
 	}
 	retrievalQuery := p.rewriteRAGFollowUp(sess, query)
-	results, err := p.agent.ragManager.Search(ctx, retrievalQuery)
+	results, err := p.agent.RAG().Search(ctx, retrievalQuery)
 	if err != nil || len(results) == 0 {
 		return provider.Message{}
 	}
 	var ragCtx string
 	for end := 1; end <= len(results); end++ {
-		candidate := p.agent.ragManager.Retriever().BuildContext(results[:end])
+		candidate := p.agent.RAG().Retriever().BuildContext(results[:end])
 		if p.est.Estimate(candidate) > p.budget.RAG {
 			break
 		}
@@ -1107,7 +1135,7 @@ func (p *contextPlanner) buildRAGMessage(ctx context.Context, sess *session.Sess
 		for contentBudget := max(16, p.budget.RAG/2); contentBudget >= 16; contentBudget /= 2 {
 			first := results[0]
 			first.Content = p.fitTextToBudget(first.Content, contentBudget)
-			candidate := p.agent.ragManager.Retriever().BuildContext([]rag.RetrievalResult{first})
+			candidate := p.agent.RAG().Retriever().BuildContext([]rag.RetrievalResult{first})
 			if p.est.Estimate(candidate) <= p.budget.RAG {
 				ragCtx = candidate
 				break
@@ -1125,7 +1153,7 @@ func (p *contextPlanner) buildRAGMessage(ctx context.Context, sess *session.Sess
 
 func (p *contextPlanner) rewriteRAGFollowUp(sess *session.Session, query string) string {
 	query = strings.TrimSpace(query)
-	if query == "" || sess == nil || p.agent == nil || p.agent.cfg == nil || !p.agent.cfg.Get().RAG.RewriteFollowUps {
+	if query == "" || sess == nil || p.agent == nil || p.agent.Config() == nil || !p.agent.Config().Get().RAG.RewriteFollowUps {
 		return query
 	}
 	lower := strings.ToLower(query)
@@ -1510,7 +1538,10 @@ func (p *contextPlanner) tryLLMConversationSummary(ctx context.Context, sess *se
 	for _, msg := range messages {
 		historyTokens += p.est.Estimate(msg.Content) + 4
 	}
-	threshold := p.agent.cfg.Get().Context.CompressionThreshold
+	threshold := 0.0
+	if cfgMgr := p.agent.Config(); cfgMgr != nil {
+		threshold = cfgMgr.Get().Context.CompressionThreshold
+	}
 	if threshold <= 0 {
 		threshold = 0.8
 	}
@@ -1575,7 +1606,7 @@ func (p *contextPlanner) persistCompressedSummary(sess *session.Session, message
 		return
 	}
 
-	if p.agent.midTerm == nil {
+	if p.agent.MidTermStore() == nil {
 		return
 	}
 
@@ -1607,7 +1638,7 @@ func (p *contextPlanner) persistCompressedSummary(sess *session.Session, message
 		sessionSummary.Topics = append([]string{title}, sessionSummary.Topics...)
 	}
 	sessionSummary.Topics = utils.DedupStringsLimit(sessionSummary.Topics, 6)
-	_ = p.agent.midTerm.SaveSessionSummary(sessionSummary)
+	_ = p.agent.MidTermStore().SaveSessionSummary(sessionSummary)
 }
 
 /*

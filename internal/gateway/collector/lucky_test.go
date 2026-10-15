@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 )
 
@@ -72,7 +73,7 @@ func TestLuckyCollectsSegmentsIntoUserTurn(t *testing.T) {
 		}
 	}
 
-	input := batch.UserTurnInput()
+	input := agent.UserTurnInputFromTurn(batch.UserTurnInput())
 	if input.RoutingText != text {
 		t.Fatalf("expected routing text to match batch text")
 	}

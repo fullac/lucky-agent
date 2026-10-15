@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/provider"
+	"github.com/yurika0211/luckyagent/internal/turn"
 )
 
 /**
@@ -20,8 +20,50 @@ type UserTurnInput struct {
 	OriginalText string
 	Message      provider.Message
 	RoutingText  string
-	Attachments  []gateway.Attachment
+	Attachments  []turn.Attachment
 	Scope        TurnScope
+}
+
+// TurnInput converts the runtime's provider-independent input into the DTO
+// exposed to edge adapters. It is the boundary used while gateway handlers are
+// being moved away from *agent.Agent.
+func TurnInput(input UserTurnInput) turn.Input {
+	return turn.Input{
+		OriginalText: input.OriginalText,
+		RoutingText:  input.RoutingText,
+		Attachments:  append([]turn.Attachment(nil), input.Attachments...),
+		Scope: turn.Scope{
+			Platform:    input.Scope.Platform,
+			ChatID:      input.Scope.ChatID,
+			ChatType:    input.Scope.ChatType,
+			SenderID:    input.Scope.SenderID,
+			SenderName:  input.Scope.SenderName,
+			DisplayName: input.Scope.DisplayName,
+		},
+	}
+}
+
+// UserTurnInputFromTurn restores the provider message at the runtime
+// boundary. Provider-specific content parts are built by Normalize after the
+// edge DTO has been accepted.
+func UserTurnInputFromTurn(input turn.Input) UserTurnInput {
+	routingText := strings.TrimSpace(input.RoutingText)
+	if routingText == "" {
+		routingText = strings.TrimSpace(input.OriginalText)
+	}
+	return UserTurnInput{
+		OriginalText: input.OriginalText,
+		RoutingText:  routingText,
+		Attachments:  append([]turn.Attachment(nil), input.Attachments...),
+		Scope: TurnScope{
+			Platform:    input.Scope.Platform,
+			ChatID:      input.Scope.ChatID,
+			ChatType:    input.Scope.ChatType,
+			SenderID:    input.Scope.SenderID,
+			SenderName:  input.Scope.SenderName,
+			DisplayName: input.Scope.DisplayName,
+		},
+	}
 }
 
 // TurnScope identifies the messaging scope for a user turn. It is intentionally
@@ -51,7 +93,7 @@ func TextUserTurnInput(text string) UserTurnInput {
 }
 
 // MultimodalUserTurnInput builds a user turn that includes attachments.
-func MultimodalUserTurnInput(text string, attachments []gateway.Attachment) UserTurnInput {
+func MultimodalUserTurnInput(text string, attachments []turn.Attachment) UserTurnInput {
 	text = strings.TrimSpace(text)
 	msg := provider.Message{
 		Role:    "user",
@@ -61,7 +103,7 @@ func MultimodalUserTurnInput(text string, attachments []gateway.Attachment) User
 		OriginalText: text,
 		Message:      msg,
 		RoutingText:  text,
-		Attachments:  append([]gateway.Attachment(nil), attachments...),
+		Attachments:  append([]turn.Attachment(nil), attachments...),
 	}
 }
 
@@ -118,13 +160,13 @@ func (in UserTurnInput) Normalize() UserTurnInput {
 	msg.ContentParts = parts
 	// Preserve the descriptors on the provider message so history can restore
 	// the attachment cards after the client is recreated.
-	msg.Attachments = append([]gateway.Attachment(nil), in.Attachments...)
+	msg.Attachments = append([]turn.Attachment(nil), in.Attachments...)
 
 	return UserTurnInput{
 		OriginalText: in.OriginalText,
 		Message:      msg,
 		RoutingText:  routingText,
-		Attachments:  append([]gateway.Attachment(nil), in.Attachments...),
+		Attachments:  append([]turn.Attachment(nil), in.Attachments...),
 		Scope:        in.Scope.Normalize(),
 	}
 }
@@ -244,7 +286,7 @@ func contentPartsWithRoutingText(parts []provider.ContentPart, routingText strin
 	}}, out...)
 }
 
-func filterAttachmentContentParts(parts []provider.ContentPart, attachments []gateway.Attachment) []provider.ContentPart {
+func filterAttachmentContentParts(parts []provider.ContentPart, attachments []turn.Attachment) []provider.ContentPart {
 	if len(parts) == 0 || len(attachments) == 0 {
 		return parts
 	}
@@ -258,7 +300,7 @@ func filterAttachmentContentParts(parts []provider.ContentPart, attachments []ga
 	return out
 }
 
-func contentPartMatchesAttachment(part provider.ContentPart, attachments []gateway.Attachment) bool {
+func contentPartMatchesAttachment(part provider.ContentPart, attachments []turn.Attachment) bool {
 	for _, att := range attachments {
 		attPart, ok := contentPartFromAttachment(att)
 		if !ok {
@@ -323,8 +365,8 @@ func deriveRoutingTextFromMessage(msg provider.Message) string {
 	return ""
 }
 
-func contentPartFromAttachment(att gateway.Attachment) (provider.ContentPart, bool) {
-	if att.Type != gateway.AttachmentImage {
+func contentPartFromAttachment(att turn.Attachment) (provider.ContentPart, bool) {
+	if att.Type != turn.AttachmentImage {
 		return provider.ContentPart{}, false
 	}
 	url, path, mimeType := strings.TrimSpace(att.FileURL), strings.TrimSpace(att.FilePath), strings.TrimSpace(att.MimeType)
@@ -344,7 +386,7 @@ func contentPartFromAttachment(att gateway.Attachment) (provider.ContentPart, bo
 	}, true
 }
 
-func attachmentRoutingText(attachments []gateway.Attachment) string {
+func attachmentRoutingText(attachments []turn.Attachment) string {
 	if len(attachments) == 0 {
 		return ""
 	}
@@ -352,7 +394,7 @@ func attachmentRoutingText(attachments []gateway.Attachment) string {
 	docCount := 0
 	for _, att := range attachments {
 		switch att.Type {
-		case gateway.AttachmentImage:
+		case turn.AttachmentImage:
 			imageCount++
 		default:
 			docCount++

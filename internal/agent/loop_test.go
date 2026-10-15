@@ -326,7 +326,7 @@ func TestExtractRequiredToolNames(t *testing.T) {
 	got := a.extractRequiredToolNames("请必须调用 file_read 和 current_time，最后不要用 terminal")
 
 	if len(got) != 2 {
-		t.Fatalf("expected 2 required tools, got %d (%v)", len(got), got)
+		t.Fatalf("expected file_read and current_time only, got %d (%v)", len(got), got)
 	}
 	if got[0] != "file_read" || got[1] != "current_time" {
 		t.Fatalf("unexpected order: %v", got)
@@ -548,5 +548,24 @@ func TestUpdateShellContextUsesSessionCwdAndEnv(t *testing.T) {
 	}
 	if _, ok := env["OLD_KEY"]; ok {
 		t.Fatal("expected OLD_KEY to be removed")
+	}
+}
+
+func TestNegatedWriteDoesNotDropLaterRead(t *testing.T) {
+	reg := tool.NewRegistry()
+	for _, name := range []string{"file_read", "file_write", "ask_user", "subagent"} {
+		reg.Register(&tool.Tool{Name: name, Enabled: true})
+	}
+	a := &Agent{tools: reg}
+	got := a.extractRequiredToolNames(`严格按顺序做，不要解释。
+第一轮只调用一次 file_read，读取 internal/gateway/telegram/handler.go。
+不要调用 file_write、ask_user、subagent。`)
+	if len(got) != 1 || got[0] != "file_read" {
+		t.Fatalf("file_read must stay required, got %v", got)
+	}
+
+	got = a.extractRequiredToolNames("先不要用 file_write。必须调用 file_read")
+	if len(got) != 1 || got[0] != "file_read" {
+		t.Fatalf("later file_read dropped, got %v", got)
 	}
 }
