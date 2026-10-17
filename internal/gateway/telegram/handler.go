@@ -70,7 +70,7 @@ type stateRuntime interface {
 	CronEngine() *cron.Engine
 	Skills() []*tool.SkillInfo
 	Metrics() *metrics.Metrics
-	Memory() *memory.Store
+	Memory() memory.Store
 	Remember(content, category string) error
 	RememberLongTerm(content, category string) error
 	Recall(query string) []memory.Entry
@@ -340,7 +340,7 @@ func (a agentProviderAdapter) Metrics() *metrics.Metrics {
 	return a.inner.Metrics()
 }
 
-func (a agentProviderAdapter) Memory() *memory.Store {
+func (a agentProviderAdapter) Memory() memory.Store {
 	return a.inner.Memory()
 }
 
@@ -966,7 +966,7 @@ func (h *Handler) metricsCollector() *metrics.Metrics {
 	return state.Metrics()
 }
 
-func (h *Handler) memoryStore() *memory.Store {
+func (h *Handler) memoryStore() memory.Store {
 	state := h.stateService()
 	if state == nil {
 		return nil

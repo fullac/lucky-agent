@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 )
 
 func TestMemoryHygieneToolRegistration(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -29,7 +30,7 @@ func TestMemoryHygieneToolRegistration(t *testing.T) {
 }
 
 func TestMemoryHygieneHandlerAuditAndQuarantine(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

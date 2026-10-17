@@ -27,6 +27,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/gateway/telegram"
 	"github.com/yurika0211/luckyagent/internal/gateway/weixin"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/proactive"
 	"github.com/yurika0211/luckyagent/internal/server"
 	"github.com/yurika0211/luckyagent/internal/soul"
@@ -1719,7 +1720,7 @@ func runMemoryMigrateGraph(cmd *cobra.Command, args []string) error {
 	archiveDirty, _ := cmd.Flags().GetBool("archive-dirty")
 	limit, _ := cmd.Flags().GetInt("limit")
 
-	store, err := memory.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
+	store, err := memoryaestus.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
 	if err != nil {
 		return fmt.Errorf("open memory store: %w", err)
 	}
@@ -1792,7 +1793,7 @@ func runMemoryRenameNotes(cmd *cobra.Command, args []string) error {
 
 	apply, _ := cmd.Flags().GetBool("apply")
 	limit, _ := cmd.Flags().GetInt("limit")
-	store, err := memory.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
+	store, err := memoryaestus.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
 	if err != nil {
 		return fmt.Errorf("open memory store: %w", err)
 	}
@@ -1865,7 +1866,7 @@ func runMemoryTidalStats(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("stat tidal memory store: %w", err)
 	}
 
-	store, err := memory.OpenTidalStore(path)
+	store, err := memoryaestus.OpenTidalStore(path)
 	if err != nil {
 		return fmt.Errorf("open tidal memory store: %w", err)
 	}

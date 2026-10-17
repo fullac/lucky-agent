@@ -1550,15 +1550,21 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 				body.Category = "user"
 			}
 
-			var err error
+			tier, importance := memory.TierMedium, .5
 			if body.LongTerm {
-				err = s.agent.RememberLongTerm(body.Content, body.Category)
-			} else {
-				err = s.agent.Remember(body.Content, body.Category)
+				tier, importance = memory.TierLong, .9
 			}
+			_, err := s.agent.WriteMemory(r.Context(), memory.RememberRequest{
+				Content: body.Content, Category: body.Category, Tier: tier, Importance: importance,
+			})
 
 			if err != nil {
-				s.sendError(w, "save memory failed", http.StatusInternalServerError, err.Error())
+				code := http.StatusInternalServerError
+				var rejected *memory.WriteRejectedError
+				if errors.As(err, &rejected) {
+					code = http.StatusBadRequest
+				}
+				s.sendError(w, "save memory failed", code, err.Error())
 				return
 			}
 

@@ -3310,7 +3310,7 @@ type mockAgentProvider struct {
 	skillsVal        []*tool.SkillInfo
 	cronEngine       *cron.Engine
 	metricsVal       *metrics.Metrics
-	memoryVal        *memory.Store
+	memoryVal        memory.Store
 	catalogVal       *provider.ModelCatalog
 	ragVal           *rag.RAGManager
 	embedderReg      *embedder.Registry
@@ -3429,7 +3429,7 @@ func (m *mockAgentProvider) Metrics() *metrics.Metrics {
 	return m.metricsVal
 }
 
-func (m *mockAgentProvider) Memory() *memory.Store {
+func (m *mockAgentProvider) Memory() memory.Store {
 	return m.memoryVal
 }
 

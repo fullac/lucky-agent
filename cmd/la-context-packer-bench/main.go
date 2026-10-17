@@ -345,7 +345,7 @@ func loadBenchmarkDataset(cfg benchConfig) (*benchDataset, func(), error) {
 	}, nil
 }
 
-func seedBenchmarkMemory(store *memory.Store) error {
+func seedBenchmarkMemory(store memory.Store) error {
 	if store == nil {
 		return errors.New("memory store is nil")
 	}
@@ -427,7 +427,7 @@ func seedBenchmarkMemory(store *memory.Store) error {
 	return nil
 }
 
-func loadTraceCases(path string, mgr *session.Manager, store *memory.Store) ([]benchCase, error) {
+func loadTraceCases(path string, mgr *session.Manager, store memory.Store) ([]benchCase, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, nil
@@ -495,7 +495,7 @@ func traceCaseHasContent(tc traceCase) bool {
 	return strings.TrimSpace(tc.Query) != "" || len(tc.Messages) > 0
 }
 
-func buildTraceBenchCase(mgr *session.Manager, store *memory.Store, tc traceCase, index int) (benchCase, error) {
+func buildTraceBenchCase(mgr *session.Manager, store memory.Store, tc traceCase, index int) (benchCase, error) {
 	if mgr == nil {
 		return benchCase{}, errors.New("session manager is nil")
 	}
@@ -556,7 +556,7 @@ func normalizeTraceScenario(scenario, id string) string {
 	return scenario
 }
 
-func saveTraceMemory(store *memory.Store, tm traceMemory) error {
+func saveTraceMemory(store memory.Store, tm traceMemory) error {
 	if store == nil || strings.TrimSpace(tm.Content) == "" {
 		return nil
 	}

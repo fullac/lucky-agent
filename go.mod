@@ -12,9 +12,11 @@ require (
 	github.com/larksuite/oapi-sdk-go/v3 v3.11.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-sqlite3 v1.14.42
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/yuin/goldmark v1.3.5
+	github.com/yurika0211/aestus v0.0.0-20261017084801-26374f3512d6
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.43.0
@@ -22,6 +24,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
 	golang.org/x/net v0.52.0
+	golang.org/x/sys v0.42.0
 	golang.org/x/term v0.41.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478
 	google.golang.org/grpc v1.80.0
@@ -56,7 +59,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect
-	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
@@ -66,7 +68,6 @@ require (
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 )

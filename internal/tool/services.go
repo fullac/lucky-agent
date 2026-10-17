@@ -74,7 +74,7 @@ func (s *Services) ReloadMediaTools(r *Registry, defaultImageProvider string, me
 }
 
 // NewServices creates a tool service container.
-func NewServices(searchCfg *WebSearchConfig, opencliCfg *OpenCLIConfig, defaultImageProvider string, mediaProcessor *multimodal.Processor, imageGenerator multimodal.ImageGenerator, imageGenDefaults ImageGenerationDefaults, speechSynthesizer multimodal.SpeechSynthesizer, ttsDefaults TTSDefaults, mem *memory.Store, ragMgr *rag.RAGManager, delegate *DelegateManager, policies ...FilesystemPolicy) *Services {
+func NewServices(searchCfg *WebSearchConfig, opencliCfg *OpenCLIConfig, defaultImageProvider string, mediaProcessor *multimodal.Processor, imageGenerator multimodal.ImageGenerator, imageGenDefaults ImageGenerationDefaults, speechSynthesizer multimodal.SpeechSynthesizer, ttsDefaults TTSDefaults, mem memory.Store, ragMgr *rag.RAGManager, delegate *DelegateManager, policies ...FilesystemPolicy) *Services {
 	policy := filesystemPolicyFromOptional(policies)
 	return &Services{
 		Builtin:   NewBuiltinToolService(searchCfg, opencliCfg, defaultImageProvider, mediaProcessor, imageGenerator, imageGenDefaults, speechSynthesizer, ttsDefaults, policy),
@@ -97,7 +97,9 @@ func (s *Services) RegisterCoreTools(r *Registry) {
 	}
 
 	if s.Memory != nil {
-		r.Register(MemoryTool(s.Memory.HandleRemember, s.Memory.HandleHygiene, s.Memory.HandleRecall, s.Memory.HandleRecallDetailed))
+		memoryTool := MemoryTool(s.Memory.HandleRemember, s.Memory.HandleHygiene, s.Memory.HandleRecall, s.Memory.HandleRecallDetailed)
+		memoryTool.ContextDetailedHandler = s.Memory.HandleContext
+		r.Register(memoryTool)
 	}
 	if s.RAG != nil {
 		r.Register(RAGSearchTool(s.RAG.HandleSearch))

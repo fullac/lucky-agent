@@ -52,8 +52,10 @@ Important context behavior:
   memory gate, skill routing, session-aware chat.
 - `internal/config`: config loading, defaults, runtime home initialization.
 - `internal/session`: persistent conversation sessions.
-- `internal/memory`: Obsidian-compatible Markdown memory vault, activation,
-  temporal resolution, hygiene.
+- `internal/memory`: provider/SDK-independent memory contracts, evidence DTOs,
+  shared write admission and context presentation.
+- `internal/memoryaestus`: sole Aestus SDK integration for the Markdown vault,
+  recall, session buffers/summaries, maintenance and optional Tidal resources.
 - `internal/rag`: RAG indexing, SQLite persistence, retrieval, stream indexer.
 - `internal/tool`: built-in tools, skill loading, MCP/opencli/web/filesystem
   adapters, cron/autonomy services.
@@ -176,7 +178,7 @@ go test ./internal/server
 go test ./internal/gateway/telegram
 go test ./internal/gateway/napcat
 go test ./internal/gateway/feishu
-go test ./internal/memory ./internal/rag
+go test ./internal/memory ./internal/memoryaestus ./internal/rag
 ```
 
 Large `go test ./...` runs may be noisy or slow; prefer focused packages unless

@@ -18,6 +18,7 @@ import (
 
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/multimodal"
 	"github.com/yurika0211/luckyagent/internal/rag"
 )
@@ -2126,7 +2127,7 @@ func TestFileListToolTruncatesRecursiveOutput(t *testing.T) {
 
 func TestMemoryToolServiceRememberAndRecall(t *testing.T) {
 	dir := t.TempDir()
-	store, err := memory.NewStore(dir)
+	store, err := memoryaestus.NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -2159,7 +2160,7 @@ func TestMemoryToolServiceRememberAndRecall(t *testing.T) {
 }
 
 func TestMemoryToolServiceRecallInjectsLinkedBlock(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -2225,7 +2226,7 @@ func TestMemoryToolServiceRecallInjectsLinkedBlock(t *testing.T) {
 
 func TestMemoryToolServiceRememberLongTerm(t *testing.T) {
 	dir := t.TempDir()
-	store, err := memory.NewStore(dir)
+	store, err := memoryaestus.NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

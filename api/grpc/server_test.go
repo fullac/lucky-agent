@@ -7,6 +7,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/rag"
 	"github.com/yurika0211/luckyagent/internal/workflow"
 )
@@ -63,7 +64,7 @@ func newTestRAGManager() *rag.RAGManager {
 
 func TestServer_HealthCheck(t *testing.T) {
 	// Create test dependencies
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestServer_HealthCheck(t *testing.T) {
 }
 
 func TestServer_MemoryStore(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestServer_MemoryStore(t *testing.T) {
 }
 
 func TestServer_MemoryRecall(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -167,7 +168,7 @@ func TestServer_MemoryRecall(t *testing.T) {
 }
 
 func TestServer_MemoryList(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestServer_MemoryList(t *testing.T) {
 }
 
 func TestServer_MemoryDelete(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -222,7 +223,7 @@ func TestServer_MemoryDelete(t *testing.T) {
 }
 
 func TestServer_WorkflowCreate(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -262,7 +263,7 @@ func TestServer_WorkflowCreate(t *testing.T) {
 }
 
 func TestServer_WorkflowList(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -289,7 +290,7 @@ func TestServer_WorkflowList(t *testing.T) {
 }
 
 func TestGRPCServer_StartStop(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -315,7 +316,7 @@ func TestGRPCServer_StartStop(t *testing.T) {
 }
 
 func TestNewServer(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -349,7 +350,7 @@ var _ embedder.Embedder = (*mockEmbedder)(nil)
 // ── RAG Tests ──────────────────────────────────────
 
 func TestServer_RAGIndex(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -375,7 +376,7 @@ func TestServer_RAGIndex(t *testing.T) {
 }
 
 func TestServer_RAGSearch(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -413,7 +414,7 @@ func TestServer_RAGSearch(t *testing.T) {
 }
 
 func TestServer_RAGSearch_DefaultLimit(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -442,7 +443,7 @@ func TestServer_RAGSearch_DefaultLimit(t *testing.T) {
 // ── Workflow Tests ──────────────────────────────────────
 
 func TestServer_WorkflowGet(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -472,7 +473,7 @@ func TestServer_WorkflowGet(t *testing.T) {
 }
 
 func TestServer_WorkflowGet_NotFound(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -490,7 +491,7 @@ func TestServer_WorkflowGet_NotFound(t *testing.T) {
 }
 
 func TestServer_WorkflowDelete(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -522,7 +523,7 @@ func TestServer_WorkflowDelete(t *testing.T) {
 }
 
 func TestServer_WorkflowDelete_NotFound(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -541,7 +542,7 @@ func TestServer_WorkflowDelete_NotFound(t *testing.T) {
 }
 
 func TestServer_WorkflowStart(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -578,7 +579,7 @@ func TestServer_WorkflowStart(t *testing.T) {
 }
 
 func TestServer_WorkflowStart_NotFound(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -598,7 +599,7 @@ func TestServer_WorkflowStart_NotFound(t *testing.T) {
 }
 
 func TestServer_WorkflowInstanceGet(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -636,7 +637,7 @@ func TestServer_WorkflowInstanceGet(t *testing.T) {
 }
 
 func TestServer_WorkflowInstanceGet_NotFound(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -654,7 +655,7 @@ func TestServer_WorkflowInstanceGet_NotFound(t *testing.T) {
 }
 
 func TestServer_WorkflowToProtoViaGet(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -700,7 +701,7 @@ func TestServer_WorkflowToProtoViaGet(t *testing.T) {
 }
 
 func TestServer_InstanceToProtoViaStart(t *testing.T) {
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create memory store: %v", err)
 	}
@@ -753,4 +754,3 @@ func TestServer_Chat_WithNilAgent(t *testing.T) {
 func TestServer_ChatStream_WithNilAgent(t *testing.T) {
 	t.Skip("ChatStream requires real *agent.Agent, skipping for unit test")
 }
-

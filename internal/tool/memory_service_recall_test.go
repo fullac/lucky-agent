@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 )
 
 func TestMemoryToolServiceRecallJSONWithFilters(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestMemoryToolServiceRecallJSONWithFilters(t *testing.T) {
 }
 
 func TestMemoryToolServiceRecallRejectsBounds(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestMemoryToolServiceRecallRejectsBounds(t *testing.T) {
 }
 
 func TestMemoryToolServiceRecallRecentJSON(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestMemoryToolServiceRecallRecentJSON(t *testing.T) {
 }
 
 func TestMemoryToolServiceRecallDetailedIncludesMemoryTrace(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

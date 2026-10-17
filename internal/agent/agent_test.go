@@ -18,6 +18,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/cron"
 	msggateway "github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/multimodal"
 	"github.com/yurika0211/luckyagent/internal/proactive"
@@ -638,7 +639,7 @@ func TestApplyOpenCLIEnv(t *testing.T) {
 func newTestAgentWithMemory(t *testing.T) *Agent {
 	t.Helper()
 	tmpDir := t.TempDir()
-	memStore, err := memory.NewStore(tmpDir)
+	memStore, err := memoryaestus.NewStore(tmpDir)
 	if err != nil {
 		t.Fatalf("create memory store: %v", err)
 	}
@@ -745,7 +746,7 @@ func TestSaveConversationMemoryDoesNotPersistTruncationEllipsis(t *testing.T) {
 
 func TestSaveConversationMemoryDoesNotStoreRawConversationInMemoryStore(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	a.shortTerm = memory.NewShortTermBuffer(10)
+	a.shortTerm = memoryaestus.NewShortTermBuffer(10)
 
 	a.saveConversationMemory("hello", "hi there")
 
@@ -761,7 +762,7 @@ func TestSaveConversationMemoryDoesNotStoreRawConversationInMemoryStore(t *testi
 
 func TestSaveConversationMemory_ShortTermBuffer(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	a.shortTerm = memory.NewShortTermBuffer(10)
+	a.shortTerm = memoryaestus.NewShortTermBuffer(10)
 
 	a.saveConversationMemory("hello", "hi there")
 
@@ -772,7 +773,7 @@ func TestSaveConversationMemory_ShortTermBuffer(t *testing.T) {
 
 func TestShortTermContextIsIsolatedPerSession(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	a.shortTerms = memory.NewSessionShortTermStore(2)
+	a.shortTerms = memoryaestus.NewSessionShortTermStore(2)
 	sessA := session.NewSession("short-a", t.TempDir())
 	sessB := session.NewSession("short-b", t.TempDir())
 
@@ -1028,9 +1029,13 @@ func TestExpireMidTermMemory_Nil(t *testing.T) {
 // --- buildMessages ---
 
 func TestBuildMessages_Basic(t *testing.T) {
+	store, err := memoryaestus.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := &Agent{
 		soul:   soul.Default(),
-		memory: &memory.Store{},
+		memory: store,
 		tools:  tool.NewRegistry(),
 		skills: nil,
 	}
@@ -1429,7 +1434,7 @@ func TestChatWithSessionStreamPersistsToolContext(t *testing.T) {
 				t.Fatalf("NewManager() error = %v", err)
 			}
 			sess := sessMgr.New()
-			memStore, err := memory.NewStore(t.TempDir())
+			memStore, err := memoryaestus.NewStore(t.TempDir())
 			if err != nil {
 				t.Fatalf("NewStore() error = %v", err)
 			}
@@ -1460,7 +1465,7 @@ func TestChatWithSessionStreamPersistsToolContext(t *testing.T) {
 				provider:   &streamToolThenFinalProvider{},
 				sessions:   sessMgr,
 				memory:     memStore,
-				shortTerm:  memory.NewShortTermBuffer(8),
+				shortTerm:  memoryaestus.NewShortTermBuffer(8),
 				tools:      registry,
 				gateway:    tool.NewGateway(registry),
 				cfg:        cfg,
@@ -1539,7 +1544,7 @@ func TestChatWithSessionStreamTimeoutProducesFinalAnswer(t *testing.T) {
 			if err := cfg.Set("stream_mode", mode); err != nil {
 				t.Fatalf("Set(stream_mode) error = %v", err)
 			}
-			memStore, err := memory.NewStore(t.TempDir())
+			memStore, err := memoryaestus.NewStore(t.TempDir())
 			if err != nil {
 				t.Fatalf("NewStore() error = %v", err)
 			}
@@ -1547,7 +1552,7 @@ func TestChatWithSessionStreamTimeoutProducesFinalAnswer(t *testing.T) {
 				provider:   &timeoutProvider{},
 				sessions:   sessMgr,
 				memory:     memStore,
-				shortTerm:  memory.NewShortTermBuffer(8),
+				shortTerm:  memoryaestus.NewShortTermBuffer(8),
 				tools:      tool.NewRegistry(),
 				gateway:    tool.NewGateway(tool.NewRegistry()),
 				cfg:        cfg,
@@ -1600,7 +1605,7 @@ func TestChatWithSessionStreamRejectsProviderStreamWithoutTerminal(t *testing.T)
 	if err := cfg.Set("stream_mode", "native"); err != nil {
 		t.Fatalf("Set(stream_mode) error = %v", err)
 	}
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
@@ -1608,7 +1613,7 @@ func TestChatWithSessionStreamRejectsProviderStreamWithoutTerminal(t *testing.T)
 		provider:   &unterminatedStreamProvider{},
 		sessions:   sessMgr,
 		memory:     memStore,
-		shortTerm:  memory.NewShortTermBuffer(8),
+		shortTerm:  memoryaestus.NewShortTermBuffer(8),
 		tools:      tool.NewRegistry(),
 		gateway:    tool.NewGateway(tool.NewRegistry()),
 		cfg:        cfg,
@@ -1652,7 +1657,7 @@ func TestChatWithSessionStreamSynthesizesAfterProviderInterruption(t *testing.T)
 	if err := cfg.Set("stream_mode", "native"); err != nil {
 		t.Fatalf("Set(stream_mode) error = %v", err)
 	}
-	memStore, err := memory.NewStore(t.TempDir())
+	memStore, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
@@ -1661,7 +1666,7 @@ func TestChatWithSessionStreamSynthesizesAfterProviderInterruption(t *testing.T)
 		provider:   &recoverableUnterminatedStreamProvider{messages: &synthesisMessages},
 		sessions:   sessMgr,
 		memory:     memStore,
-		shortTerm:  memory.NewShortTermBuffer(8),
+		shortTerm:  memoryaestus.NewShortTermBuffer(8),
 		tools:      tool.NewRegistry(),
 		gateway:    tool.NewGateway(tool.NewRegistry()),
 		cfg:        cfg,

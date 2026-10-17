@@ -66,7 +66,7 @@ func (s *Server) handleMemoryRecallTrace(w http.ResponseWriter, r *http.Request)
 	s.sendJSON(w, http.StatusOK, trace)
 }
 
-func recallTraceVaultPath(store *memory.Store) string {
+func recallTraceVaultPath(store memory.Store) string {
 	if store == nil || strings.TrimSpace(store.Dir()) == "" {
 		return "~/.luckyagent/memory"
 	}

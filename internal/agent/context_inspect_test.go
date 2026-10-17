@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/yurika0211/luckyagent/internal/contextx"
-	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/session"
 )
 
@@ -96,7 +96,7 @@ func TestInspectContextIncludeMessagesCopiesContent(t *testing.T) {
 }
 
 func TestInspectContextTwiceDoesNotChangeMemory(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

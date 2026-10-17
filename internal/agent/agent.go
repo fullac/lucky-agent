@@ -28,6 +28,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/hook"
 	"github.com/yurika0211/luckyagent/internal/logger"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/middleware"
 	"github.com/yurika0211/luckyagent/internal/multimodal"
@@ -76,9 +77,9 @@ type providerRuntime struct {
  * memoryRuntime 管理内存存储及其相关的短期和中期缓冲区。
  */
 type memoryRuntime struct {
-	store     *memory.Store
-	shortTerm *memory.SessionShortTermStore
-	mid       *memory.MidTermStore
+	store     memory.Store
+	shortTerm memory.SessionShortTermStore
+	mid       memory.MidTermStore
 	sessions  *session.Manager
 }
 
@@ -125,13 +126,13 @@ type Agent struct {
 	catalog          *provider.ModelCatalog // 模型目录
 	modelDiscovery   *provider.ModelDiscovery
 	tokenStore       *provider.TokenStore // token 存储
-	memory           *memory.Store
+	memory           memory.Store
 	// shortTerm is retained only for source compatibility with older in-package
 	// tests/callers. New agents leave it nil; production conversation state is
 	// owned by shortTerms and keyed by session ID.
-	shortTerm     *memory.ShortTermBuffer
-	shortTerms    *memory.SessionShortTermStore
-	midTerm       *memory.MidTermStore // 中期会话摘要存储
+	shortTerm     memory.ShortTermBuffer
+	shortTerms    memory.SessionShortTermStore
+	midTerm       memory.MidTermStore // 中期会话摘要存储
 	sessions      *session.Manager
 	tools         *tool.Registry
 	toolServices  *tool.Services
@@ -477,17 +478,17 @@ func buildConfiguredProvider(c *config.Config, registry *provider.Registry) (pro
  * initMemoryRuntime 初始化内存运行时，包括创建内存存储和短/中期记忆缓冲区。
  */
 func initMemoryRuntime(cfg *config.Manager, c *config.Config) (memoryRuntime, error) {
-	mem, err := memory.NewStore(cfg.HomeDir() + "/memory")
+	mem, err := memoryaestus.NewStore(cfg.HomeDir() + "/memory")
 	if err != nil {
 		return memoryRuntime{}, fmt.Errorf("init memory: %w", err)
 	}
 	if c.Memory.Tidal.Enabled {
-		tidalStore, err := memory.OpenTidalStore(tidalMemoryStorePath(cfg.HomeDir(), c.Memory.Tidal.StorePath))
+		tidalStore, err := memoryaestus.OpenTidalStore(tidalMemoryStorePath(cfg.HomeDir(), c.Memory.Tidal.StorePath))
 		if err != nil {
 			_ = mem.Close()
 			return memoryRuntime{}, fmt.Errorf("init tidal memory store: %w", err)
 		}
-		tidalReranker, err := memory.NewPersistentTidalMemoryReranker(tidalRerankerConfig(c.Memory.Tidal), tidalStore)
+		tidalReranker, err := memoryaestus.NewPersistentTidalMemoryReranker(tidalRerankerConfig(c.Memory.Tidal), tidalStore)
 		if err != nil {
 			_ = tidalStore.Close()
 			_ = mem.Close()
@@ -500,13 +501,13 @@ func initMemoryRuntime(cfg *config.Manager, c *config.Config) (memoryRuntime, er
 	if shortTermMaxTurns <= 0 {
 		shortTermMaxTurns = 10
 	}
-	shortTerms := memory.NewSessionShortTermStore(shortTermMaxTurns)
+	shortTerms := memoryaestus.NewSessionShortTermStore(shortTermMaxTurns)
 
 	midTermMaxSummaries := c.Memory.MidTermMaxSummaries
 	if midTermMaxSummaries <= 0 {
 		midTermMaxSummaries = 100
 	}
-	midTerm, err := memory.NewMidTermStore(filepath.Join(cfg.HomeDir(), "memory", "30_Sessions"), midTermMaxSummaries)
+	midTerm, err := memoryaestus.NewMidTermStore(filepath.Join(cfg.HomeDir(), "memory", "30_Sessions"), midTermMaxSummaries)
 	if err != nil {
 		_ = mem.Close()
 		return memoryRuntime{}, fmt.Errorf("init midterm store: %w", err)
@@ -527,7 +528,7 @@ func initMemoryRuntime(cfg *config.Manager, c *config.Config) (memoryRuntime, er
 }
 
 func tidalRerankerConfig(cfg config.TidalMemoryConfig) memory.TidalRerankerConfig {
-	out := memory.DefaultTidalRerankerConfig()
+	out := memoryaestus.DefaultTidalRerankerConfig()
 	out.Beta = cfg.Beta
 	out.MaxBoost = cfg.MaxBoost
 	out.LearningRate = cfg.LearningRate
@@ -687,7 +688,7 @@ func initRAGRuntime(cfg *config.Manager, c *config.Config) (ragRuntime, error) {
 /**
  * initSupportRuntime 初始化支持运行时，包括注册工具、设置搜索配置和初始化多媒体处理器。
  */
-func initSupportRuntime(c *config.Config, mem *memory.Store, ragMgr *rag.RAGManager) supportRuntime {
+func initSupportRuntime(c *config.Config, mem memory.Store, ragMgr *rag.RAGManager) supportRuntime {
 	tools := tool.NewRegistry()
 	searchCfg := &tool.WebSearchConfig{
 		Provider:   c.WebSearch.Provider,
@@ -3693,7 +3694,7 @@ func (a *Agent) buildMemoryContextForSession(sess *session.Session, messages []p
 	var memCtx strings.Builder
 
 	// 长期记忆：全部注入（核心身份/偏好）
-	longs := a.memory.ByTier(memory.TierLong)
+	longs := a.memory.ByTierWithOptions(memory.TierLong, memory.RouteOptions{})
 	if len(longs) > 0 {
 		memCtx.WriteString("[Core Memory — Long-term]\n")
 		for _, e := range longs {
@@ -3766,7 +3767,7 @@ func (a *Agent) saveConversationMemoryFromTurn(turnInput UserTurnInput, assistan
 // The legacy field is only a compatibility fallback for older in-package
 // callers that construct Agent values directly; New always initializes
 // shortTerms and leaves shortTerm nil.
-func (a *Agent) shortTermBufferForSession(sess *session.Session, create bool) *memory.ShortTermBuffer {
+func (a *Agent) shortTermBufferForSession(sess *session.Session, create bool) memory.ShortTermBuffer {
 	if a == nil {
 		return nil
 	}
@@ -3823,10 +3824,11 @@ func (a *Agent) saveConversationMemoryFromSession(sess *session.Session, turnInp
 		userImportance := inferImportance(userInput)
 		content := utils.TrimToRunes(userInput, 180)
 		tags := turnInput.Scope.MemoryTags()
-		if len(tags) > 0 {
-			_ = a.memory.SaveWithOptions(content, userCategory, memory.TierShort, userImportance, memory.SaveOptions{Tags: tags})
-		} else {
-			_ = a.memory.SaveWithTier(content, userCategory, memory.TierShort, userImportance)
+		if _, err := memory.Write(context.Background(), a.memory, memory.RememberRequest{
+			Content: content, Category: userCategory, Tier: memory.TierShort, Importance: userImportance,
+			Options: memory.SaveOptions{Tags: tags}, EntryFilter: memory.ExactScope(tags),
+		}); err != nil {
+			logger.Warn("automatic memory capture failed", "category", userCategory, "error", err)
 		}
 	}
 }
@@ -3943,7 +3945,7 @@ func (a *Agent) autoSummarize() {
 		for _, s := range shorts {
 			turns = append(turns, memory.ConversationTurn{Role: "user", Content: s.Content})
 		}
-		sessionSummary := memory.GenerateSessionSummary(
+		sessionSummary := memoryaestus.GenerateSessionSummary(
 			fmt.Sprintf("auto-%d", time.Now().UnixNano()),
 			"default",
 			turns,
@@ -3956,12 +3958,23 @@ func (a *Agent) autoSummarize() {
 
 // Remember 保存一条中期记忆
 func (a *Agent) Remember(content, category string) error {
-	return a.memory.Save(content, category)
+	_, err := a.WriteMemory(context.Background(), memory.RememberRequest{
+		Content: content, Category: category, Tier: memory.TierMedium, Importance: .5,
+	})
+	return err
 }
 
 // RememberLongTerm 保存一条长期记忆
 func (a *Agent) RememberLongTerm(content, category string) error {
-	return a.memory.SaveLongTerm(content, category)
+	_, err := a.WriteMemory(context.Background(), memory.RememberRequest{
+		Content: content, Category: category, Tier: memory.TierLong, Importance: .9,
+	})
+	return err
+}
+
+// WriteMemory is the typed, cancellable host write boundary used by transports.
+func (a *Agent) WriteMemory(ctx context.Context, request memory.RememberRequest) (memory.RememberResult, error) {
+	return memory.Write(ctx, a.memory, request)
 }
 
 // Recall 搜索记忆
@@ -3987,7 +4000,9 @@ func (a *Agent) TidalMemoryStats() (memory.TidalStoreStats, bool, error) {
 	if a == nil || a.memory == nil {
 		return memory.TidalStoreStats{}, false, nil
 	}
-	reranker, ok := a.memory.ActivationReranker().(*memory.TidalMemoryReranker)
+	reranker, ok := a.memory.ActivationReranker().(interface {
+		StoreStats() (memory.TidalStoreStats, error)
+	})
 	if !ok || reranker == nil {
 		return memory.TidalStoreStats{}, false, nil
 	}
@@ -4574,12 +4589,21 @@ func (a *Agent) CronStore() *cron.Store {
 }
 
 // Memory 返回记忆存储
-func (a *Agent) Memory() *memory.Store {
+func (a *Agent) Memory() memory.Store {
+	return a.memory
+}
+
+// ContextMemory exposes only the evidence and feedback operations used while
+// planning a turn. Context assembly cannot write facts or invoke maintenance.
+func (a *Agent) ContextMemory() memory.ContextReader {
+	if a == nil {
+		return nil
+	}
 	return a.memory
 }
 
 // MidTermStore returns the store used for query-aware session summaries.
-func (a *Agent) MidTermStore() *memory.MidTermStore {
+func (a *Agent) MidTermStore() memory.MidTermStore {
 	if a == nil {
 		return nil
 	}

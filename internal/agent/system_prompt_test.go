@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/yurika0211/luckyagent/internal/config"
-	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/soul"
 	"github.com/yurika0211/luckyagent/internal/tool"
@@ -332,7 +332,7 @@ func TestBuildSystemPromptPinsLuckyAgentMarkdownMemoryVault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManagerWithDir: %v", err)
 	}
-	memStore, err := memory.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
+	memStore, err := memoryaestus.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
