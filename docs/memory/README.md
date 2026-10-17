@@ -1,6 +1,6 @@
 # LuckyAgent 记忆系统研究
 
-关于当前源码的职责边界与渐进重构，参见 [记忆系统解耦研究](decoupling.md)；该文以明确的提交基线区分现状与提案。
+关于直接引用 Aestus Go module / SDK 的职责边界与迁移顺序，参见 [记忆系统解耦研究](decoupling.md)；该文以明确的提交基线区分现状与提案。
 
 本文基于当前代码研究 LuckyAgent 的记忆系统。结论以 `internal/memory`、`internal/agent`、`internal/tool`、`internal/server`、`internal/cli/lhcmd` 和相关测试为准。
 

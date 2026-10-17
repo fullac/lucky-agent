@@ -1,8 +1,19 @@
-# 记忆系统解耦研究
+# 记忆系统解耦研究：直接接入 Aestus
 
 研究基线：`master` 的 `b2df9cc`，分支 `research/memory-decoupling`，2026-10-17。本文件是研究提案，尚未实施功能重构。MCP PR #292 仍开放，未把该 PR 或其他未合并分支当作主分支现状。
 
-建议先建立记忆读写的应用边界，再逐步拆分会话状态、仓储和召回实现。现有 `internal/memory` 已有存储、图召回和重排扩展点，单纯再移动目录不能解决上层的规则分散与具体类型依赖。
+目标已调整为：**LuckyAgent 通过 Go module 直接依赖 Aestus，由薄适配器接入；记忆引擎的演进归 Aestus。** LuckyAgent 只保留记忆使用场景、准入与权限、上下文组装及工具执行。之前“先拆内部仓储/召回引擎”的方向不再作为最终实施方案。
+
+## Aestus 已有能力与 SDK 状态
+
+2026-10-17 核对 [Aestus main `468db80`](https://github.com/yurika0211/aestus/tree/468db804c97fc2f043efe4836a35f0c12c663ba6)：
+
+- [README](https://github.com/yurika0211/aestus/blob/468db804c97fc2f043efe4836a35f0c12c663ba6/README.md) 已公开 `github.com/yurika0211/aestus/memory`，明确允许 LuckyAgent 作为普通 Go module 使用。它已是库式接入入口；“等 SDK”应理解为等接口与版本契约稳定，不能假定将来一定是远程客户端。
+- 当前可调用 `NewStore`、`SaveWithOptionsResult`、`SearchWithOptions`、`RouteWithOptions` 和 `Close`；短期缓存、中期摘要、维护、策略、Tidal 已有分包。这些是当前 API，以下 LuckyAgent 端口是提案，两者不可混称。
+- GitHub tags 与 issues 查询均为空；本次未找到正式 SDK 发布版本或承诺时间。接入时锁定经验证的 tag；没有 tag 时锁 commit，由 Go 记录 pseudo-version 与校验和，避免追踪浮动 main。
+- [Aestus go.mod](https://github.com/yurika0211/aestus/blob/468db804c97fc2f043efe4836a35f0c12c663ba6/go.mod) 声明 Go 1.27.0，LuckyAgent 当前声明 Go 1.25.0；实际接入前必须决定兼容版本或协调工具链升级。适配器不能消除上游编译依赖，Tidal/SQLite 的依赖也需检查实际 import 图。
+
+优先直接引用公开 Go 包。只有 SDK 最终要求独立服务，或出现跨进程共享需求时，才增加 HTTP adapter；目前不为此新建服务或设计未存在的远程 API。
 
 ## 先分清四类数据
 
@@ -11,7 +22,7 @@
 | 原始会话与恢复状态 | `internal/session` | 保持会话事实源，不自动等同于可复用事实 |
 | 短期窗口与压缩摘要 | `memory.SessionShortTermStore` / `ShortTermBuffer` | 会话状态生命周期；消息转换留在宿主适配器 |
 | 可检索会话摘要 | `memory.MidTermStore` | 独立摘要读写端口，保留 session 来源及后续可见性约束 |
-| 可复用事实、偏好、规则 | `memory.Store` 的 Markdown vault | 记忆应用服务与可替换仓储 |
+| 可复用事实、偏好、规则 | `memory.Store` 的 Markdown vault | 通过 Aestus adapter 交给上游记忆引擎 |
 
 RAG 继续负责索引资料检索。`TierShort` 是已落盘记忆条目的层级/衰减标签，不等于易失的短期会话窗口。`Store` 与 `MidTermStore` 目前都使用 vault 下的 `30_Sessions`，但使用不同记录类型；逻辑分离不要求立刻搬迁这些文件。
 
@@ -26,7 +37,7 @@ RAG 继续负责索引资料检索。`TierShort` 是已落盘记忆条目的层�
 | `server/server.go`（handleMemory） | HTTP POST 通过 Agent 的 Remember 方法直达 Store，没有复用工具层的完整准入检查 | 让各入口调用同一写入用例；统一规则属于单独的行为变更 |
 | `agent/context_planner.go`（contextRuntime / buildRelevantMemoryMessage） | planner 虽已有 contextRuntime 接口，仍要求具体 `*memory.Store` / `*memory.MidTermStore`，并自己组装证据和策略提示 | Reader 返回类型化证据，planner 保留预算与 provider 呈现 |
 | `memory/memory.go`（RouteWithOptions） | 在激活/候选截断后才执行调用方的 `EntryFilter`；工具 SearchOptions 没有同样的作用域端口 | 在候选、图传播、排序与状态解析前建立统一可见集合 |
-| `memory/tidal_store.go` | 可选 Tidal SQLite 实现在同一 Go 包中，禁用功能也不会移除包级编译依赖 | 延用已有 ActivationReranker 端口，后续独立 Tidal adapter |
+| `memory/tidal_store.go` | 可选 Tidal SQLite 实现在同一 Go 包中，禁用功能也不会移除包级编译依赖 | 随引擎复用 Aestus 的实现；不在 LuckyAgent 再维护一套 Tidal |
 
 以上是源码事实，不等于已证明存在跨用户数据泄露。当前可见性依赖调用路径；需要统一契约，并以不同身份、相同查询的契约测试验证。
 
@@ -44,21 +55,27 @@ RAG 继续负责索引资料检索。`TierShort` 是已落盘记忆条目的层�
 
 `route_policies` 的数据格式可以保留。当前策略求值是类型化的数据匹配，没有直接运行工具；真正的 `PolicySafe`、禁用工具核验和 provider.ToolCall 构造位于 `agent/memory_gate.go`。这个执行边界应保留。是否进一步抽出独立策略解释器，取决于第二个消费者是否需要它，不先造通用规则平台。
 
-## 推荐的应用边界
+## 推荐边界：宿主用例 → Aestus adapter → 上游 SDK
 
 ```text
 Agent / 工具 / HTTP
-       │ 只依赖所需读写端口
+       │
        ▼
-记忆应用服务：准入、可信作用域、召回、状态更新
-       │                     └─ 类型化证据 / 策略信号
-       ▼                                     ▼
-Markdown 仓储                         上下文呈现 / 工具门禁
+LuckyAgent 记忆用例：捕获意图、写入准入、可信作用域
+       │ Reader / Writer；只保留消费者需要的契约
+       ▼
+internal/memoryaestus：SDK 调用、参数/错误/证据映射
+       │ Go module，锁定版本
+       ▼
+Aestus：存储、去重、图召回、时态解析、维护 → Markdown vault
 
-会话状态与摘要：独立生命周期，由宿主关联，不并入事实写入接口。
+证据沿调用链返回 → LuckyAgent 上下文预算、provider 消息、工具门禁。
+会话历史与 RAG 保持各自事实源；缓存/摘要可复用 Aestus，但生命周期归宿主。
 ```
 
-以下是候选端口，不是已存在的 API；接口可放在消费方或小契约包，避免新建一个包含所有管理功能的大接口：
+建议把原 `internal/memory` 收缩为宿主用例和小契约，新增 `internal/memoryaestus` 作为唯一引入 Aestus 的生产包。装配根创建/关闭 adapter，并把 Reader、Writer 注入消费者；Agent、tool、server、context planner 不直接创建上游 Store，也不穿透 adapter 访问 SDK。
+
+以下是候选端口，不是 Aestus 现有或已承诺的 SDK 方法：
 
 ```go
 type MemoryReader interface {
@@ -70,27 +87,46 @@ type MemoryWriter interface {
 }
 ```
 
-请求需要明确的查询/写入意图、由宿主绑定的记忆命名空间、时间与限额。聊天 `turn.Scope` 可以由 adapter 映射，但不应直接充当完整授权；模型参数不能自行选择另一个用户的命名空间。管理员查看非 active 记录应是显式管理能力。
+按实际消费者定义最小 DTO：RecallRequest 携带查询意图、可信作用域、时间和条数；RecallResult 返回证据正文/摘录、ID、来源路径与 heading/block 定位、必要时态信息及策略信号；RememberRequest 携带已校验的内容、分类、保留策略与来源；WriteResult 返回上游 ID、引用和 created/updated 结果。不要把 Aestus 的所有配置和数据结构翻译成另一套通用 SDK。
 
-结果尽量复用现有中立 Entry、摘录、来源引用、时态状态与保存结果，不另建一套同义数据模型。上下文 token 预算、消息角色、工具审批和执行继续归宿主。召回是否更新访问计数、是否写反馈要显式，便于检查接口保持只读。
+小契约可以复用 LuckyAgent 已有的中立值模型；不能用 `type Entry = aestus.Entry` 将上游类型重新导出到整个运行时。完整元数据由 Aestus 持久化，adapter 不写 Markdown、不重算排名、不自行推断时态。诊断/管理视图确需的字段通过专用投影增加，不把每个 SDK 方法镜像成接口。
 
-Writer 内部协调原子状态更新；仓储决定如何实现版本检查、提交失败恢复与持久化。Markdown 继续是事实源，图索引与 Tidal 数据保持派生状态，不能引入第二个不一致的权威副本。
+### 职责如何分配
 
-第一阶段可以让现有 Store 支撑这些端口。随后再按需要分离 RecallEngine、VaultRepository 和 Tidal adapter。单独包/模块发布需要检查整个 Go import 图：只把消费者字段改成接口，还不能移除同包的 provider、SQLite 依赖。
+| LuckyAgent 保留 | Aestus 提供 | 薄适配器负责 |
+| --- | --- | --- |
+| 何时抽取、用户是否要求记住、内容准入、当前身份与可见范围 | Markdown 读写、格式、去重、索引、图召回/重排、时态解析、维护算法 | 将宿主意图和作用域映射到实际支持的 SDK 调用 |
+| 会话恢复/清理、摘要触发与 LLM 调用、RAG 资料检索 | 可复用的短期缓冲、中期摘要存储等库组件 | 按需封装组件；不复制算法到 LuckyAgent |
+| token 预算、provider.Message、最新用户指令优先、工具审批与执行 | 结构化证据、定位信息、可支持的策略求值结果 | 返回中立证据与信号，保留来源；不执行模型或工具 |
+| 运行时装配、停机、配置、错误呈现、观测 | 实际支持的持久化/维护/关闭能力 | 管理 SDK 生命周期、版本差异和错误映射 |
+
+首次只迁持久事实读写与召回。现有会话缓存可暂留，但随后按需复用 Aestus 分包，避免长期保留同源实现；即使使用库中的缓存，session ID、清理时机和摘要触发仍由 LuckyAgent 决定。
+
+### SDK 接入前必须验证的边界
+
+1. **作用域必须在召回前生效。** `turn.Scope` 由宿主身份映射，不由模型自由填写 namespace。当前 Aestus `RouteOptions` 只有 EntryFilter，`RouteWithOptions` 先 Activate 再过滤，SearchOptions 也没有 namespace。不能用最终结果过滤宣称图传播、top-K 或状态解析已隔离。需要上游提供候选前作用域能力，或由 adapter 选择按可信范围物理隔离的 Store/vault；共享记忆的组合检索与排序需要单独验证，不能把标签当权限。
+2. **状态更新不能假称原子。** 当前仍是 ActiveStateIDs / SaveWithOptionsResult / SupersedeEntries 等独立方法。需要的原子 upsert、失败恢复和幂等契约应在 Aestus 提供与测试。LuckyAgent 不新写一套状态引擎，也不把三次调用或进程内 mutex 包装成跨进程/崩溃安全事务。迁移期间保留旧语义必须明确标注；要求原子保证的操作在能力缺失时返回不支持。
+3. **取消与错误遵循实际能力。** 当前这些 Store 方法没有 context.Context，有的召回只返回结果不返回 error。宿主端口可以接受 context，但 adapter 只能保证调用前取消检查，不能假装能中断 SDK 内部读写，也不能用超时 goroutine 掩盖已发生的写入。禁止自动重试不确定是否已提交的写入。
+4. **只读与反馈要显式。** 当前 Search 可更新访问统计。交互召回、诊断查询和反馈写入需区分，不把一次 GET/检查默认为无副作用。上游缺少的能力按真实需求逐项补齐，不先造能力注册平台。
 
 ## 实施顺序与验收
 
-1. **记录兼容契约并建立端口**：覆盖 HTTP、工具、自动捕获的现有差异；去掉短期缓存的 provider 消息转换依赖；先迁移一个实际消费者验证边界。
-2. **统一写入与查询语义**：收拢准入、分类、状态更新、作用域和错误回传。规则变化单独列出，包括 HTTP/自动捕获之前能保存而之后会拒绝的内容，避免假称无行为变化。
-3. **分离生命周期与实现**：会话摘要/维护通过中立事件或明确方法触发；按需拆出 Tidal 与仓储适配器。只保留一条生产读写链，兼容方法只转发。
+1. **现在：收缩宿主依赖。** 记录工具、HTTP、自动捕获、context、CLI/管理入口的行为，定义消费者端口。必要时用现有 Store 的临时 adapter 验证边界，但不继续拆建内部记忆引擎。本次仅改研究文档，尚未创建这些代码。
+2. **SDK 可接入时：只实现 Aestus adapter。** 锁定版本，解决 Go 工具链兼容，在临时 vault 对真实 SDK 跑契约测试；先覆盖写入→召回→证据进入 context 的完整用例，再覆盖 core memory、状态更新、维护及管理路径。功能缺口优先补 Aestus。
+3. **整体切换：一条读写链。** 备份实际 vault，在副本验证格式和读写兼容后，保留现有 `${home}/memory` 路径切换所有入口。删除旧 Store/graph/tidal 等重复实现；兼容方法只能转发。不要做生产双写，也不要在 Aestus 故障时静默回退写入旧引擎。
+4. **后续升级：适配器吸收变化。** 将来正式 SDK 改 import path 或调用方式时，预期改动集中于 adapter 和装配根，并重跑契约测试。SDK 的实际语义变化仍需审查，不能承诺所有升级对宿主完全无感。
+
+接入可先沿用现有 `memory` 配置，由装配根映射；没有第二个生产 backend 时，不新增 `backend=legacy|aestus` 等长期切换开关。将来确有远程 SDK 再增加真实需要的地址/凭据配置。
 
 关键验收不是行数，而是：
 
-- 不创建 Agent、不配置 LLM，也能对临时 vault 保存、召回、状态替换和关闭。
+- 不创建 Agent、不配置 LLM，也能对真实 Aestus adapter 的临时 vault 保存、召回、检查支持的状态更新语义并关闭。Fake 仅验证宿主编排，不能代替 SDK 契约测试。
 - 同一有效请求经不同入口得到一致领域结果；呈现失败不会造成“错误回执但已写入”的隐式副作用。
 - 不同作用域在图传播、top-K 和状态解析时保持一致，不能只在最终列表过滤。
 - 保留笔记 ID、相对路径、wikilink、heading/block 定位、历史记录和可重建索引。
 - 并发状态更新、写入失败、重试、只读检查及会话清理有明确契约测试。
+- SDK 不可用时区分“记忆不可用”和“查无记忆”；显式 remember 不报成功，自动捕获失败可观察。是否继续生成回复属于宿主策略，不触发另一套持久化。
+- 生产 Aestus import 只出现在适配包；核心运行时不依赖 SDK DTO，旧引擎没有剩余生产调用路径。升级前后用相同 fixture 检查语义兼容。
 
 ## 与相邻工作的衔接
 
@@ -104,4 +140,4 @@ LangGraph 将跨会话 Store 与线程级 checkpointer 分开，并用 namespace
 
 Google ADK 将 Session/State 与 MemoryService 区分，并由 Runner 注入服务。可借鉴服务边界；其部分实现保存完整会话的行为，不直接套用到 LuckyAgent 的事实写入准入。参见 [官方 MemoryService 文档](https://github.com/google/adk-docs/blob/main/docs/sessions/memory.md)。
 
-独立 HTTP 服务适合出现跨进程共享与运维需求后再评估；目前优先做进程内边界，保留未来服务 adapter 的出口。暂不替换数据库、重写评分算法或迁移用户 vault。
+该服务边界用于接入 Aestus，不意味着 LuckyAgent 另建通用记忆平台。SDK 适配包不放在 tools 中：工具只是入口之一，自动召回、HTTP 和维护也必须能使用同一后端。
