@@ -49,3 +49,7 @@ HOOKS_INIT_INTEGRATION.md
 PROACTIVE_CONFIG_GUIDE.md
 dist/lh.exe
 pocketbase.pid
+
+# Local multi-module development only
+go.work
+go.work.sum
