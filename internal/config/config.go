@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	toolopencli "github.com/yurika0211/luckyagent-tools/opencli"
 )
 
 // Config 代表 LuckyAgent 的运行时配置
@@ -768,15 +770,8 @@ type WebSearchConfig struct {
 	Proxy      string `json:"proxy,omitempty"`       // HTTP/SOCKS5 代理
 }
 
-// OpenCLIConfig OpenCLI 内容抽取配置
-type OpenCLIConfig struct {
-	Enabled            bool     `json:"enabled,omitempty"`               // 是否启用 OpenCLI 抽取器
-	Command            string   `json:"command,omitempty"`               // 可执行文件名，默认 opencli
-	Args               []string `json:"args,omitempty"`                  // 参数模板，支持 {url} / {max_chars} 占位符
-	TimeoutSeconds     int      `json:"timeout_seconds,omitempty"`       // 超时时间（秒）
-	MaxChars           int      `json:"max_chars,omitempty"`             // 默认最大返回字符数
-	FallbackToWebFetch bool     `json:"fallback_to_web_fetch,omitempty"` // OpenCLI 失败后是否回退到 web_fetch
-}
+// OpenCLIConfig is shared with the standalone tool module.
+type OpenCLIConfig = toolopencli.Config
 
 // CodexConfig configures the optional local Codex App Server bridge. The
 // bridge is deliberately disabled by default; enabling it exposes codex.*

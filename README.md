@@ -183,6 +183,7 @@ lh rag search "deployment"
 - [使用场景](docs/wiki/使用场景.md)：本地调试、知识库问答、机器人和团队 API
 - [HTTP API](docs/API.md)
 - [消息网关与服务接口的模块边界](docs/edge-modules.md)
+- [独立工具模块与宿主适配](docs/tool-module.md)
 - [Codex App Server 集成](docs/codex-app-server.md)
 - [Grok agent 集成](docs/grok-agent.md)
 - [记忆系统](docs/memory_system.md)
@@ -229,7 +230,8 @@ internal/agent           Agent 核心运行时和 Agent loop
 internal/config          配置加载、默认值和运行目录
 internal/memory          Markdown 记忆 vault 和召回
 internal/rag             RAG 索引、检索和持久化
-internal/tool            工具、技能、MCP 和 OpenCLI
+internal/tool            独立工具模块与宿主适配的兼容入口
+internal/toolapp         记忆、任务、多模态等工具的宿主适配
 internal/server           HTTP API、SSE 和 WebSocket
 internal/gateway          Telegram、QQ、飞书、微信等消息网关
 docker-compose.yml       开发环境 Compose

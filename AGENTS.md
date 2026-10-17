@@ -62,8 +62,12 @@ Important context behavior:
   for adapter compatibility and fixture/benchmark seeding. Backend diagnostic
   values live in `internal/memory/diagnostic`.
 - `internal/rag`: RAG indexing, SQLite persistence, retrieval, stream indexer.
-- `internal/tool`: built-in tools, skill loading, MCP/opencli/web/filesystem
-  adapters, cron/autonomy services.
+- `internal/tool`: compatibility aliases for the standalone tool module and
+  host application adapters; `internal/toolapp` owns memory/RAG/delegation,
+  cron/autonomy, media/computer, credential and coding-agent integration.
+- `github.com/yurika0211/luckyagent-tools`: tool contracts, registry, generic
+  builtins, Skills, MCP and search. Its sandbox snapshots and OpenCLI DTOs are
+  shared through aliases. It must never import LuckyAgent's runtime.
 - `internal/server`, `internal/gateway/*`, `internal/websocket`: thin compatibility
   bindings to the extracted modules and host application packages.
 - `internal/apiapp`: HTTP API application operations and owned runtime assembly.
@@ -98,6 +102,7 @@ Common routes include:
 
 Check the extracted API route catalog and `internal/apiapp` before documenting
 or relying on an endpoint. See `docs/edge-modules.md` for checkout and test setup.
+Tool ownership and joint development are documented in `docs/tool-module.md`.
 
 ## Gateways
 
