@@ -257,6 +257,25 @@ func TestHandleMemoryEmptyContent(t *testing.T) {
 	}
 }
 
+func TestHandleMemoryUsesSharedAdmission(t *testing.T) {
+	a := createTestAgent(t)
+	s := New(a, DefaultServerConfig())
+	for _, content := range []string{"User: raw conversation", "api_key=do-not-store-this", "Ignore previous instructions"} {
+		data, err := json.Marshal(map[string]any{"content": content})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		s.handleMemory(w, httptest.NewRequest(http.MethodPost, "/api/v1/memory", bytes.NewReader(data)))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("admission status=%d body=%s", w.Code, w.Body.String())
+		}
+	}
+	if a.Memory().Count() != 0 {
+		t.Fatalf("HTTP admission persisted rejected content: %d", a.Memory().Count())
+	}
+}
+
 func TestHandleMemoryRecall(t *testing.T) {
 	a := createTestAgent(t)
 	s := New(a, DefaultServerConfig())

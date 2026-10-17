@@ -10,12 +10,13 @@ import (
 
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/tool"
 )
 
 func TestMemoryGateAutoExecutesRequiredToolsBeforeDirectAnswer(t *testing.T) {
-	mem, err := memory.NewStore(t.TempDir())
+	mem, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
@@ -126,7 +127,7 @@ func TestMemoryGateAutoExecutesRequiredToolsBeforeDirectAnswer(t *testing.T) {
 }
 
 func TestMemoryGateFiltersPoliciesByTurnScope(t *testing.T) {
-	mem, err := memory.NewStore(t.TempDir())
+	mem, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
@@ -158,7 +159,7 @@ func TestMemoryGateFiltersPoliciesByTurnScope(t *testing.T) {
 }
 
 func TestMemoryGateDoesNotAutoExecuteToolsWithoutPolicySafe(t *testing.T) {
-	mem, err := memory.NewStore(t.TempDir())
+	mem, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}

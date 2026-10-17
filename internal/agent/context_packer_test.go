@@ -271,7 +271,7 @@ func TestBuildHistoryMessagesRedactsHistoricalMediaPaths(t *testing.T) {
 
 func TestContextPlannerPlacesDynamicMemoryAfterStableSessionHistory(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	if err := a.memory.SaveWithTier("cache-layout-memory-marker", "project", memory.TierLong, 0.9); err != nil {
+	if err := fixtureMemory(a).SaveWithTier("cache-layout-memory-marker", "project", memory.TierLong, 0.9); err != nil {
 		t.Fatalf("save memory marker: %v", err)
 	}
 	sess := newTestSession(t)

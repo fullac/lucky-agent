@@ -101,7 +101,7 @@ type Runtime interface {
 	Skills() []*tool.SkillInfo
 	CronEngine() *cron.Engine
 	RAG() *rag.RAGManager
-	Memory() *memory.Store
+	Memory() memory.Inspector
 	Remember(string, string) error
 	RememberLongTerm(string, string) error
 	Recall(string) []memory.Entry

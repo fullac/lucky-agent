@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 )
 
 type benchConfig struct {
@@ -278,12 +279,12 @@ func runTidalRecord(cfg benchConfig, ds *benchDataset, mode string, round int, q
 	return record
 }
 
-func pretrainedTidalReranker() *memory.TidalMemoryReranker {
-	cfg := memory.DefaultTidalRerankerConfig()
+func pretrainedTidalReranker() *memoryaestus.TidalMemoryReranker {
+	cfg := memoryaestus.DefaultTidalRerankerConfig()
 	cfg.Beta = 1.0
 	cfg.MaxBoost = 1.0
 	cfg.LearningRate = 1.0
-	reranker := memory.NewTidalMemoryReranker(cfg)
+	reranker := memoryaestus.NewTidalMemoryReranker(cfg)
 	now := time.Now().UTC()
 	reranker.ObserveFeedback(memory.TidalFeedback{
 		Query: "index benchmark",

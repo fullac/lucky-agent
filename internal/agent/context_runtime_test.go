@@ -42,8 +42,8 @@ func (contextRuntimeStub) ContextWindow() *contextx.ContextWindow     { return n
 func (contextRuntimeStub) ContextEstimator() *contextx.TokenEstimator { return nil }
 func (contextRuntimeStub) ContextCache() contextMessageCacheStore     { return nil }
 func (contextRuntimeStub) Soul() *soul.Soul                           { return nil }
-func (contextRuntimeStub) Memory() *memory.Store                      { return nil }
-func (contextRuntimeStub) MidTermStore() *memory.MidTermStore         { return nil }
+func (contextRuntimeStub) ContextMemory() memory.ContextReader        { return nil }
+func (contextRuntimeStub) MidTermStore() memory.MidTermStore          { return nil }
 func (contextRuntimeStub) ShortTermSummary(*session.Session) string   { return "" }
 func (contextRuntimeStub) Catalog() *provider.ModelCatalog            { return nil }
 func (contextRuntimeStub) Tools() *tool.Registry                      { return nil }

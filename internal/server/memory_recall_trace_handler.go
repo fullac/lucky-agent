@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -60,17 +62,29 @@ func (s *Server) handleMemoryRecallTrace(w http.ResponseWriter, r *http.Request)
 	}
 
 	start := time.Now()
-	results := store.SearchWithOptions(query, opts)
+	results, err := store.Recall(r.Context(), memory.RecallRequest{Query: query, Options: opts})
+	if err != nil {
+		s.sendMemoryRecallError(w, err)
+		return
+	}
 	trace := store.BuildSearchTrace(query, "search", recallTraceVaultPath(store), opts, results, time.Since(start))
 
 	s.sendJSON(w, http.StatusOK, trace)
 }
 
-func recallTraceVaultPath(store *memory.Store) string {
-	if store == nil || strings.TrimSpace(store.Dir()) == "" {
+func recallTraceVaultPath(store interface{ Source() memory.SourceInfo }) string {
+	if store == nil || strings.TrimSpace(store.Source().Location) == "" {
 		return "~/.luckyagent/memory"
 	}
-	return store.Dir()
+	return store.Source().Location
+}
+
+func (s *Server) sendMemoryRecallError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		status = http.StatusRequestTimeout
+	}
+	s.sendError(w, "memory recall failed", status, err.Error())
 }
 
 func parseRecallTraceTier(raw string) (memory.Tier, bool) {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,7 +17,7 @@ type benchDataset struct {
 	Name    string
 	Dir     string
 	Size    int
-	Store   *memory.Store
+	Store   memory.Store
 	Queries []benchQuery
 }
 
@@ -76,7 +77,7 @@ func loadSyntheticDataset(cfg benchConfig) (*benchDataset, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	store, err := memory.NewStore(dir)
+	store, err := memoryaestus.NewStore(dir)
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("load synthetic memory store: %w", err)
@@ -134,7 +135,7 @@ func loadRealDataset(cfg benchConfig) (*benchDataset, func(), error) {
 	if dir == "" {
 		return nil, nil, fmt.Errorf("memory-dir is required for dataset=real")
 	}
-	store, err := memory.NewStore(dir)
+	store, err := memoryaestus.NewStore(dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load real memory store: %w", err)
 	}

@@ -346,7 +346,7 @@ Recall strategy:
 
 func (a *Agent) memoryVaultPath() string {
 	if a != nil && a.memory != nil {
-		if dir := strings.TrimSpace(a.memory.Dir()); dir != "" {
+		if dir := strings.TrimSpace(a.memory.Source().Location); dir != "" {
 			return dir
 		}
 	}

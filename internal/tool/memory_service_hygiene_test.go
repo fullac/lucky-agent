@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 )
 
 func TestMemoryHygieneRequiresDeleteConfirmation(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -26,7 +27,7 @@ func TestMemoryHygieneRequiresDeleteConfirmation(t *testing.T) {
 }
 
 func TestMemoryHygieneDryRunDoesNotModify(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestMemoryHygieneDryRunDoesNotModify(t *testing.T) {
 }
 
 func TestMemoryHygieneRejectsUnsafeLimit(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestMemoryHygieneRejectsUnsafeLimit(t *testing.T) {
 }
 
 func TestMemoryHygieneRestoreArchivedEntry(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

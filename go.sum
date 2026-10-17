@@ -126,6 +126,10 @@ github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9de
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.3.5 h1:dPmz1Snjq0kmkz159iL7S6WzdahUTHnHB5M56WFVifs=
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
+github.com/yurika0211/aestus v0.0.0-20261017090734-cc0d63209532 h1:dfLSr9+YLIdSHI+whAVh07c/2Fp7PDGVPPFqXcDmjiU=
+github.com/yurika0211/aestus v0.0.0-20261017090734-cc0d63209532/go.mod h1:xG8WJ/alq0XpbVK6A+uRCHpsV8uO9E5eYuwuAlnYYTo=
+github.com/yurika0211/aestus v0.0.0-20261017093339-9361afb4f42d h1:7A1lmBlqXFyGeybLw+MDNjE2OiwaeZ1gbWEZHzl9BBY=
+github.com/yurika0211/aestus v0.0.0-20261017093339-9361afb4f42d/go.mod h1:xG8WJ/alq0XpbVK6A+uRCHpsV8uO9E5eYuwuAlnYYTo=
 go.mongodb.org/mongo-driver/v2 v2.5.0 h1:yXUhImUjjAInNcpTcAlPHiT7bIXhshCTL3jVBkF3xaE=
 go.mongodb.org/mongo-driver/v2 v2.5.0/go.mod h1:yOI9kBsufol30iFsl1slpdq1I0eHPzybRWdyYUs8K/0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=

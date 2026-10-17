@@ -1,15 +1,44 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"strings"
 	"testing"
-
-	"github.com/yurika0211/luckyagent/internal/memory"
 )
 
+func TestMemoryToolRejectsPresentationFormatBeforeWriting(t *testing.T) {
+	store, err := memoryaestus.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewMemoryToolService(store).HandleRemember(map[string]any{
+		"content": "Prefer concise responses", "format": "yaml",
+	})
+	if err == nil || store.Count() != 0 {
+		t.Fatalf("invalid format wrote memory: err=%v count=%d", err, store.Count())
+	}
+}
+
+func TestMemoryToolRegistrationPreservesRequestCancellation(t *testing.T) {
+	store, err := memoryaestus.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := &Services{Memory: NewMemoryToolService(store)}
+	registry := NewRegistry()
+	services.RegisterCoreTools(registry)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = registry.CallDetailedWithContext("memory", map[string]any{"action": "remember", "content": "A fact that must not be saved"}, ExecutionContext{Context: ctx})
+	if err == nil || store.Count() != 0 {
+		t.Fatalf("canceled write reached backend: err=%v count=%d", err, store.Count())
+	}
+}
+
 func TestMemoryToolServiceRememberRejectsDirtyContent(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -27,7 +56,7 @@ func TestMemoryToolServiceRememberRejectsDirtyContent(t *testing.T) {
 }
 
 func TestMemoryToolServiceRememberJSONDuplicateResult(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -64,7 +93,7 @@ func TestMemoryToolServiceRememberJSONDuplicateResult(t *testing.T) {
 }
 
 func TestMemoryToolServiceRememberUpsertState(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -109,7 +138,7 @@ func TestMemoryToolServiceRememberUpsertState(t *testing.T) {
 }
 
 func TestMemoryToolServiceRememberTypedRoutePolicy(t *testing.T) {
-	store, err := memory.NewStore(t.TempDir())
+	store, err := memoryaestus.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

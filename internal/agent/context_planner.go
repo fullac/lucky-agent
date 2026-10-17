@@ -77,8 +77,8 @@ type contextRuntime interface {
 	ContextEstimator() *contextx.TokenEstimator
 	ContextCache() contextMessageCacheStore
 	Soul() *soul.Soul
-	Memory() *memory.Store
-	MidTermStore() *memory.MidTermStore
+	ContextMemory() memory.ContextReader
+	MidTermStore() memory.MidTermStore
 	ShortTermSummary(*session.Session) string
 	Catalog() *provider.ModelCatalog
 	Tools() *tool.Registry
@@ -586,7 +586,7 @@ func (p *contextPlanner) cacheKey(sess *session.Session, userInput string) (uint
 	payload["provider_name"] = p.turnProvider.name()
 	payload["provider_model"] = p.turnProvider.model
 	payload["provider_api_base"] = p.turnProvider.apiBase
-	if memoryStore := p.agent.Memory(); memoryStore != nil {
+	if memoryStore := p.agent.ContextMemory(); memoryStore != nil {
 		payload["recent_memory"] = memoryStore.Recent(8)
 	}
 	if summary := p.agent.ShortTermSummary(sess); strings.TrimSpace(summary) != "" {
@@ -706,11 +706,12 @@ func (p *contextPlanner) buildMemoryMessagesForSession(sess *session.Session, qu
 buildCoreMemoryMessage 构造长期核心记忆消息。
 */
 func (p *contextPlanner) buildCoreMemoryMessage(query string, scope TurnScope) provider.Message {
-	if p.agent == nil || p.agent.Memory() == nil {
+	if p.agent == nil || p.agent.ContextMemory() == nil {
 		return provider.Message{}
 	}
-	longs := p.agent.Memory().ByTier(memory.TierLong)
-	longs = filterMemoryEntriesForScope(longs, scope)
+	longs := p.agent.ContextMemory().ByTierWithOptions(memory.TierLong, memory.RouteOptions{
+		EntryFilter: func(entry memory.Entry) bool { return memoryEntryVisibleInScope(entry, scope) },
+	})
 	if len(longs) == 0 {
 		return provider.Message{}
 	}
@@ -735,13 +736,13 @@ func (p *contextPlanner) buildCoreMemoryMessage(query string, scope TurnScope) p
 buildRelevantMemoryMessage 构造与当前问题相关的普通记忆消息。
 */
 func (p *contextPlanner) buildRelevantMemoryMessage(query string, scope TurnScope) provider.Message {
-	if p.agent == nil || p.agent.Memory() == nil {
+	if p.agent == nil || p.agent.ContextMemory() == nil {
 		return provider.Message{}
 	}
 	if strings.TrimSpace(query) == "" {
 		return provider.Message{}
 	}
-	route := p.agent.Memory().RouteWithOptions(query, memory.RouteOptions{
+	route := p.agent.ContextMemory().RouteWithOptions(query, memory.RouteOptions{
 		EntryFilter: func(entry memory.Entry) bool {
 			return memoryEntryVisibleInScope(entry, scope)
 		},
@@ -782,11 +783,11 @@ func (p *contextPlanner) recordMemoryContextFeedback(query string, results []mem
 	if p == nil || p.options.ReadOnly {
 		return
 	}
-	if p.agent == nil || p.agent.Memory() == nil || len(results) == 0 {
+	if p.agent == nil || p.agent.ContextMemory() == nil || len(results) == 0 {
 		return
 	}
 	limit := utils.MinInt(6, len(results))
-	p.agent.Memory().RecordActivationFeedback(query, results[:limit], "context_selected", 0.15, time.Now())
+	p.agent.ContextMemory().RecordActivationFeedback(query, results[:limit], "context_selected", 0.15, time.Now())
 }
 
 func (p *contextPlanner) buildTypedMemoryBody(route memory.RouteAnalysis, results []memory.Entry, tokenBudget int) string {
@@ -1597,11 +1598,11 @@ func (p *contextPlanner) tryLLMConversationSummary(ctx context.Context, sess *se
 		return ""
 	}
 
-	p.persistCompressedSummary(sess, messages, content)
+	p.persistCompressedSummary(ctx, sess, messages, content)
 	return content
 }
 
-func (p *contextPlanner) persistCompressedSummary(sess *session.Session, messages []provider.Message, summary string) {
+func (p *contextPlanner) persistCompressedSummary(ctx context.Context, sess *session.Session, messages []provider.Message, summary string) {
 	if p == nil || p.agent == nil || strings.TrimSpace(summary) == "" {
 		return
 	}
@@ -1629,16 +1630,12 @@ func (p *contextPlanner) persistCompressedSummary(sess *session.Session, message
 			Content: msg.Content,
 		})
 	}
-	sessionSummary := memory.GenerateSessionSummary(sessionID, "context-compression", turns)
-	if sessionSummary == nil {
-		return
+	if err := p.agent.MidTermStore().SaveSummary(ctx, memory.SummaryRequest{
+		SessionID: sessionID, UserID: "context-compression", Title: title, Content: summary, Turns: turns,
+	}); err != nil {
+		logger.Warn("session summary persistence failed", "error", err)
 	}
-	sessionSummary.RawSummary = strings.TrimSpace(summary)
-	if title != "" {
-		sessionSummary.Topics = append([]string{title}, sessionSummary.Topics...)
-	}
-	sessionSummary.Topics = utils.DedupStringsLimit(sessionSummary.Topics, 6)
-	_ = p.agent.MidTermStore().SaveSessionSummary(sessionSummary)
+
 }
 
 /*

@@ -52,8 +52,15 @@ Important context behavior:
   memory gate, skill routing, session-aware chat.
 - `internal/config`: config loading, defaults, runtime home initialization.
 - `internal/session`: persistent conversation sessions.
-- `internal/memory`: Obsidian-compatible Markdown memory vault, activation,
-  temporal resolution, hygiene.
+- `internal/memory`: provider/SDK-independent memory contracts, evidence DTOs,
+  shared write admission and context presentation.
+- `internal/memoryaestus`: sole Aestus SDK integration for the Markdown vault,
+  recall, session buffers/summaries, maintenance and optional Tidal resources.
+  `Open` owns backend construction; `agent/memory_runtime.go` is the default
+  assembly point. `NewWithMemory` accepts an injected runtime. Consumers use
+  Inspector, ToolBackend, ContextReader and maintenance ports; legacy Store is
+  for adapter compatibility and fixture/benchmark seeding. Backend diagnostic
+  values live in `internal/memory/diagnostic`.
 - `internal/rag`: RAG indexing, SQLite persistence, retrieval, stream indexer.
 - `internal/mcpclient`: runtime-owned MCP manager, stdio/Streamable HTTP,
   versioned tool catalogs, calls and credential resolver port. Independent of
@@ -131,6 +138,12 @@ Do not treat session history, memory, and RAG as interchangeable:
 - Memory stores durable facts, preferences, project rules, and decisions.
 - RAG stores indexed documents and final-answer artifacts when enabled.
 
+Durable short-tier compaction must preserve scope and expiry, keep recent facts,
+and never copy facts into the conversation summary store. It is performed by
+the SDK under one Store lock. Session buffers require an explicit session ID;
+there is no process-wide fallback. HTTP and gRPC recall use the cancellable
+Reader port, including the read-only recall trace endpoint.
+
 When debugging context contamination, inspect:
 
 - `internal/agent/context_planner.go`
@@ -181,7 +194,7 @@ go test ./internal/server
 go test ./internal/gateway/telegram
 go test ./internal/gateway/napcat
 go test ./internal/gateway/feishu
-go test ./internal/memory ./internal/rag
+go test ./internal/memory ./internal/memoryaestus ./internal/rag
 ```
 
 Large `go test ./...` runs may be noisy or slow; prefer focused packages unless

@@ -1554,15 +1554,21 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 				body.Category = "user"
 			}
 
-			var err error
+			tier, importance := memory.TierMedium, .5
 			if body.LongTerm {
-				err = s.agent.RememberLongTerm(body.Content, body.Category)
-			} else {
-				err = s.agent.Remember(body.Content, body.Category)
+				tier, importance = memory.TierLong, .9
 			}
+			_, err := s.agent.WriteMemory(r.Context(), memory.RememberRequest{
+				Content: body.Content, Category: body.Category, Tier: tier, Importance: importance,
+			})
 
 			if err != nil {
-				s.sendError(w, "save memory failed", http.StatusInternalServerError, err.Error())
+				code := http.StatusInternalServerError
+				var rejected *memory.WriteRejectedError
+				if errors.As(err, &rejected) {
+					code = http.StatusBadRequest
+				}
+				s.sendError(w, "save memory failed", code, err.Error())
 				return
 			}
 
@@ -1587,9 +1593,14 @@ func (s *Server) handleMemoryRecall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := s.agent.Recall(query)
+	results, err := s.agent.RecallMemory(r.Context(), memory.RecallRequest{Query: query, Options: memory.SearchOptions{IncludeGraph: true, GraphDepth: 1}})
+	if err != nil {
+		s.sendMemoryRecallError(w, err)
+		return
+	}
 	var entries []MemoryEntry
-	for _, e := range results {
+	for _, result := range results {
+		e := result.Entry
 		entries = append(entries, MemoryEntry{
 			ID:          e.ID,
 			Content:     e.Content,

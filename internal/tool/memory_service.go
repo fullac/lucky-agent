@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -26,11 +27,32 @@ const (
 
 // MemoryToolService implements remember/recall handlers in the tool layer.
 type MemoryToolService struct {
-	store *memory.Store
+	store memory.ToolBackend
+	ctx   context.Context
+}
+
+// HandleContext binds cancellation per request without mutating the shared
+// service. Identity/authorization continues to be supplied by the host.
+func (s *MemoryToolService) HandleContext(exec ExecutionContext, args map[string]any) (ToolCallResult, error) {
+	if exec.Context != nil {
+		if err := exec.Context.Err(); err != nil {
+			return ToolCallResult{}, err
+		}
+	}
+	bound := *s
+	bound.ctx = exec.Context
+	return MemoryTool(bound.HandleRemember, bound.HandleHygiene, bound.HandleRecall, bound.HandleRecallDetailed).DetailedHandler(args)
+}
+
+func (s *MemoryToolService) requestContext() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
 }
 
 // NewMemoryToolService creates a tool-layer memory service.
-func NewMemoryToolService(store *memory.Store) *MemoryToolService {
+func NewMemoryToolService(store memory.ToolBackend) *MemoryToolService {
 	return &MemoryToolService{store: store}
 }
 
@@ -43,9 +65,6 @@ func (s *MemoryToolService) HandleRemember(args map[string]any) (string, error) 
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return "", fmt.Errorf("content is required")
-	}
-	if err := rejectDirtyMemoryContent(content); err != nil {
-		return "", err
 	}
 	categoryInferred := false
 	if category == "" {
@@ -121,29 +140,9 @@ func (s *MemoryToolService) HandleRemember(args map[string]any) (string, error) 
 	if mode == "supersede" && len(opts.Supersedes) == 0 {
 		return "", fmt.Errorf("mode=supersede requires supersedes")
 	}
-	var superseded []string
 	if mode == "upsert_state" {
 		if opts.StateKey == "" {
 			return "", fmt.Errorf("mode=upsert_state requires state_key")
-		}
-		superseded = s.store.ActiveStateIDs(opts.StateKey)
-		opts.Supersedes = append(opts.Supersedes, superseded...)
-	}
-
-	result, err := s.store.SaveWithOptionsResult(content, category, tier, importance, opts)
-	if err != nil {
-		return "", err
-	}
-	if mode == "upsert_state" && len(superseded) > 0 {
-		filtered := make([]string, 0, len(superseded))
-		for _, id := range superseded {
-			if id != result.ID {
-				filtered = append(filtered, id)
-			}
-		}
-		superseded, err = s.store.SupersedeEntries(filtered)
-		if err != nil {
-			return "", err
 		}
 	}
 	format := strings.ToLower(strings.TrimSpace(stringArg(args["format"])))
@@ -152,6 +151,13 @@ func (s *MemoryToolService) HandleRemember(args map[string]any) (string, error) 
 	}
 	if format != "text" && format != "json" {
 		return "", fmt.Errorf("format must be text or json")
+	}
+	result, err := memory.Write(s.requestContext(), s.store, memory.RememberRequest{
+		Content: content, Category: category, Tier: tier, Importance: importance,
+		Options: opts, Mode: mode,
+	})
+	if err != nil {
+		return "", err
 	}
 	if format == "json" {
 		return formatRememberJSON(memoryRememberResponse{
@@ -168,7 +174,7 @@ func (s *MemoryToolService) HandleRemember(args map[string]any) (string, error) 
 			Links:            links,
 			Aliases:          aliases,
 			Tags:             tags,
-			Superseded:       superseded,
+			Superseded:       result.Superseded,
 		})
 	}
 	action := "已保存"
@@ -201,24 +207,6 @@ func formatRememberJSON(payload memoryRememberResponse) (string, error) {
 		return "", err
 	}
 	return string(data), nil
-}
-
-func rejectDirtyMemoryContent(content string) error {
-	for _, issue := range memory.AnalyzeMemoryContent(content) {
-		switch issue.Reason {
-		case "empty":
-			return fmt.Errorf("content is required")
-		case "raw_conversation":
-			return fmt.Errorf("raw conversation content is rejected; save a concise stable summary instead")
-		case "secret_like":
-			return fmt.Errorf("secret-like content is rejected and must not be stored in durable memory")
-		case "prompt_injection":
-			return fmt.Errorf("prompt-injection-like content is rejected and must not be stored in durable memory")
-		case "oversized":
-			return fmt.Errorf("content exceeds %d rune limit; summarize it or index the source with rag_index", memory.MaxDurableMemoryContentRunes)
-		}
-	}
-	return nil
 }
 
 func normalizeMemoryMetadataArg(name string, values []string) ([]string, error) {
@@ -329,7 +317,7 @@ func (s *MemoryToolService) HandleRecall(args map[string]any) (string, error) {
 		}
 		return sb.String(), nil
 	}
-	results := s.store.SearchWithOptions(query, memory.SearchOptions{
+	results, err := s.store.Recall(s.requestContext(), memory.RecallRequest{Query: query, Options: memory.SearchOptions{
 		Limit:           limit,
 		Category:        stringArg(args["category"]),
 		Tier:            tierPtr,
@@ -339,7 +327,10 @@ func (s *MemoryToolService) HandleRecall(args map[string]any) (string, error) {
 		IncludeGraph:    graphDepth > 0,
 		GraphDepth:      graphDepth,
 		Explain:         boolArg(args["explain_graph"]),
-	})
+	}})
+	if err != nil {
+		return "", err
+	}
 	if format == "json" {
 		return formatRecallSearchJSON(memoryVaultPathForTool(s.store), query, graphDepth, results)
 	}
@@ -441,7 +432,10 @@ func (s *MemoryToolService) buildRecallTrace(args map[string]any) (memory.Search
 		SkipAccessStats: true,
 	}
 	start := time.Now()
-	results := s.store.SearchWithOptions(query, opts)
+	results, err := s.store.Recall(s.requestContext(), memory.RecallRequest{Query: query, Options: opts})
+	if err != nil {
+		return memory.SearchTrace{}, false, err
+	}
 	trace := s.store.BuildSearchTrace(query, mode, memoryVaultPathForTool(s.store), opts, results, time.Since(start))
 	return trace, true, nil
 }
@@ -648,15 +642,15 @@ func parseHygieneToolOptions(args map[string]any) (memory.HygieneOptions, string
 	}, action, boolArg(args["dry_run"]), nil
 }
 
-func memorySourceNotice(store *memory.Store) string {
+func memorySourceNotice(store interface{ Source() memory.SourceInfo }) string {
 	return fmt.Sprintf("记忆源：LuckyAgent Obsidian-compatible Markdown vault at %s。RAG SQLite 不是当前 durable memory 事实源。\n", memoryVaultPathForTool(store))
 }
 
-func memoryVaultPathForTool(store *memory.Store) string {
-	if store == nil || strings.TrimSpace(store.Dir()) == "" {
+func memoryVaultPathForTool(store interface{ Source() memory.SourceInfo }) string {
+	if store == nil || strings.TrimSpace(store.Source().Location) == "" {
 		return "~/.luckyagent/memory"
 	}
-	return store.Dir()
+	return store.Source().Location
 }
 
 func parseMemoryToolTier(raw string) memory.Tier {

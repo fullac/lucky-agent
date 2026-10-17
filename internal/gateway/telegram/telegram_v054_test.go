@@ -3303,14 +3303,17 @@ func TestV054AdapterName(t *testing.T) {
 // ============================================================
 
 type mockAgentProvider struct {
-	sessions         *session.Manager
-	configSnap       agentConfigSnapshot
-	soulVal          *soul.Soul
-	toolsVal         *tool.Registry
-	skillsVal        []*tool.SkillInfo
-	cronEngine       *cron.Engine
-	metricsVal       *metrics.Metrics
-	memoryVal        *memory.Store
+	sessions   *session.Manager
+	configSnap agentConfigSnapshot
+	soulVal    *soul.Soul
+	toolsVal   *tool.Registry
+	skillsVal  []*tool.SkillInfo
+	cronEngine *cron.Engine
+	metricsVal *metrics.Metrics
+	memoryVal  interface {
+		memory.Store
+		memory.Inspector
+	}
 	catalogVal       *provider.ModelCatalog
 	ragVal           *rag.RAGManager
 	embedderReg      *embedder.Registry
@@ -3429,7 +3432,7 @@ func (m *mockAgentProvider) Metrics() *metrics.Metrics {
 	return m.metricsVal
 }
 
-func (m *mockAgentProvider) Memory() *memory.Store {
+func (m *mockAgentProvider) Memory() memory.Inspector {
 	return m.memoryVal
 }
 

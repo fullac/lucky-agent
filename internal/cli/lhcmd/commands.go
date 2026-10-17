@@ -27,6 +27,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/gateway/telegram"
 	"github.com/yurika0211/luckyagent/internal/gateway/weixin"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/proactive"
 	"github.com/yurika0211/luckyagent/internal/server"
 	"github.com/yurika0211/luckyagent/internal/soul"
@@ -1719,10 +1720,11 @@ func runMemoryMigrateGraph(cmd *cobra.Command, args []string) error {
 	archiveDirty, _ := cmd.Flags().GetBool("archive-dirty")
 	limit, _ := cmd.Flags().GetInt("limit")
 
-	store, err := memory.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
+	store, err := memoryaestus.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
 	if err != nil {
 		return fmt.Errorf("open memory store: %w", err)
 	}
+	defer store.Close()
 	report, err := store.MigrateGraphMemory(memory.GraphMigrationOptions{
 		Apply:            apply,
 		ArchiveDirty:     archiveDirty,
@@ -1792,10 +1794,11 @@ func runMemoryRenameNotes(cmd *cobra.Command, args []string) error {
 
 	apply, _ := cmd.Flags().GetBool("apply")
 	limit, _ := cmd.Flags().GetInt("limit")
-	store, err := memory.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
+	store, err := memoryaestus.NewStore(filepath.Join(mgr.HomeDir(), "memory"))
 	if err != nil {
 		return fmt.Errorf("open memory store: %w", err)
 	}
+	defer store.Close()
 	report, err := store.RenameNotes(memory.NoteRenameOptions{
 		Apply: apply,
 		Limit: limit,
@@ -1855,7 +1858,7 @@ func runMemoryTidalStats(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	cfg := mgr.Get()
-	path := cliTidalMemoryStorePath(mgr.HomeDir(), cfg.Memory.Tidal.StorePath)
+	path := memoryaestus.TidalStorePath(mgr.HomeDir(), cfg.Memory.Tidal.StorePath)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			fmt.Printf("Tidal memory store: %s\n", path)
@@ -1865,7 +1868,7 @@ func runMemoryTidalStats(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("stat tidal memory store: %w", err)
 	}
 
-	store, err := memory.OpenTidalStore(path)
+	store, err := memoryaestus.OpenTidalStore(path)
 	if err != nil {
 		return fmt.Errorf("open tidal memory store: %w", err)
 	}
@@ -1895,17 +1898,6 @@ func runMemoryTidalStats(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s feature=%s weights=%v counts=%v\n", kernel.Key, kernel.Feature, kernel.Weights, kernel.Counts)
 	}
 	return nil
-}
-
-func cliTidalMemoryStorePath(homeDir, configured string) string {
-	configured = strings.TrimSpace(configured)
-	if configured == "" {
-		return filepath.Join(homeDir, "runtime", "tidal_memory.db")
-	}
-	if filepath.IsAbs(configured) {
-		return configured
-	}
-	return filepath.Join(homeDir, configured)
 }
 
 func runProactiveStatus(cmd *cobra.Command, args []string) error {

@@ -3,6 +3,7 @@ package luckyagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -22,12 +23,22 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// memoryAPIStore is the owner administration surface actually used by gRPC.
+type memoryAPIStore interface {
+	memory.Reader
+	memory.WriteBackend
+	Get(string) (*memory.Entry, error)
+	Recent(int) []memory.Entry
+	Count() int
+	Delete(string) error
+}
+
 // Server implements LuckyAgentService gRPC server.
 type Server struct {
 	UnimplementedLuckyAgentServiceServer
 
 	agent          *agent.Agent
-	memoryStore    *memory.Store
+	memoryStore    memoryAPIStore
 	ragManager     *rag.RAGManager
 	workflowEngine *workflow.WorkflowEngine
 
@@ -38,7 +49,7 @@ type Server struct {
 // NewServer creates a new gRPC server.
 func NewServer(
 	a *agent.Agent,
-	ms *memory.Store,
+	ms memoryAPIStore,
 	rm *rag.RAGManager,
 	we *workflow.WorkflowEngine,
 ) *Server {
@@ -106,17 +117,27 @@ func (s *Server) MemoryStore(ctx context.Context, req *MemoryStoreRequest) (*Mem
 		tier = memory.TierLong
 	}
 
-	if err := s.memoryStore.SaveWithTier(req.Content, req.Category, tier, req.Importance); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to store memory: %v", err)
+	result, err := memory.Write(ctx, s.memoryStore, memory.RememberRequest{
+		Content: req.Content, Category: req.Category, Tier: tier, Importance: req.Importance,
+	})
+	if err != nil {
+		code := codes.Internal
+		var rejected *memory.WriteRejectedError
+		if errors.As(err, &rejected) {
+			code = codes.InvalidArgument
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, status.FromContextError(err).Err()
+		}
+		return nil, status.Errorf(code, "failed to store memory: %v", err)
 	}
 
-	// Get the most recent entry
-	entries := s.memoryStore.Recent(1)
-	if len(entries) == 0 {
+	// Return this write's ID, including duplicate updates and concurrent calls.
+	entry, err := s.memoryStore.Get(result.ID)
+	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to retrieve stored memory")
 	}
 
-	entry := entries[0]
 	return &MemoryEntry{
 		Id:          entry.ID,
 		Content:     entry.Content,
@@ -131,15 +152,19 @@ func (s *Server) MemoryStore(ctx context.Context, req *MemoryStoreRequest) (*Mem
 
 // MemoryRecall recalls memories matching query.
 func (s *Server) MemoryRecall(ctx context.Context, req *MemoryRecallRequest) (*MemoryRecallResponse, error) {
-	entries := s.memoryStore.Search(req.Query)
-
-	limit := int(req.Limit)
-	if limit > 0 && len(entries) > limit {
-		entries = entries[:limit]
+	results, err := s.memoryStore.Recall(ctx, memory.RecallRequest{Query: req.Query, Options: memory.SearchOptions{
+		Limit: int(req.Limit), IncludeGraph: true, GraphDepth: 1,
+	}})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, status.FromContextError(err).Err()
+		}
+		return nil, status.Errorf(codes.Internal, "failed to recall memory: %v", err)
 	}
 
-	pbEntries := make([]*MemoryEntry, len(entries))
-	for i, e := range entries {
+	pbEntries := make([]*MemoryEntry, len(results))
+	for i, result := range results {
+		e := result.Entry
 		pbEntries[i] = &MemoryEntry{
 			Id:          e.ID,
 			Content:     e.Content,

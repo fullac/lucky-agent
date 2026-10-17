@@ -1,6 +1,8 @@
 # LuckyAgent 记忆系统研究
 
-本文基于当前代码研究 LuckyAgent 的记忆系统。结论以 `internal/memory`、`internal/agent`、`internal/tool`、`internal/server`、`internal/cli/lhcmd` 和相关测试为准。
+关于本分支已实现的 Aestus SDK 接入、职责边界与行为变化，参见 [记忆系统解耦与接入](decoupling.md)。原研究提案保留在 Git 历史中。
+
+记忆引擎现在来自固定版本的 Aestus Go module；LuckyAgent 保留端口、宿主策略与 SDK adapter。本文说明记忆模型与配置，具体实现以 Aestus、`internal/memoryaestus` 和运行时入口及测试为准。
 
 ## 结论
 
@@ -15,13 +17,12 @@ RAG 与 memory 是两套系统。RAG 保存和检索 indexed documents；durable
 
 ## 主要代码入口
 
-- `internal/memory/memory.go`：durable memory store、Markdown note 格式、搜索、图索引、时态解析、层级统计。
-- `internal/memory/activation.go`：召回激活评分、图传播、reranker 插件点。
-- `internal/memory/short_term.go`：短期滑动窗口和溢出摘要。
-- `internal/memory/mid_term.go`：中期会话摘要 Markdown 存储和检索。
-- `internal/memory/hygiene.go`：脏记忆检测、隔离、删除和恢复。
-- `internal/memory/graph_migration.go`：把旧记忆迁移为 Obsidian-first graph memory。
-- `internal/memory/tidal_reranker.go` / `tidal_store.go`：可选 tidal reranker 和 SQLite telemetry。
+- `internal/memory/ports.go`、`types.go`：宿主端口与中立证据结构。
+- `internal/memory/write.go`：工具、HTTP/gRPC、显式 Remember、自动捕获共享的写入准入。
+- `internal/memoryaestus/store.go`：持久化、召回、维护及会话组件的 SDK adapter。
+- `internal/memoryaestus/convert.go`：证据、时态、策略及定位信息的类型转换。
+- `internal/memoryaestus/tidal.go`：可选 Tidal 资源和反馈 hooks。
+- Aestus memory 及子包：实际引擎、Markdown 格式、图索引、缓冲和摘要算法。
 - `internal/agent/context_planner.go`：把 memory 注入模型上下文。
 - `internal/agent/memory_gate.go`：从记忆推导必须执行的工具检查。
 - `internal/tool/memory_service.go`、`builtin_memory.go`：`remember`、`recall`、`memory_hygiene` 工具。
@@ -29,14 +30,17 @@ RAG 与 memory 是两套系统。RAG 保存和检索 indexed documents；durable
 
 ## 运行时初始化
 
-`initMemoryRuntime` 在 agent 初始化时创建：
+`memoryaestus.Open` 集中创建后端资源，Agent 的 `memory_runtime.go` 只负责默认装配，也可通过 `NewWithMemory` 注入：
 
-- `memory.NewStore(cfg.HomeDir() + "/memory")`
-- `memory.NewShortTermBuffer(memory.short_term_max_turns)`
-- `memory.NewMidTermStore(${home}/memory/30_Sessions, memory.midterm_max_summaries)`
-- `session.NewManager(${home}/sessions)`
+- `memoryaestus.NewStore(cfg.HomeDir() + "/memory")`
+- `memoryaestus.NewSessionShortTermStore(memory.short_term_max_turns)`
+- `memoryaestus.NewMidTermStore(${home}/memory/30_Sessions, memory.midterm_max_summaries)`
 
-如果 `memory.tidal.enabled=true`，还会打开 `${home}/runtime/tidal_memory.db` 或配置的 `memory.tidal.store_path`，并把 `TidalMemoryReranker` 安装到 `memory.Store`。
+`session.NewManager(${home}/sessions)` 由应用单独创建，不属于记忆后端。
+
+如果 `memory.tidal.enabled=true`，还会打开 `${home}/runtime/tidal_memory.db` 或配置的 `memory.tidal.store_path`。运行时与 CLI 共用路径解析；Agent 通过统计端口读取 Tidal 诊断，无需操作重排器。
+
+自动事实摘要由 SDK 按作用域/类别/过期窗口分组，每组保留最新 5 条。状态和策略记录不参与，超出预算的原文不被截断删除。摘要保留 scope 与 TTL，只进入 durable vault，不再进入会话摘要库。
 
 ## Durable Memory Vault
 
@@ -169,9 +173,9 @@ weight = importance * recency_factor * access_boost
 
 普通召回入口：
 
-- `Agent.Recall(query)` -> `memory.Store.Search(query)`
-- `recall` 工具 -> `SearchWithOptions`
-- context planner -> `memory.Store.Route(query)`
+- HTTP、gRPC、`recall` 工具 -> `Reader.Recall(ctx, request)`；HTTP 取消/超时返回 408。
+- `Agent.Recall(query)` 为兼容包装，同样调用 Reader，错误会记录日志。
+- context planner -> `ContextReader.RouteWithOptions(query, options)`。
 
 激活评分由 `activation.go` 计算。直接匹配组件包括：
 
@@ -448,11 +452,11 @@ Gateway：
 - secret、prompt injection 和超长原文不应写入 durable memory。
 - `long` tier 应用于稳定事实和长期约束；低置信长期记忆会被工具层拒绝或被 hygiene 标记。
 - `state_key` 应用于会变化的事实；更新状态时优先用 `mode=upsert_state`。
-- HTTP memory API 当前比工具层弱，缺少完整 metadata 和 hygiene preflight。
+- HTTP memory API 与工具共享写入准入，但请求结构仍缺少完整 metadata 字段。
 
 ## 当前可改进点
 
-- HTTP `POST /api/v1/memory` 可考虑复用 `MemoryToolService.HandleRemember`，以获得同样的脏内容拒绝和 metadata 支持。
+- HTTP、gRPC、工具和自动捕获已共享 memory.Write 的内容准入；HTTP 仍使用精简请求结构，没有工具的完整 metadata 字段。
 - durable memory 的自动保存类别依赖关键词推断，精度有限；重要事实最好通过显式 `remember` 写入。
 - `route_policies` 目前通过 Markdown frontmatter 或 `remember.route_policies` JSON 写入；HTTP memory API 尚未暴露完整策略字段。
 - context hygiene 默认关闭，历史脏数据需要手动 `memory_hygiene` 或开启 `context.memory_hygiene_before_context`。
