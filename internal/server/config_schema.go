@@ -211,7 +211,7 @@ func configSchemaApply(path string) string {
 	switch root {
 	case "models", "fallbacks", "custom_models", "max_tokens", "temperature", "limits", "retry", "circuit_breaker", "rate_limit", "context", "context_budget", "agent", "model_router", "hooks", "tool_trace", "stream_mode":
 		return "hot"
-	case "server", "dashboard", "msg_gateway", "embedding", "rag", "memory", "tools", "image_generation", "tts", "autonomy", "delegate", "proactive", "web_search", "opencli", "codex", "grok", "soul_path", "extra", "skills":
+	case "server", "dashboard", "msg_gateway", "embedding", "rag", "memory", "tools", "image_generation", "tts", "autonomy", "delegate", "proactive", "web_search", "opencli", "codex", "grok", "mcp", "soul_path", "extra", "skills":
 		return "restart"
 	default:
 		return "unknown"
