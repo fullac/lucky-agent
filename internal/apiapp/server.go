@@ -24,6 +24,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/logger"
+	"github.com/yurika0211/luckyagent/internal/mcpclient"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/server/health"
@@ -53,6 +54,7 @@ type Server struct {
 	configUpdateMu sync.Mutex
 	server         *http.Server
 	agent          *agent.Agent
+	mcpAdmin       mcpclient.Admin
 	config         ServerConfig
 	running        bool
 	// gatewayCtx is owned by the API server, rather than an individual HTTP
@@ -252,6 +254,7 @@ func New(a *agent.Agent, cfg ServerConfig) *Server {
 
 	return &Server{
 		agent:       a,
+		mcpAdmin:    a.MCPAdmin(),
 		config:      cfg,
 		rateLimiter: newRateLimiter(cfg.RateLimit),
 		stats: ServerStats{
@@ -435,6 +438,7 @@ func (s *Server) Start() error {
 		GatewayByName:        s.handleGatewayByName,
 		Root:                 s.handleRoot,
 	})
+	mux.HandleFunc("/api/v1/mcp/servers", s.handleMCPServers)
 
 	var handler http.Handler = mux
 

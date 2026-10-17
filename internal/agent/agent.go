@@ -28,10 +28,12 @@ import (
 	appheartbeat "github.com/yurika0211/luckyagent/internal/agent/heartbeat"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/contextx"
+	"github.com/yurika0211/luckyagent/internal/credentials"
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/hook"
 	"github.com/yurika0211/luckyagent/internal/logger"
+	"github.com/yurika0211/luckyagent/internal/mcpclient"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/middleware"
 	"github.com/yurika0211/luckyagent/internal/proactive"
@@ -93,7 +95,6 @@ type supportRuntime struct {
 	searchCfg      *tool.WebSearchConfig
 	toolServices   *tool.Services
 	delegateMgr    *tool.DelegateManager
-	mcpClient      *tool.MCPClient
 	contextWin     *contextx.ContextWindow
 	contextEst     *contextx.TokenEstimator
 	metrics        *metrics.Metrics
@@ -128,7 +129,7 @@ type Agent struct {
 	hooks            *hook.Runner            // 工具执行前后的 hook 运行器
 	msgGateway       *gateway.GatewayManager // 消息平台网关
 	sessionEvents    func(sessionID, content string)
-	mcpClient        *tool.MCPClient         // MCP 客户端
+	mcpClient        *mcpclient.Manager      // Runtime-owned MCP connections
 	delegate         *tool.DelegateManager   // 子代理委派管理器
 	contextWin       *contextx.ContextWindow // 上下文窗口管理器
 	contextEst       *contextx.TokenEstimator
@@ -673,7 +674,6 @@ func initSupportRuntime(c *config.Config, mem memory.ToolBackend, ragMgr *rag.RA
 		searchCfg:      searchCfg,
 		toolServices:   toolServices,
 		delegateMgr:    delegateMgr,
-		mcpClient:      tool.NewMCPClient(),
 		contextWin:     contextWin,
 		contextEst:     contextx.NewTokenEstimator(c.MaxTokens),
 		metrics:        metrics.NewMetrics(),
@@ -1262,7 +1262,6 @@ func newAgent(cfg *config.Manager, injected *memory.Runtime) (*Agent, error) {
 		hitl:                newHITLGate(),
 		hooks:               hook.NewRunner(buildHookRuntimeConfig(c)),
 		msgGateway:          gateway.NewGatewayManager(),
-		mcpClient:           supportRT.mcpClient,
 		delegate:            supportRT.delegateMgr,
 		contextWin:          supportRT.contextWin,
 		contextEst:          supportRT.contextEst,
@@ -1287,6 +1286,26 @@ func newAgent(cfg *config.Manager, injected *memory.Runtime) (*Agent, error) {
 		activeModel:         c.Model,
 		activeAPIBase:       c.APIBase,
 	}
+
+	a.mcpClient = mcpclient.NewManager(c.MCP, func(ctx context.Context, ref string, use func([]byte) error) error {
+		store, err := credentials.NewStore(cfg.HomeDir())
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		return store.WithCredential(ctx, ref, use)
+	})
+	adapter := tool.NewMCPAdapter(a.tools, a.mcpClient)
+	if err := a.mcpClient.SetPublisher(adapter.Sync); err != nil {
+		_ = a.Close()
+		return nil, err
+	}
+	if err := a.mcpClient.Start(context.Background()); err != nil {
+		logger.Warn("some MCP servers could not start", "error", err)
+	}
+	a.delegate.SetMCPExecutor(func(ctx context.Context, server, name string, args map[string]any) (string, error) {
+		return a.tools.CallWithContext(tool.MCPToolName(server, name), args, tool.ExecutionContext{Context: ctx})
+	})
 
 	a.collabReg.Register(&collab.AgentProfile{
 		ID:           "local-agent",
@@ -3996,8 +4015,19 @@ func (a *Agent) SwitchModel(modelID string) error {
 	return a.SwitchModelKind(config.ModelKindChat, modelID, SwitchModelOptions{})
 }
 
-// MCPClient 返回 MCP 客户端
-func (a *Agent) MCPClient() *tool.MCPClient {
+// MCPClient is retained for in-process compatibility. Hosts should inject the
+// narrower MCPAdmin management port into command handlers.
+func (a *Agent) MCPClient() *mcpclient.Manager {
+	if a == nil {
+		return nil
+	}
+	return a.mcpClient
+}
+
+func (a *Agent) MCPAdmin() mcpclient.Admin {
+	if a == nil || a.mcpClient == nil {
+		return nil
+	}
 	return a.mcpClient
 }
 
@@ -4398,15 +4428,11 @@ func (a *Agent) SkillsDir() string {
 }
 
 // ConnectMCPServer 连接 MCP Server
-func (a *Agent) ConnectMCPServer(name, url, apiKey string) {
-	a.mcpClient.AddServer(tool.MCPServerConfig{
-		Name:   name,
-		URL:    url,
-		APIKey: apiKey,
-	})
-
-	// 注册 MCP 工具
-	tool.RegisterMCPTools(a.tools, a.mcpClient)
+func (a *Agent) ConnectMCPServer(name, url, apiKey string) error {
+	if a == nil || a.mcpClient == nil {
+		return fmt.Errorf("MCP runtime unavailable")
+	}
+	return a.mcpClient.Connect(context.Background(), name, mcpclient.ServerConfig{URL: url, APIKey: apiKey})
 }
 
 // Sessions 返回会话管理器
@@ -4626,6 +4652,11 @@ func (a *Agent) Close() error {
 	if a.computerMgr != nil {
 		if err := a.computerMgr.Close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("close computer manager: %w", err)
+		}
+	}
+	if a.mcpClient != nil {
+		if err := a.mcpClient.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("close MCP manager: %w", err)
 		}
 	}
 

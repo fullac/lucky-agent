@@ -28,6 +28,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	luckycollector "github.com/yurika0211/luckyagent/internal/gateway/collector"
+	"github.com/yurika0211/luckyagent/internal/mcpclient"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
@@ -80,7 +81,6 @@ type stateRuntime interface {
 	PromoteMemory(id string) error
 	Catalog() *provider.ModelCatalog
 	RAG() *rag.RAGManager
-	ConnectMCPServer(name, url, apiKey string)
 	ContextWindowConfig() ContextWindowSnapshot
 	ContextCacheStats() map[string]any
 	EmbedderRegistry() *embedder.Registry
@@ -377,8 +377,8 @@ func (a agentProviderAdapter) RAG() *rag.RAGManager {
 	return a.inner.RAG()
 }
 
-func (a agentProviderAdapter) ConnectMCPServer(name, url, apiKey string) {
-	a.inner.ConnectMCPServer(name, url, apiKey)
+func (a agentProviderAdapter) MCPAdmin() mcpclient.Admin {
+	return a.inner.MCPAdmin()
 }
 
 func (a agentProviderAdapter) ContextWindowConfig() contextWindowSnapshot {
@@ -506,6 +506,7 @@ type telegramCommandHandler func(ctx context.Context, msg *gateway.Message) erro
 // Handler processes Telegram bot commands and messages with per-chat session management.
 type Handler struct {
 	adapter  telegramSender
+	mcpAdmin mcpclient.Admin
 	agent    agentProvider
 	chat     chatRuntime
 	state    stateRuntime
@@ -609,6 +610,10 @@ func NewHandlerWithRuntime(adapter *Adapter, runtime Runtime) *Handler {
 func newHandler(adapter *Adapter, runtime Runtime, recorder activeRouteRecorder) *Handler {
 	var chat chatRuntime
 	var state stateRuntime
+	var mcpAdmin mcpclient.Admin
+	if source, ok := runtime.(interface{ MCPAdmin() mcpclient.Admin }); ok {
+		mcpAdmin = source.MCPAdmin()
+	}
 	if runtime != nil {
 		chat = runtime
 		state = runtime
@@ -617,6 +622,7 @@ func newHandler(adapter *Adapter, runtime Runtime, recorder activeRouteRecorder)
 	maxConcurrentChatWorkers := resolveMaxConcurrentChatWorkers(state)
 	h := &Handler{
 		adapter:                   adapter,
+		mcpAdmin:                  mcpAdmin,
 		agent:                     runtime,
 		chat:                      chat,
 		state:                     state,
@@ -4074,20 +4080,11 @@ func (h *Handler) handleSkill(ctx context.Context, msg *gateway.Message) error {
 }
 
 func (h *Handler) handleMCP(ctx context.Context, msg *gateway.Message) error {
-	state := h.stateService()
-	if state == nil {
-		return h.adapter.Send(ctx, msg.Chat.ID, "❌ MCP runtime unavailable")
+	message, err := mcpclient.RunCommand(ctx, h.mcpAdmin, msg.Args)
+	if err != nil {
+		message = "❌ " + err.Error()
 	}
-	parts := strings.Fields(msg.Args)
-	if len(parts) < 2 {
-		return h.adapter.Send(ctx, msg.Chat.ID, "Usage: /mcp <name> <url> [api_key]")
-	}
-	apiKey := ""
-	if len(parts) > 2 {
-		apiKey = parts[2]
-	}
-	state.ConnectMCPServer(parts[0], parts[1], apiKey)
-	return h.adapter.Send(ctx, msg.Chat.ID, fmt.Sprintf("✅ Connected MCP server: %s (%s)", parts[0], parts[1]))
+	return h.adapter.Send(ctx, msg.Chat.ID, message)
 }
 
 func (h *Handler) handleApprove(ctx context.Context, msg *gateway.Message) error {
