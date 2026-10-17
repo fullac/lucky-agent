@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,45 @@ import (
 	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 )
+
+func TestAdapterConcurrentGetAndRepeatedWrite(t *testing.T) {
+	store, err := memoryaestus.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := memory.RememberRequest{Content: "Project runtime record", Category: "project", Tier: memory.TierLong, Importance: .9,
+		Options: memory.SaveOptions{RoutePolicies: []memory.RoutePolicy{{ID: "inspect", Match: memory.RoutePolicyMatch{QueryAll: []memory.RouteTermGroup{{Any: []string{"runtime"}}}}, RequiredTools: []memory.RouteToolRequirement{{Name: "read"}}}}}}
+	first, err := store.Remember(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	errs := make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			if _, err := store.Remember(context.Background(), req); err != nil {
+				errs <- err
+				return
+			}
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		entry, err := store.Get(first.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry.Content != req.Content || entry.AccessedAt.IsZero() || entry.RoutePolicies[0].Match.QueryAll[0].Any[0] != "runtime" {
+			t.Error("incomplete projected snapshot")
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
 
 func TestAdapterOpensExistingVaultAndPersistsStateReplacement(t *testing.T) {
 	dir := t.TempDir()

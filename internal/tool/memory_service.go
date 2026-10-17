@@ -25,7 +25,7 @@ const (
 	maxHygieneLimit            = 200
 )
 
-// MemoryToolService implements remember/recall handlers in the tool layer.
+// memoryToolStore is the consumer-owned surface needed by memory tools.
 type memoryToolStore interface {
 	memory.Reader
 	memory.WriteBackend
@@ -38,6 +38,7 @@ type memoryToolStore interface {
 	BuildSearchTrace(string, string, string, memory.SearchOptions, []memory.SearchResult, time.Duration) memory.SearchTrace
 }
 
+// MemoryToolService implements remember/recall handlers in the tool layer.
 type MemoryToolService struct {
 	store memoryToolStore
 	ctx   context.Context

@@ -2,7 +2,7 @@
 
 本分支已将持久记忆、图召回、短期缓冲、中期摘要存储和 Tidal 实现切换到 Aestus。原研究基线为 LuckyAgent `b2df9cc`；初始研究和 SDK 方案分别见历史提交 `6627d01`、`8555205`。本文记录实现后的边界。
 
-Aestus 配套分支为 [feat/luckyagent-sdk](https://github.com/yurika0211/aestus/tree/feat/luckyagent-sdk)，SDK 提交 `26374f3512d601503e5e7c1d7bf9673d90c38e39`。LuckyAgent 通过 go.mod 固定依赖该提交对应的 pseudo-version，不需要本地 checkout、replace 或 go.work。两边最低 Go 版本均为 1.25。
+Aestus 配套分支为 [feat/luckyagent-sdk](https://github.com/yurika0211/aestus/tree/feat/luckyagent-sdk)，SDK 提交 `cc0d63209532f148e09221e90fa1a841af025fc4`。LuckyAgent 通过 go.mod 固定依赖该提交对应的 pseudo-version，不需要本地 checkout、replace 或 go.work。两边最低 Go 版本均为 1.25。
 
 ## 依赖与职责
 
@@ -57,6 +57,7 @@ memory.Write 执行共享内容准入，再调用 Writer.Remember。工具的呈
 - EntryFilter 在种子、图传播、top-K、时态解析之前生效；历史搜索也应用过滤。不可见别名所有者不会让可见目标变成歧义。
 - ByTierWithOptions 先对可见事实跨层级解析当前状态，再选 tier。context planner 使用它，避免旧长期事实在新版本属于其他 tier 时重新注入。
 - 普通召回忽略被取代的旧 active 元数据记录；Route 保留相应时态解释。
+- Get 在读锁内复制记录值，策略规范化先复制切片再处理，避免并发读取与重复写入发生竞态。SDK 嵌套元数据按只读值使用，adapter 再投影为宿主数据；两边都有并发 getter 回归测试。
 - 最低 Go 版本由 1.27 调整为经过实际测试的 1.25，增加 Go 版本矩阵 CI；修复已有 eval 对 bot token 检测的失败。
 
 EntryFilter 是宿主提供的可信谓词，不是认证系统。context planner 绑定当前 TurnScope；自动捕获写入用宿主 scope tags 限定去重范围。既有全库管理入口没有因此变成多租户 API，工具/HTTP 的 owner 权限与用户身份绑定需要由入口继续管理，不能让模型自由填写 namespace 获得权限。
