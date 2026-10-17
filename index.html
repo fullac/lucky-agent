@@ -1246,6 +1246,20 @@
                 ]
               },
               {
+                id: 'mcp',
+                title: 'mcp · 外部服务连接',
+                description: '独立 MCP 客户端支持 stdio 和 Streamable HTTP。配置的服务在启动时连接；修改配置需要重启运行时。通过 /mcp status、connect、refresh、disconnect 管理，也可使用 /api/v1/mcp/servers。',
+                fields: [
+                  { field: 'mcp.servers', example: '{}', description: '服务名到配置对象的映射；默认空对象。每个运行时使用自己的连接与凭据。' },
+                  { field: 'mcp.servers.<name>.transport', example: 'stdio / http', description: 'stdio 启动本地子进程；http 连接 Streamable HTTP 端点。省略时有 URL 使用 http，否则使用 stdio。' },
+                  { field: 'mcp.servers.<name>.command', example: 'your-mcp-server', description: 'stdio 可执行文件；args 为参数数组，env 为环境变量对象，cwd 为工作目录。不会交给 shell 解析。' },
+                  { field: 'mcp.servers.<name>.url', example: 'https://example.com/mcp', description: 'HTTP MCP 端点，不能同时配置进程字段；不跟随重定向。旧版独立 SSE 端点暂不支持。' },
+                  { field: 'mcp.servers.<name>.credential_ref', example: 'mcp-token', description: 'HTTP Bearer 凭据在本地凭据库中的 ID；每次请求读取，配置不存明文 API Key。stdio 服务可通过其环境或自身凭据管理认证。' },
+                  { field: 'mcp.servers.<name>.timeout_seconds', example: '30', description: '连接、发现和单次调用超时，0 使用 30 秒，最大 3600 秒。取消调用不会自动重试有副作用的操作。' },
+                  { field: 'mcp.servers.<name>.disabled', example: 'false', description: 'true 时不启动服务。config.example.json 中的两个示例默认关闭。工具列表变更后使用 /mcp refresh <名称> 更新目录。' }
+                ]
+              },
+              {
                 id: 'grok',
                 title: 'grok · 本地编码代理',
                 description: '通过 grok agent stdio 把编码任务交给本机 Grok。默认关闭，开启后才注册 grok.* 工具。',

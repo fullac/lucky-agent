@@ -5,59 +5,6 @@ import (
 	"time"
 )
 
-// TestMCPClient 测试 MCP 客户端相关函数
-func TestMCPClient(t *testing.T) {
-	t.Run("MCPError", func(t *testing.T) {
-		err := MCPError{Code: 404, Message: "not found"}
-		expected := "MCP error 404: not found"
-		if err.Error() != expected {
-			t.Errorf("expected '%s', got '%s'", expected, err.Error())
-		}
-	})
-
-	t.Run("NewMCPClient", func(t *testing.T) {
-		client := NewMCPClient()
-		if client == nil {
-			t.Error("expected non-nil client")
-		}
-		if client.servers == nil {
-			t.Error("expected servers map to be initialized")
-		}
-		if client.client == nil {
-			t.Error("expected http client to be initialized")
-		}
-	})
-
-	t.Run("AddServer and ListServers", func(t *testing.T) {
-		client := NewMCPClient()
-		cfg := MCPServerConfig{
-			Name: "test-server",
-			URL:  "http://localhost:8080",
-		}
-		client.AddServer(cfg)
-
-		servers := client.ListServers()
-		if len(servers) != 1 {
-			t.Errorf("expected 1 server, got %d", len(servers))
-		}
-	})
-
-	t.Run("RemoveServer", func(t *testing.T) {
-		client := NewMCPClient()
-		cfg := MCPServerConfig{
-			Name: "to-remove",
-			URL:  "http://localhost:8080",
-		}
-		client.AddServer(cfg)
-		client.RemoveServer("to-remove")
-
-		servers := client.ListServers()
-		if len(servers) != 0 {
-			t.Errorf("expected 0 servers after removal, got %d", len(servers))
-		}
-	})
-}
-
 // TestSkillLoaderFunctions 测试 skill_loader 中的低覆盖率函数
 func TestSkillLoaderFunctions(t *testing.T) {
 	t.Run("stripFrontmatter empty", func(t *testing.T) {

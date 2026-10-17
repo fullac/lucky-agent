@@ -440,7 +440,7 @@ func appendLatestComputerObservation(messages []provider.Message, executed []exe
 	for i := range executed {
 		for j := range executed[i].Observations {
 			obs := executed[i].Observations[j]
-			if imageReadCall(executed[i].ToolCall) {
+			if imageReadCall(executed[i].ToolCall) || obs.Kind == "mcp_image" {
 				part := provider.ContentPart{Type: "image", Image: &provider.ImagePart{FilePath: obs.FilePath, URL: obs.ImageURL, MimeType: obs.MimeType}}
 				if part.Image.FilePath == "" && len(obs.ImageData) > 0 {
 					part.Image.URL = "data:" + imageMimeType(obs.MimeType) + ";base64," + base64.StdEncoding.EncodeToString(obs.ImageData)

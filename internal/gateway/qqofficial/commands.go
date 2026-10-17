@@ -36,7 +36,7 @@ func qqCommandSpecs() []qqCommandSpec {
 		{Command: "soul", Usage: "/soul", Description: "查看当前 SOUL", Group: qqCommandGroupSystem},
 		{Command: "tools", Usage: "/tools", Description: "列出可用工具", Group: qqCommandGroupSystem},
 		{Command: "skills", Usage: "/skills", Description: "列出已加载技能", Group: qqCommandGroupSystem},
-		{Command: "mcp", Usage: "/mcp <name> <url> [api_key]", Description: "连接 MCP server", Group: qqCommandGroupSystem},
+		{Command: "mcp", Usage: "/mcp status | connect/refresh/disconnect <name>", Description: "管理 MCP 服务", Group: qqCommandGroupSystem},
 		{Command: "approve", Usage: "/approve <tool>", Description: "自动批准工具", Group: qqCommandGroupSystem},
 		{Command: "deny", Usage: "/deny <tool>", Description: "禁用工具", Group: qqCommandGroupSystem},
 		{Command: "cron", Usage: "/cron [list|add|remove|pause|resume|start|stop]", Description: "管理定时任务", Group: qqCommandGroupSystem},

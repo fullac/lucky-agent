@@ -23,6 +23,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	luckycollector "github.com/yurika0211/luckyagent/internal/gateway/collector"
+	"github.com/yurika0211/luckyagent/internal/mcpclient"
 	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/provider"
@@ -98,7 +99,6 @@ type Runtime interface {
 	Soul() *soul.Soul
 	Tools() *tool.Registry
 	Skills() []*tool.SkillInfo
-	ConnectMCPServer(string, string, string)
 	CronEngine() *cron.Engine
 	RAG() *rag.RAGManager
 	Memory() memory.Inspector
@@ -124,6 +124,7 @@ type HandlerOptions struct {
 
 type Handler struct {
 	adapter  sender
+	mcpAdmin mcpclient.Admin
 	agent    Runtime
 	chat     turnChatRuntime
 	commands map[string]commandHandler
@@ -151,6 +152,10 @@ func NewHandler(adapter sender, agentRuntime Runtime) *Handler {
 }
 
 func NewHandlerWithOptions(adapter sender, agentRuntime Runtime, opts HandlerOptions) *Handler {
+	var mcpAdmin mcpclient.Admin
+	if source, ok := agentRuntime.(interface{ MCPAdmin() mcpclient.Admin }); ok {
+		mcpAdmin = source.MCPAdmin()
+	}
 	platformName := strings.TrimSpace(opts.PlatformName)
 	if platformName == "" {
 		platformName = "qqofficial"
@@ -170,6 +175,7 @@ func NewHandlerWithOptions(adapter sender, agentRuntime Runtime, opts HandlerOpt
 
 	h := &Handler{
 		adapter:           adapter,
+		mcpAdmin:          mcpAdmin,
 		agent:             agentRuntime,
 		chat:              agentRuntime,
 		commands:          make(map[string]commandHandler),
@@ -1041,16 +1047,11 @@ func (h *Handler) handleSkills(ctx context.Context, msg *gateway.Message) error 
 }
 
 func (h *Handler) handleMCP(ctx context.Context, msg *gateway.Message) error {
-	parts := strings.Fields(msg.Args)
-	if len(parts) < 2 {
-		return h.reply(ctx, msg, "用法：/mcp <name> <url> [api_key]")
+	message, err := mcpclient.RunCommand(ctx, h.mcpAdmin, msg.Args)
+	if err != nil {
+		message = "❌ " + err.Error()
 	}
-	apiKey := ""
-	if len(parts) > 2 {
-		apiKey = parts[2]
-	}
-	h.agent.ConnectMCPServer(parts[0], parts[1], apiKey)
-	return h.reply(ctx, msg, fmt.Sprintf("已连接 MCP server：%s (%s)", parts[0], parts[1]))
+	return h.reply(ctx, msg, message)
 }
 
 func (h *Handler) handleApprove(ctx context.Context, msg *gateway.Message) error {

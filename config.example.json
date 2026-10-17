@@ -56,6 +56,26 @@
     },
     "profiles": {}
   },
+  "mcp": {
+    "servers": {
+      "local_example": {
+        "transport": "stdio",
+        "command": "your-mcp-server",
+        "args": [],
+        "env": {},
+        "cwd": "",
+        "timeout_seconds": 30,
+        "disabled": true
+      },
+      "remote_example": {
+        "transport": "http",
+        "url": "https://example.com/mcp",
+        "credential_ref": "",
+        "timeout_seconds": 30,
+        "disabled": true
+      }
+    }
+  },
   "custom_models": [],
   "embedding": {
     "dimension": 2048
