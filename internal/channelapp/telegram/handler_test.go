@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yurika0211/luckyagent-gateway/telegram/presentation"
+	"github.com/yurika0211/luckyagent-tools/cron"
 	"github.com/yurika0211/luckyagent/internal/agent"
-	"github.com/yurika0211/luckyagent/internal/cron"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/session"
@@ -460,9 +461,9 @@ func TestFormatDuration(t *testing.T) {
 }
 
 func TestTruncateString(t *testing.T) {
-	assert.Equal(t, "hello", truncateString("hello", 10))
-	assert.Equal(t, "hel...", truncateString("hello world", 6))
-	assert.Equal(t, "", truncateString("", 5))
+	assert.Equal(t, "hello", presentation.TruncateString("hello", 10))
+	assert.Equal(t, "hel...", presentation.TruncateString("hello world", 6))
+	assert.Equal(t, "", presentation.TruncateString("", 5))
 }
 
 func TestPrependToolNarratives(t *testing.T) {
@@ -492,7 +493,7 @@ func TestAppendTelegramProgressSection(t *testing.T) {
 	parts = appendTelegramProgressSection(parts, normalizeTelegramProgressSection("<b>💭 当前进度</b>\n<blockquote expandable>第二段</blockquote>"))
 
 	require.Len(t, parts, 2)
-	card := renderTelegramProgressHistoryCard(parts)
+	card := presentation.RenderTelegramProgressHistoryCard(parts)
 	assert.Contains(t, card, "第一段")
 	assert.Contains(t, card, "第二段")
 	assert.Equal(t, 1, strings.Count(card, "<blockquote expandable>"))

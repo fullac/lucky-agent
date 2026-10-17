@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	autonomybridge "github.com/yurika0211/luckyagent/internal/autonomy"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,24 +15,25 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yurika0211/luckyagent-tools/autonomy"
+	codexruntime "github.com/yurika0211/luckyagent-tools/codex"
+	"github.com/yurika0211/luckyagent-tools/collab"
+	"github.com/yurika0211/luckyagent-tools/computer"
+	"github.com/yurika0211/luckyagent-tools/cron"
+	grokruntime "github.com/yurika0211/luckyagent-tools/grok"
+	"github.com/yurika0211/luckyagent-tools/memory"
+	"github.com/yurika0211/luckyagent-tools/memory/diagnostic"
+	"github.com/yurika0211/luckyagent-tools/multimodal"
+	taskstore "github.com/yurika0211/luckyagent-tools/task"
 	appheartbeat "github.com/yurika0211/luckyagent/internal/agent/heartbeat"
-	"github.com/yurika0211/luckyagent/internal/autonomy"
-	codexruntime "github.com/yurika0211/luckyagent/internal/codex"
-	"github.com/yurika0211/luckyagent/internal/collab"
-	"github.com/yurika0211/luckyagent/internal/computer"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/contextx"
-	"github.com/yurika0211/luckyagent/internal/cron"
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/gateway"
-	grokruntime "github.com/yurika0211/luckyagent/internal/grok"
 	"github.com/yurika0211/luckyagent/internal/hook"
 	"github.com/yurika0211/luckyagent/internal/logger"
-	"github.com/yurika0211/luckyagent/internal/memory"
-	"github.com/yurika0211/luckyagent/internal/memory/diagnostic"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/middleware"
-	"github.com/yurika0211/luckyagent/internal/multimodal"
 	"github.com/yurika0211/luckyagent/internal/proactive"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
@@ -39,7 +41,6 @@ import (
 	"github.com/yurika0211/luckyagent/internal/sandbox"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/soul"
-	taskstore "github.com/yurika0211/luckyagent/internal/task"
 	"github.com/yurika0211/luckyagent/internal/tool"
 	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
@@ -4092,7 +4093,7 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 
 	var execution turn.DurableExecution
 	if cfg.Execution != nil {
-		execution = autonomy.NewTurnExecution(cfg.Execution)
+		execution = autonomybridge.NewTurnExecution(cfg.Execution)
 	}
 	loopCfg := LoopConfig{
 		Execution:              execution,

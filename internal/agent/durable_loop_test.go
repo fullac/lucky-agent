@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	autonomybridge "github.com/yurika0211/luckyagent/internal/autonomy"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yurika0211/luckyagent/internal/autonomy"
+	"github.com/yurika0211/luckyagent-tools/autonomy"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/session"
@@ -62,7 +63,7 @@ func durableHarness(t *testing.T, cp durableCheckpoint) (*Agent, *session.Sessio
 	task := q.Add("perform requested operation", "", autonomy.PriorityNormal, nil)
 	task = q.Pull("worker")
 	exec := autonomy.NewExecution(q, task)
-	turnExec := autonomy.NewTurnExecution(exec)
+	turnExec := autonomybridge.NewTurnExecution(exec)
 	if err := turnExec.BindSession(sess.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func resumeDurableQueue(t *testing.T, q *autonomy.TaskQueue, cfg *LoopConfig) *a
 	if task == nil {
 		t.Fatal("task was not restored")
 	}
-	cfg.Execution = autonomy.NewTurnExecution(autonomy.NewExecution(reloaded, task))
+	cfg.Execution = autonomybridge.NewTurnExecution(autonomy.NewExecution(reloaded, task))
 	return reloaded
 }
 
@@ -152,7 +153,7 @@ func TestDurableAmbiguousOperationBlocksUntilReconciled(t *testing.T) {
 	if err := q.Unblock(task.ID); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Execution = autonomy.NewTurnExecution(autonomy.NewExecution(q, q.Pull("approved-worker")))
+	cfg.Execution = autonomybridge.NewTurnExecution(autonomy.NewExecution(q, q.Pull("approved-worker")))
 	result, err := a.RunLoopWithSession(context.Background(), sess, "perform requested operation", cfg)
 	if err != nil || !result.Verified || calls != 1 {
 		t.Fatalf("approved retry failed: calls=%d result=%+v err=%v", calls, result, err)

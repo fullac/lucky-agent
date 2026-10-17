@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"github.com/yurika0211/luckyagent-gateway/telegram/presentation"
 	"strings"
 	"time"
 
@@ -17,8 +18,8 @@ type telegramSessionListItem struct {
 
 // FormatSessionsList renders a page of the session list as Telegram HTML.
 func (TelegramFormatter) FormatSessionsList(infos []session.SessionInfo, currentID string, page int) string {
-	pageInfos, currentPage, pageCount := telegramListPage(infos, page)
-	pageStart := (currentPage - 1) * telegramCommandListPageSize
+	pageInfos, currentPage, pageCount := presentation.TelegramListPage(infos, page)
+	pageStart := (currentPage - 1) * presentation.TelegramCommandListPageSize
 	items := make([]telegramSessionListItem, 0, len(pageInfos))
 	for index, info := range pageInfos {
 		items = append(items, telegramSessionListItem{info: info, index: pageStart + index + 1})
@@ -72,8 +73,8 @@ func writeTelegramSessionGroup(body *strings.Builder, title string, items []tele
 		if item.info.ID == currentID {
 			current = " <b>（当前）</b>"
 		}
-		body.WriteString(fmt.Sprintf("%s [%d] %s%s\n", prefix, item.index, escapeTelegramCommandHTML(telegramSessionDisplayTitle(item.info.Title)), current))
-		body.WriteString(fmt.Sprintf("%s├─ ID: <code>%s</code>\n", indent, escapeTelegramCommandHTML(item.info.ID)))
+		body.WriteString(fmt.Sprintf("%s [%d] %s%s\n", prefix, item.index, presentation.EscapeTelegramCommandHTML(telegramSessionDisplayTitle(item.info.Title)), current))
+		body.WriteString(fmt.Sprintf("%s├─ ID: <code>%s</code>\n", indent, presentation.EscapeTelegramCommandHTML(item.info.ID)))
 		body.WriteString(fmt.Sprintf("%s└─ %d 条消息 | 最近更新 %s\n", indent, item.info.MessageCount, telegramSessionShortTime(item.info.UpdatedAt)))
 	}
 	body.WriteString("\n")
@@ -83,8 +84,8 @@ func writeTelegramSessionGroup(body *strings.Builder, title string, items []tele
 func (TelegramFormatter) FormatSessionDetail(info session.SessionInfo, sess *session.Session, currentID string) string {
 	var body strings.Builder
 	body.WriteString("📝 <b>会话详情</b>\n\n")
-	body.WriteString(fmt.Sprintf("<b>标题：</b>%s\n", escapeTelegramCommandHTML(telegramSessionDisplayTitle(info.Title))))
-	body.WriteString(fmt.Sprintf("<b>ID：</b><code>%s</code>\n", escapeTelegramCommandHTML(info.ID)))
+	body.WriteString(fmt.Sprintf("<b>标题：</b>%s\n", presentation.EscapeTelegramCommandHTML(telegramSessionDisplayTitle(info.Title))))
+	body.WriteString(fmt.Sprintf("<b>ID：</b><code>%s</code>\n", presentation.EscapeTelegramCommandHTML(info.ID)))
 	body.WriteString(fmt.Sprintf("<b>消息数：</b>%d 条\n", info.MessageCount))
 	body.WriteString(fmt.Sprintf("<b>创建时间：</b>%s\n", telegramSessionFullTime(info.CreatedAt)))
 	body.WriteString(fmt.Sprintf("<b>最近更新：</b>%s\n", telegramSessionFullTime(info.UpdatedAt)))
@@ -94,12 +95,12 @@ func (TelegramFormatter) FormatSessionDetail(info session.SessionInfo, sess *ses
 		if recent := telegramRecentSessionMessages(sess, 3); len(recent) > 0 {
 			body.WriteString("\n\n<b>最近消息</b>\n")
 			for _, message := range recent {
-				body.WriteString(fmt.Sprintf("• [%s] %s\n", telegramSessionRoleLabel(message.role), escapeTelegramCommandHTML(message.content)))
+				body.WriteString(fmt.Sprintf("• [%s] %s\n", telegramSessionRoleLabel(message.role), presentation.EscapeTelegramCommandHTML(message.content)))
 			}
 		}
 	}
 
-	body.WriteString(fmt.Sprintf("\n💡 使用 <code>/resume %s</code> 切换到此会话", escapeTelegramCommandHTML(info.ID)))
+	body.WriteString(fmt.Sprintf("\n💡 使用 <code>/resume %s</code> 切换到此会话", presentation.EscapeTelegramCommandHTML(info.ID)))
 	return strings.TrimSpace(body.String())
 }
 

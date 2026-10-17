@@ -5,8 +5,8 @@ import (
 
 	sdk "github.com/yurika0211/aestus/memory"
 	"github.com/yurika0211/aestus/memory/policy"
-	"github.com/yurika0211/luckyagent/internal/memory"
-	"github.com/yurika0211/luckyagent/internal/memory/diagnostic"
+	"github.com/yurika0211/luckyagent-tools/memory"
+	"github.com/yurika0211/luckyagent-tools/memory/diagnostic"
 )
 
 func fromSDKActivationComponents(v sdk.ActivationComponents) memory.ActivationComponents {

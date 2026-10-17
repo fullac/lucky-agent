@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent-tools/memory"
 )
 
 const (

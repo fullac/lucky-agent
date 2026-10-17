@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/yurika0211/luckyagent-gateway/telegram/presentation"
+	"github.com/yurika0211/luckyagent-tools/cron"
+	"github.com/yurika0211/luckyagent-tools/memory"
 	"github.com/yurika0211/luckyagent/internal/agent"
-	"github.com/yurika0211/luckyagent/internal/cron"
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/gateway"
-	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
@@ -696,9 +697,9 @@ func TestV054TruncateString(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := truncateString(tt.input, tt.maxLen)
+		result := presentation.TruncateString(tt.input, tt.maxLen)
 		if result != tt.expected {
-			t.Errorf("truncateString(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
+			t.Errorf("presentation.TruncateString(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
 		}
 	}
 }

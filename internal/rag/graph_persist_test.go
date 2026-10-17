@@ -27,17 +27,17 @@ func TestGraphPersistence(t *testing.T) {
 
 	// 测试节点持久化
 	node1 := &KnowledgeNode{
-		ID:          "node_1",
-		Type:        "person",
-		Name:        "张三",
-		Aliases:     []string{"Zhang San", "小张"},
-		Description: "软件工程师",
-		Importance:  0.8,
-		AccessCount: 5,
-		CreatedAt:   time.Now(),
-		AccessedAt:  time.Now(),
+		ID:           "node_1",
+		Type:         "person",
+		Name:         "张三",
+		Aliases:      []string{"Zhang San", "小张"},
+		Description:  "软件工程师",
+		Importance:   0.8,
+		AccessCount:  5,
+		CreatedAt:    time.Now(),
+		AccessedAt:   time.Now(),
 		SourceChunks: []string{"chunk_1", "chunk_2"},
-		Tags:        []string{"engineering", "software"},
+		Tags:         []string{"engineering", "software"},
 	}
 
 	if err := graphStore.SaveNode(node1); err != nil {

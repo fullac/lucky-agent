@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/yurika0211/luckyagent-gateway/telegram/presentation"
 	"html"
 	"math/rand"
 	"os"
@@ -18,21 +19,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yurika0211/luckyagent-tools/cron"
+	"github.com/yurika0211/luckyagent-tools/memory"
+	taskstore "github.com/yurika0211/luckyagent-tools/task"
 	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/cli/profile"
 	"github.com/yurika0211/luckyagent/internal/config"
-	"github.com/yurika0211/luckyagent/internal/cron"
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	luckycollector "github.com/yurika0211/luckyagent/internal/gateway/collector"
-	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
 	"github.com/yurika0211/luckyagent/internal/sandbox"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/soul"
-	taskstore "github.com/yurika0211/luckyagent/internal/task"
 	"github.com/yurika0211/luckyagent/internal/tool"
 	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
@@ -1070,7 +1071,7 @@ func (h *Handler) sendMemoryTraceCards(msg *gateway.Message, traces []memory.Sea
 		return
 	}
 	for _, trace := range traces {
-		card := renderTelegramMemoryTraceCard(
+		card := presentation.RenderTelegramMemoryTraceCard(
 			trace,
 			h.effectiveMemoryTraceLevel(),
 			h.effectiveMemoryTraceMaxResults(),
@@ -1393,12 +1394,12 @@ func uniqueSessionMatch(sessions *session.Manager, infos []session.SessionInfo, 
 
 func formatAmbiguousSessionSwitchMessage(query string, matches []session.SessionInfo) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("❌ 多个会话匹配 <code>%s</code>：\n\n", escapeTelegramCommandHTML(query)))
+	sb.WriteString(fmt.Sprintf("❌ 多个会话匹配 <code>%s</code>：\n\n", presentation.EscapeTelegramCommandHTML(query)))
 	limit := min(len(matches), 5)
 	for i := 0; i < limit; i++ {
 		sb.WriteString(fmt.Sprintf("• <code>%s</code> — %s（%d 条消息）\n",
-			escapeTelegramCommandHTML(matches[i].ID),
-			escapeTelegramCommandHTML(telegramSessionDisplayTitle(matches[i].Title)),
+			presentation.EscapeTelegramCommandHTML(matches[i].ID),
+			presentation.EscapeTelegramCommandHTML(telegramSessionDisplayTitle(matches[i].Title)),
 			matches[i].MessageCount,
 		))
 	}
@@ -2243,7 +2244,7 @@ func (h *Handler) newProgressCardUpdater(msg *gateway.Message) func(string) {
 			return
 		}
 		parts = appendTelegramProgressSection(parts, section)
-		combined := renderTelegramProgressHistoryCard(parts)
+		combined := presentation.RenderTelegramProgressHistoryCard(parts)
 		if strings.TrimSpace(combined) == "" {
 			return
 		}
@@ -2310,14 +2311,6 @@ func normalizeTelegramProgressSection(text string) string {
 	text = strings.ReplaceAll(text, "<br />", "\n")
 	text = strings.TrimSpace(text)
 	return strings.TrimSpace(html.UnescapeString(text))
-}
-
-func extractRoundNumber(thinking string) int {
-	var round int
-	if _, err := fmt.Sscanf(strings.TrimSpace(thinking), "Thinking... (round %d)", &round); err == nil && round > 0 {
-		return round
-	}
-	return 0
 }
 
 func (h *Handler) generateRoundProgressFeedback(ctx context.Context, msg *gateway.Message, userInput string, round int, observations []string, progressHistory []string, lastProgress string) string {
@@ -2426,7 +2419,7 @@ func formatGatewayApprovalPrompt(evt turn.ChatEvent) string {
 }
 
 func formatTelegramProgressSummary(progress string) string {
-	card := renderTelegramSummaryCard(progress)
+	card := presentation.RenderTelegramSummaryCard(progress)
 	if strings.TrimSpace(card) == "" {
 		return progress
 	}
@@ -2791,7 +2784,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 	toolCallCount := 0
 	lastProgress := ""
 	var toolNarratives []string
-	var toolTraceSteps []telegramToolTraceStep
+	var toolTraceSteps []presentation.TelegramToolTraceStep
 	toolTraceSent := false
 	agentTraceSent := false
 	var memoryTraceCards []memory.SearchTrace
@@ -2819,7 +2812,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 
 			case turn.ChatEventThinking:
 				if summaryMode {
-					if nextRound := extractRoundNumber(evt.Content); nextRound > currentRound {
+					if nextRound := presentation.ExtractRoundNumber(evt.Content); nextRound > currentRound {
 						if progress := h.generateRoundProgressFeedback(chatCtx, msg, routingText, currentRound, roundObservations, progressHistory, lastProgress); progress != "" {
 							emitProgress(formatTelegramProgressSummary(progress))
 							lastProgress = progress
@@ -2829,9 +2822,9 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 						currentRound = nextRound
 					}
 				} else {
-					progress := renderTelegramThinkingCard(evt.Content)
+					progress := presentation.RenderTelegramThinkingCard(evt.Content)
 					if strings.TrimSpace(progress) == "" {
-						progress = humanizeThinkingProgress(evt.Content)
+						progress = presentation.HumanizeThinkingProgress(evt.Content)
 					}
 					if strings.TrimSpace(progress) != "" && progress != lastProgress {
 						emitProgress(progress)
@@ -2844,12 +2837,12 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 
 			case turn.ChatEventToolCall:
 				toolCallCount++
-				toolTraceSteps = append(toolTraceSteps, telegramToolTraceStep{
+				toolTraceSteps = append(toolTraceSteps, presentation.TelegramToolTraceStep{
 					Name: evt.Name,
 					Args: evt.Args,
 				})
 				if summaryMode {
-					if line := humanizeToolCall(evt.Name, evt.Args); line != "" {
+					if line := presentation.HumanizeToolCall(evt.Name, evt.Args); line != "" {
 						roundObservations = append(roundObservations, "Tool call: "+line)
 					}
 				}
@@ -2857,7 +2850,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 			case turn.ChatEventToolResult:
 				if evt.Name == telegramMemoryTraceEventName {
 					if h.effectiveMemoryTrace() {
-						if trace, ok := parseTelegramMemoryTracePayload(evt.Result); ok {
+						if trace, ok := presentation.ParseTelegramMemoryTracePayload(evt.Result); ok {
 							memoryTraceCards = append(memoryTraceCards, trace)
 						}
 					}
@@ -2876,7 +2869,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 					}
 				}
 				if shouldPrependToolNarratives(h.effectiveShowToolDetailsInResult(), true) {
-					if line := humanizeToolResult(evt.Name, evt.Result); line != "" {
+					if line := presentation.HumanizeToolResult(evt.Name, evt.Result); line != "" {
 						toolNarratives = append(toolNarratives, line)
 					}
 				}
@@ -2894,13 +2887,13 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 					memoryTraceSent = true
 				}
 				if !toolTraceSent {
-					if card := renderTelegramToolTraceCardWithTemplateDetails(toolTraceSteps, h.effectiveShowToolDetailsInResult(), h.toolTraceTemplates); strings.TrimSpace(card) != "" {
+					if card := presentation.RenderTelegramToolTraceCardWithTemplateDetails(toolTraceSteps, h.effectiveShowToolDetailsInResult(), h.toolTraceTemplates); strings.TrimSpace(card) != "" {
 						h.sendProgressMessageHTML(msg, card)
 						toolTraceSent = true
 					}
 				}
 				if !agentTraceSent {
-					if card := renderTelegramAgentTraceCard(toolTraceSteps); strings.TrimSpace(card) != "" {
+					if card := presentation.RenderTelegramAgentTraceCard(toolTraceSteps); strings.TrimSpace(card) != "" {
 						h.sendProgressMessageHTML(msg, card)
 						agentTraceSent = true
 					}
@@ -2913,7 +2906,7 @@ func (h *Handler) handleChatNarrativeStream(ctx context.Context, msg *gateway.Me
 				if shouldPrependToolNarratives(h.effectiveShowToolDetailsInResult(), true) && finalOutput != "" {
 					finalOutput = prependToolNarratives(toolNarratives, finalOutput)
 				}
-				h.sendFinalAssistantResponse(msg, wrapFinalConclusion(finalOutput))
+				h.sendFinalAssistantResponse(msg, presentation.WrapFinalConclusion(finalOutput))
 				return true, true
 
 			case turn.ChatEventError:
@@ -2978,7 +2971,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 	toolCallCount := 0
 	lastProgress := ""
 	var toolNarratives []string
-	var toolTraceSteps []telegramToolTraceStep
+	var toolTraceSteps []presentation.TelegramToolTraceStep
 	toolTraceSent := false
 	agentTraceSent := false
 	var memoryTraceCards []memory.SearchTrace
@@ -3008,7 +3001,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 
 			case turn.ChatEventThinking:
 				if summaryMode {
-					if nextRound := extractRoundNumber(evt.Content); nextRound > currentRound {
+					if nextRound := presentation.ExtractRoundNumber(evt.Content); nextRound > currentRound {
 						if progress := h.generateRoundProgressFeedback(chatCtx, msg, routingText, currentRound, roundObservations, progressHistory, lastProgress); progress != "" {
 							emitProgress(formatTelegramProgressSummary(progress))
 							lastProgress = progress
@@ -3018,9 +3011,9 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 						currentRound = nextRound
 					}
 				} else if h.effectiveProgressAsMessages() && toolCallCount == 0 && lastProgress == "" {
-					progress := "🧠 " + clipOneLine(evt.Content, 180)
+					progress := "🧠 " + presentation.ClipOneLine(evt.Content, 180)
 					if narrativeMode {
-						progress = humanizeThinkingProgress(evt.Content)
+						progress = presentation.HumanizeThinkingProgress(evt.Content)
 					}
 					if strings.TrimSpace(progress) != "" && progress != "🧠 " && progress != lastProgress {
 						emitProgress(progress)
@@ -3036,19 +3029,19 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 
 			case turn.ChatEventToolCall:
 				toolCallCount++
-				toolTraceSteps = append(toolTraceSteps, telegramToolTraceStep{
+				toolTraceSteps = append(toolTraceSteps, presentation.TelegramToolTraceStep{
 					Name: evt.Name,
 					Args: evt.Args,
 				})
 				if summaryMode {
-					if line := humanizeToolCall(evt.Name, evt.Args); line != "" && len(roundObservations) < 2 {
+					if line := presentation.HumanizeToolCall(evt.Name, evt.Args); line != "" && len(roundObservations) < 2 {
 						roundObservations = append(roundObservations, "Tool call: "+line)
 					}
 				} else if h.effectiveProgressAsMessages() && toolCallCount == 1 {
 					// 工具调用作为独立自然语言消息发送（Nanobot 风格）。
-					progress := "🔧 " + humanizeToolCall(evt.Name, evt.Args)
+					progress := "🔧 " + presentation.HumanizeToolCall(evt.Name, evt.Args)
 					if narrativeMode {
-						progress = humanizeToolCallProgress(1, evt.Name, evt.Args)
+						progress = presentation.HumanizeToolCallProgress(1, evt.Name, evt.Args)
 					}
 					if strings.TrimSpace(progress) != "" && progress != lastProgress {
 						emitProgress(progress)
@@ -3062,7 +3055,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 			case turn.ChatEventToolResult:
 				if evt.Name == telegramMemoryTraceEventName {
 					if h.effectiveMemoryTrace() {
-						if trace, ok := parseTelegramMemoryTracePayload(evt.Result); ok {
+						if trace, ok := presentation.ParseTelegramMemoryTracePayload(evt.Result); ok {
 							memoryTraceCards = append(memoryTraceCards, trace)
 						}
 					}
@@ -3081,7 +3074,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 					}
 				}
 				if shouldPrependToolNarratives(h.effectiveShowToolDetailsInResult(), narrativeMode) {
-					if line := humanizeToolResult(evt.Name, evt.Result); line != "" {
+					if line := presentation.HumanizeToolResult(evt.Name, evt.Result); line != "" {
 						toolNarratives = append(toolNarratives, line)
 					}
 				}
@@ -3107,13 +3100,13 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 					memoryTraceSent = true
 				}
 				if narrativeMode && !toolTraceSent {
-					if card := renderTelegramToolTraceCardWithTemplateDetails(toolTraceSteps, h.effectiveShowToolDetailsInResult(), h.toolTraceTemplates); strings.TrimSpace(card) != "" {
+					if card := presentation.RenderTelegramToolTraceCardWithTemplateDetails(toolTraceSteps, h.effectiveShowToolDetailsInResult(), h.toolTraceTemplates); strings.TrimSpace(card) != "" {
 						h.sendProgressMessageHTML(msg, card)
 						toolTraceSent = true
 					}
 				}
 				if narrativeMode && !agentTraceSent {
-					if card := renderTelegramAgentTraceCard(toolTraceSteps); strings.TrimSpace(card) != "" {
+					if card := presentation.RenderTelegramAgentTraceCard(toolTraceSteps); strings.TrimSpace(card) != "" {
 						h.sendProgressMessageHTML(msg, card)
 						agentTraceSent = true
 					}
@@ -3127,7 +3120,7 @@ func (h *Handler) handleChatStream(ctx context.Context, sender gateway.StreamSen
 					finalOutput = prependToolNarratives(toolNarratives, finalOutput)
 				}
 				if narrativeMode {
-					finalOutput = wrapFinalConclusion(finalOutput)
+					finalOutput = presentation.WrapFinalConclusion(finalOutput)
 				}
 				textOnly, media, resolveErr := resolveOutboundMediaResponse(finalOutput)
 				if resolveErr != nil {
@@ -3217,7 +3210,7 @@ func prependToolNarratives(lines []string, finalOutput string) string {
 	b.WriteString("我刚刚先做了这些事：\n")
 	for _, line := range summaryLines {
 		b.WriteString("1. ")
-		b.WriteString(clipOneLine(line, 120))
+		b.WriteString(presentation.ClipOneLine(line, 120))
 		b.WriteString("\n")
 	}
 	if len(lines) > len(summaryLines) {
@@ -3818,7 +3811,7 @@ func (h *Handler) handleTools(ctx context.Context, msg *gateway.Message) error {
 		return h.sendCommandHTML(ctx, msg, "No tools available.")
 	}
 
-	page, showAll, err := parseTelegramListPage(msg.Args)
+	page, showAll, err := presentation.ParseTelegramListPage(msg.Args)
 	if err != nil {
 		return h.sendCommandHTML(ctx, msg, "❌ <b>Usage:</b> <code>/tools [page|all]</code>")
 	}
@@ -3826,7 +3819,7 @@ func (h *Handler) handleTools(ctx context.Context, msg *gateway.Message) error {
 	if !showAll {
 		return h.sendCommandHTML(ctx, msg, formatter.FormatToolsList(allTools, page))
 	}
-	for page = 1; page <= (len(orderedTelegramTools(allTools))+telegramCommandListPageSize-1)/telegramCommandListPageSize; page++ {
+	for page = 1; page <= (len(presentation.OrderedTelegramTools(allTools))+presentation.TelegramCommandListPageSize-1)/presentation.TelegramCommandListPageSize; page++ {
 		if err := h.sendCommandHTML(ctx, msg, formatter.FormatToolsList(allTools, page)); err != nil {
 			return err
 		}
@@ -3848,7 +3841,7 @@ func (h *Handler) handleTool(ctx context.Context, msg *gateway.Message) error {
 			return h.sendCommandHTML(ctx, msg, (TelegramFormatter{}).FormatToolDetail(item))
 		}
 	}
-	return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ Tool <code>%s</code> not found. Use <code>/tools</code> to list available tools.", escapeTelegramCommandHTML(name)))
+	return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ Tool <code>%s</code> not found. Use <code>/tools</code> to list available tools.", presentation.EscapeTelegramCommandHTML(name)))
 }
 
 // handleReset resets the conversation for this chat.
@@ -3931,11 +3924,11 @@ func (h *Handler) handleSession(ctx context.Context, msg *gateway.Message) error
 	case sessionLookupAmbiguous:
 		return h.sendCommandHTML(ctx, msg, formatAmbiguousSessionSwitchMessage(query, result.matches))
 	default:
-		return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ 会话 <code>%s</code> 不存在。使用 <code>/sessions</code> 查看列表。", escapeTelegramCommandHTML(query)))
+		return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ 会话 <code>%s</code> 不存在。使用 <code>/sessions</code> 查看列表。", presentation.EscapeTelegramCommandHTML(query)))
 	}
 	info, ok := telegramSessionInfoByID(sessions, result.id)
 	if !ok {
-		return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ 会话 <code>%s</code> 不存在。", escapeTelegramCommandHTML(query)))
+		return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ 会话 <code>%s</code> 不存在。", presentation.EscapeTelegramCommandHTML(query)))
 	}
 	return h.sendCommandHTML(ctx, msg, (TelegramFormatter{}).FormatSessionDetail(info, result.session, currentID))
 }
@@ -3952,7 +3945,7 @@ func (h *Handler) handleSessions(ctx context.Context, msg *gateway.Message) erro
 		return h.sendCommandHTML(ctx, msg, "📭 暂无会话。发送一条消息即可开始。")
 	}
 
-	page, showAll, err := parseTelegramListPage(msg.Args)
+	page, showAll, err := presentation.ParseTelegramListPage(msg.Args)
 	if err != nil {
 		return h.sendCommandHTML(ctx, msg, "❌ <b>用法：</b><code>/sessions [页码|all]</code>")
 	}
@@ -3961,7 +3954,7 @@ func (h *Handler) handleSessions(ctx context.Context, msg *gateway.Message) erro
 	if !showAll {
 		return h.sendCommandHTML(ctx, msg, formatter.FormatSessionsList(infos, currentID, page))
 	}
-	pageCount := (len(infos) + telegramCommandListPageSize - 1) / telegramCommandListPageSize
+	pageCount := (len(infos) + presentation.TelegramCommandListPageSize - 1) / presentation.TelegramCommandListPageSize
 	for page = 1; page <= pageCount; page++ {
 		if err := h.sendCommandHTML(ctx, msg, formatter.FormatSessionsList(infos, currentID, page)); err != nil {
 			return err
@@ -4011,7 +4004,7 @@ func (h *Handler) handleSessionSwitch(ctx context.Context, msg *gateway.Message,
 	case sessionLookupAmbiguous:
 		return h.sendCommandHTML(ctx, msg, formatAmbiguousSessionSwitchMessage(sessionQuery, result.matches))
 	default:
-		return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ 会话 <code>%s</code> 不存在。使用 <code>/sessions</code> 查看列表。", escapeTelegramCommandHTML(sessionQuery)))
+		return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ 会话 <code>%s</code> 不存在。使用 <code>/sessions</code> 查看列表。", presentation.EscapeTelegramCommandHTML(sessionQuery)))
 	}
 
 	sess := result.session
@@ -4026,12 +4019,12 @@ func (h *Handler) handleSessionSwitch(ctx context.Context, msg *gateway.Message,
 
 	title := telegramSessionDisplayTitle(sess.Title)
 	if hadOld && oldSessionID == matchedID {
-		return h.sendCommandHTML(ctx, msg, fmt.Sprintf("✅ 已在会话 <code>%s</code> — %s", escapeTelegramCommandHTML(shortSessionID(matchedID)), escapeTelegramCommandHTML(title)))
+		return h.sendCommandHTML(ctx, msg, fmt.Sprintf("✅ 已在会话 <code>%s</code> — %s", presentation.EscapeTelegramCommandHTML(shortSessionID(matchedID)), presentation.EscapeTelegramCommandHTML(title)))
 	}
 
 	return h.sendCommandHTML(ctx, msg, fmt.Sprintf("✅ <b>已切换会话</b>\n<b>ID：</b><code>%s</code>\n<b>标题：</b>%s\n<b>消息数：</b>%d",
-		escapeTelegramCommandHTML(shortSessionID(matchedID)),
-		escapeTelegramCommandHTML(title),
+		presentation.EscapeTelegramCommandHTML(shortSessionID(matchedID)),
+		presentation.EscapeTelegramCommandHTML(title),
 		sess.MessageCount(),
 	))
 }
@@ -4043,7 +4036,7 @@ func (h *Handler) handleSkills(ctx context.Context, msg *gateway.Message) error 
 		return h.sendCommandHTML(ctx, msg, "No skills loaded.")
 	}
 
-	page, showAll, err := parseTelegramListPage(msg.Args)
+	page, showAll, err := presentation.ParseTelegramListPage(msg.Args)
 	if err != nil {
 		return h.sendCommandHTML(ctx, msg, "❌ <b>Usage:</b> <code>/skills [page|all]</code>")
 	}
@@ -4051,7 +4044,7 @@ func (h *Handler) handleSkills(ctx context.Context, msg *gateway.Message) error 
 	if !showAll {
 		return h.sendCommandHTML(ctx, msg, formatter.FormatSkillsList(skills, page))
 	}
-	for page = 1; page <= (len(orderedTelegramSkills(skills))+telegramCommandListPageSize-1)/telegramCommandListPageSize; page++ {
+	for page = 1; page <= (len(presentation.OrderedTelegramSkills(skills))+presentation.TelegramCommandListPageSize-1)/presentation.TelegramCommandListPageSize; page++ {
 		if err := h.sendCommandHTML(ctx, msg, formatter.FormatSkillsList(skills, page)); err != nil {
 			return err
 		}
@@ -4077,7 +4070,7 @@ func (h *Handler) handleSkill(ctx context.Context, msg *gateway.Message) error {
 			}
 		}
 	}
-	return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ Skill <code>%s</code> not found. Use <code>/skills</code> to list loaded skills.", escapeTelegramCommandHTML(name)))
+	return h.sendCommandHTML(ctx, msg, fmt.Sprintf("❌ Skill <code>%s</code> not found. Use <code>/skills</code> to list loaded skills.", presentation.EscapeTelegramCommandHTML(name)))
 }
 
 func (h *Handler) handleMCP(ctx context.Context, msg *gateway.Message) error {

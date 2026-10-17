@@ -2,7 +2,7 @@ package memoryaestus
 
 import (
 	sdk "github.com/yurika0211/aestus/memory"
-	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent-tools/memory"
 )
 
 func mapSlice[A, B any](items []A, convert func(A) B) []B {

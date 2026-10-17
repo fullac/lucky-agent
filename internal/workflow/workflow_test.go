@@ -183,8 +183,8 @@ func TestGetExecutionOrder(t *testing.T) {
 					{ID: "t3", Name: "Task 3", Action: "test", DependsOn: []string{"t1", "t2"}},
 				},
 			},
-			want: []string{"t1", "t2", "t3"}, // t1 and t2 are parallel; order may vary
-			parallel: true, // mark as parallel — only check set equality for first N
+			want:     []string{"t1", "t2", "t3"}, // t1 and t2 are parallel; order may vary
+			parallel: true,                       // mark as parallel — only check set equality for first N
 		},
 		{
 			name: "diamond dependency",
@@ -542,12 +542,12 @@ func TestWorkflowJSONRoundTrip(t *testing.T) {
 		Description: "A test workflow",
 		Tasks: []*Task{
 			{
-				ID:        "t1",
-				Name:      "Task 1",
-				Action:    "http",
-				Params:    map[string]interface{}{"url": "https://example.com"},
-				DependsOn: []string{},
-				Timeout:   30 * time.Second,
+				ID:         "t1",
+				Name:       "Task 1",
+				Action:     "http",
+				Params:     map[string]interface{}{"url": "https://example.com"},
+				DependsOn:  []string{},
+				Timeout:    30 * time.Second,
 				RetryCount: 3,
 				RetryDelay: 1 * time.Second,
 			},

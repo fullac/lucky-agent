@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/yurika0211/luckyagent/internal/autonomy"
+	"github.com/yurika0211/luckyagent-tools/autonomy"
 )
 
 func TestHandleAutonomyDashboard(t *testing.T) {

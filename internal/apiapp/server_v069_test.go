@@ -170,7 +170,7 @@ func TestHandleChatServerStats(t *testing.T) {
 	// 创建 mock agent
 	a := createTestAgent(t)
 	s := &Server{
-		agent: a,
+		agent:   a,
 		metrics: metrics.NewMetrics(),
 		stats:   ServerStats{StartTime: time.Now()},
 	}

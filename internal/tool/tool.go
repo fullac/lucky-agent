@@ -245,114 +245,114 @@ type WebSearchConfig = toolkit.WebSearchConfig
 
 var WebSearchTool = toolkit.WebSearchTool
 
-type AgentExecutorFunc = application.AgentExecutorFunc
-type AgentExecutorOptions = application.AgentExecutorOptions
-type AgentExecutorWithOptionsFunc = application.AgentExecutorWithOptionsFunc
-type ApprovalRequiredError = application.ApprovalRequiredError
-type AutonomyStartFunc = application.AutonomyStartFunc
-type AutonomyToolService = application.AutonomyToolService
-type BuiltinToolService = application.BuiltinToolService
-type CodexToolService = application.CodexToolService
-type ComputerManager = application.ComputerManager
-type ComputerUseConfig = application.ComputerUseConfig
-type ComputerUseToolService = application.ComputerUseToolService
-type CronSaveFunc = application.CronSaveFunc
-type CronTaskFactory = application.CronTaskFactory
-type CronToolService = application.CronToolService
+type AgentExecutorFunc = toolkit.AgentExecutorFunc
+type AgentExecutorOptions = toolkit.AgentExecutorOptions
+type AgentExecutorWithOptionsFunc = toolkit.AgentExecutorWithOptionsFunc
+type ApprovalRequiredError = toolkit.ApprovalRequiredError
+type AutonomyStartFunc = toolkit.AutonomyStartFunc
+type AutonomyToolService = toolkit.AutonomyToolService
+type BuiltinToolService = toolkit.BuiltinToolService
+type CodexToolService = toolkit.CodexToolService
+type ComputerManager = toolkit.ComputerManager
+type ComputerUseConfig = toolkit.ComputerUseConfig
+type ComputerUseToolService = toolkit.ComputerUseToolService
+type CronSaveFunc = toolkit.CronSaveFunc
+type CronTaskFactory = toolkit.CronTaskFactory
+type CronToolService = toolkit.CronToolService
 
-var DefaultDelegateConfig = application.DefaultDelegateConfig
-var DelegateCancelTool = application.DelegateCancelTool
+var DefaultDelegateConfig = toolkit.DefaultDelegateConfig
+var DelegateCancelTool = toolkit.DelegateCancelTool
 
-type DelegateConfig = application.DelegateConfig
+type DelegateConfig = toolkit.DelegateConfig
 
-var DelegateExecutionSessionID = application.DelegateExecutionSessionID
+var DelegateExecutionSessionID = toolkit.DelegateExecutionSessionID
 
-type DelegateManager = application.DelegateManager
-type DelegateTarget = application.DelegateTarget
-type DelegateTask = application.DelegateTask
+type DelegateManager = toolkit.DelegateManager
+type DelegateTarget = toolkit.DelegateTarget
+type DelegateTask = toolkit.DelegateTask
 
-var DelegateTaskID = application.DelegateTaskID
-var DelegateTaskTool = application.DelegateTaskTool
-var DelegateToMCPTool = application.DelegateToMCPTool
-var DelegateToSkillTool = application.DelegateToSkillTool
+var DelegateTaskID = toolkit.DelegateTaskID
+var DelegateTaskTool = toolkit.DelegateTaskTool
+var DelegateToMCPTool = toolkit.DelegateToMCPTool
+var DelegateToSkillTool = toolkit.DelegateToSkillTool
 
-type EphemeralCredentialTerminalToolService = application.EphemeralCredentialTerminalToolService
-type EphemeralCredentialToolService = application.EphemeralCredentialToolService
+type EphemeralCredentialTerminalToolService = toolkit.EphemeralCredentialTerminalToolService
+type EphemeralCredentialToolService = toolkit.EphemeralCredentialToolService
 
-var ExtractDelegateWorkspace = application.ExtractDelegateWorkspace
+var ExtractDelegateWorkspace = toolkit.ExtractDelegateWorkspace
 
-type GrokToolService = application.GrokToolService
-type HeartbeatToolService = application.HeartbeatToolService
+type GrokToolService = toolkit.GrokToolService
+type HeartbeatToolService = toolkit.HeartbeatToolService
 
-var ImageAnalyzeTool = application.ImageAnalyzeTool
-var ImageGenerateTool = application.ImageGenerateTool
+var ImageAnalyzeTool = toolkit.ImageAnalyzeTool
+var ImageGenerateTool = toolkit.ImageGenerateTool
 
-type ImageGenerationDefaults = application.ImageGenerationDefaults
+type ImageGenerationDefaults = toolkit.ImageGenerationDefaults
 
-var ImageReadTool = application.ImageReadTool
-var ImageTool = application.ImageTool
-var ListTasksTool = application.ListTasksTool
+var ImageReadTool = toolkit.ImageReadTool
+var ImageTool = toolkit.ImageTool
+var ListTasksTool = toolkit.ListTasksTool
 
-type MemoryToolService = application.MemoryToolService
-type NapCatCrossGroupReadConfig = application.NapCatCrossGroupReadConfig
-type NapCatGroupReader = application.NapCatGroupReader
+type MemoryToolService = toolkit.MemoryToolService
+type NapCatCrossGroupReadConfig = toolkit.NapCatCrossGroupReadConfig
+type NapCatGroupReader = toolkit.NapCatGroupReader
 
-var NapCatReadGroupTool = application.NapCatReadGroupTool
-var NewAutonomyToolService = application.NewAutonomyToolService
-var NewBuiltinToolService = application.NewBuiltinToolService
-var NewCodexToolService = application.NewCodexToolService
-var NewComputerUseToolService = application.NewComputerUseToolService
-var NewCronToolService = application.NewCronToolService
-var NewDelegateManager = application.NewDelegateManager
+var NapCatReadGroupTool = toolkit.NapCatReadGroupTool
+var NewAutonomyToolService = toolkit.NewAutonomyToolService
+var NewBuiltinToolService = toolkit.NewBuiltinToolService
+var NewCodexToolService = toolkit.NewCodexToolService
+var NewComputerUseToolService = toolkit.NewComputerUseToolService
+var NewCronToolService = toolkit.NewCronToolService
+var NewDelegateManager = toolkit.NewDelegateManager
 var NewEphemeralCredentialTerminalToolService = application.NewEphemeralCredentialTerminalToolService
 var NewEphemeralCredentialToolService = application.NewEphemeralCredentialToolService
-var NewGrokToolService = application.NewGrokToolService
-var NewHeartbeatToolService = application.NewHeartbeatToolService
-var NewMemoryToolService = application.NewMemoryToolService
-var NewPriorityTaskQueue = application.NewPriorityTaskQueue
-var NewRAGToolService = application.NewRAGToolService
-var NewServices = application.NewServices
-var NewTaskCache = application.NewTaskCache
+var NewGrokToolService = toolkit.NewGrokToolService
+var NewHeartbeatToolService = toolkit.NewHeartbeatToolService
+var NewMemoryToolService = toolkit.NewMemoryToolService
+var NewPriorityTaskQueue = toolkit.NewPriorityTaskQueue
+var NewRAGToolService = toolkit.NewRAGToolService
+var NewServices = toolkit.NewServices
+var NewTaskCache = toolkit.NewTaskCache
 
-type ParallelDelegateResult = application.ParallelDelegateResult
-type ParallelDelegateTask = application.ParallelDelegateTask
+type ParallelDelegateResult = toolkit.ParallelDelegateResult
+type ParallelDelegateTask = toolkit.ParallelDelegateTask
 
-var ParseTaskPriority = application.ParseTaskPriority
+var ParseTaskPriority = toolkit.ParseTaskPriority
 
-type PrioritizedTask = application.PrioritizedTask
+type PrioritizedTask = toolkit.PrioritizedTask
 
-const PriorityCritical = application.PriorityCritical
-const PriorityHigh = application.PriorityHigh
-const PriorityLow = application.PriorityLow
-const PriorityNormal = application.PriorityNormal
+const PriorityCritical = toolkit.PriorityCritical
+const PriorityHigh = toolkit.PriorityHigh
+const PriorityLow = toolkit.PriorityLow
+const PriorityNormal = toolkit.PriorityNormal
 
-type PriorityTaskQueue = application.PriorityTaskQueue
-type RAGToolService = application.RAGToolService
+type PriorityTaskQueue = toolkit.PriorityTaskQueue
+type RAGToolService = toolkit.RAGToolService
 
-var RegisterBuiltinComputerTools = application.RegisterBuiltinComputerTools
-var RegisterBuiltinTools = application.RegisterBuiltinTools
-var RegisterBuiltinToolsWithConfig = application.RegisterBuiltinToolsWithConfig
+var RegisterBuiltinComputerTools = toolkit.RegisterBuiltinComputerTools
+var RegisterBuiltinTools = toolkit.RegisterRuntimeBuiltinTools
+var RegisterBuiltinToolsWithConfig = toolkit.RegisterRuntimeBuiltinToolsWithConfig
 
-type Services = application.Services
+type Services = toolkit.Services
 
-const StatusCancelled = application.StatusCancelled
-const StatusCompleted = application.StatusCompleted
-const StatusFailed = application.StatusFailed
-const StatusPending = application.StatusPending
-const StatusRunning = application.StatusRunning
+const StatusCancelled = toolkit.StatusCancelled
+const StatusCompleted = toolkit.StatusCompleted
+const StatusFailed = toolkit.StatusFailed
+const StatusPending = toolkit.StatusPending
+const StatusRunning = toolkit.StatusRunning
 
-var SubagentTool = application.SubagentTool
+var SubagentTool = toolkit.SubagentTool
 
-type TTSDefaults = application.TTSDefaults
+type TTSDefaults = toolkit.TTSDefaults
 
-const TargetAgent = application.TargetAgent
-const TargetMCP = application.TargetMCP
-const TargetSkill = application.TargetSkill
+const TargetAgent = toolkit.TargetAgent
+const TargetMCP = toolkit.TargetMCP
+const TargetSkill = toolkit.TargetSkill
 
-type TaskCache = application.TaskCache
-type TaskPriority = application.TaskPriority
-type TaskStatus = application.TaskStatus
+type TaskCache = toolkit.TaskCache
+type TaskPriority = toolkit.TaskPriority
+type TaskStatus = toolkit.TaskStatus
 
-var TaskStatusTool = application.TaskStatusTool
-var TextToSpeechTool = application.TextToSpeechTool
-var WaitForTasksTool = application.WaitForTasksTool
+var TaskStatusTool = toolkit.TaskStatusTool
+var TextToSpeechTool = toolkit.TextToSpeechTool
+var WaitForTasksTool = toolkit.WaitForTasksTool

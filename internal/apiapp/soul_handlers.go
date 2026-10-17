@@ -68,7 +68,7 @@ func (s *Server) addSoulTemplate(w http.ResponseWriter, r *http.Request) {
 		Language    string            `json:"language"`
 		Description string            `json:"description"`
 		Content     string            `json:"content"`
-		Variables   map[string]string  `json:"variables,omitempty"`
+		Variables   map[string]string `json:"variables,omitempty"`
 		Tags        []string          `json:"tags,omitempty"`
 	}
 

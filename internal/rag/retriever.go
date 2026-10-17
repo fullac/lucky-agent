@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	toolrag "github.com/yurika0211/luckyagent-tools/rag"
 	"math"
 	"os"
 	"sort"
@@ -18,15 +19,7 @@ import (
 
 var ragRetrievalLogMu sync.Mutex
 
-// RetrievalResult is a result from the RAG retriever.
-type RetrievalResult struct {
-	ChunkID   string
-	Content   string
-	Score     float64
-	Metadata  map[string]string
-	DocTitle  string
-	DocSource string
-}
+type RetrievalResult = toolrag.RetrievalResult
 
 // RetrieverConfig holds retriever configuration.
 type RetrieverConfig struct {

@@ -52,25 +52,29 @@ Important context behavior:
   memory gate, skill routing, session-aware chat.
 - `internal/config`: config loading, defaults, runtime home initialization.
 - `internal/session`: persistent conversation sessions.
-- `internal/memory`: provider/SDK-independent memory contracts, evidence DTOs,
-  shared write admission and context presentation.
+- `github.com/yurika0211/luckyagent-tools/memory`: provider-independent memory
+  contracts, evidence DTOs, write admission and context presentation. The host's
+  `internal/memory` retains only the Aestus import-boundary test.
 - `internal/memoryaestus`: sole Aestus SDK integration for the Markdown vault,
   recall, session buffers/summaries, maintenance and optional Tidal resources.
   `Open` owns backend construction; `agent/memory_runtime.go` is the default
   assembly point. `NewWithMemory` accepts an injected runtime. Consumers use
   Inspector, ToolBackend, ContextReader and maintenance ports; legacy Store is
   for adapter compatibility and fixture/benchmark seeding. Backend diagnostic
-  values live in `internal/memory/diagnostic`.
+  values live in `luckyagent-tools/memory/diagnostic`.
 - `internal/rag`: RAG indexing, SQLite persistence, retrieval, stream indexer.
 - `internal/tool`: compatibility aliases for the standalone tool module and
-  host application adapters; `internal/toolapp` owns memory/RAG/delegation,
-  cron/autonomy, media/computer, credential and coding-agent integration.
+  host credential adapter; `internal/toolapp` opens/closes the encrypted store
+  per call and keeps real-backend integration tests.
 - `github.com/yurika0211/luckyagent-tools`: tool contracts, registry, generic
-  builtins, Skills, MCP and search. Its sandbox snapshots and OpenCLI DTOs are
-  shared through aliases. It must never import LuckyAgent's runtime.
+  builtins, Skills, MCP, search and reusable runtime services. Optional task,
+  collaboration, cron/autonomy, computer/media and coding-agent engines live in
+  its public subpackages. Agent execution, Aestus/RAG persistence, credentials
+  and provider selection remain host-owned. It never imports LuckyAgent.
 - `internal/server`, `internal/gateway/*`, `internal/websocket`: thin compatibility
   bindings to the extracted modules and host application packages.
-- `internal/apiapp`: HTTP API application operations and owned runtime assembly.
+- `internal/apiapp`: HTTP API domain operations and runtime assembly; resource
+  parsing/rendering and WebSocket run replay live in the API module.
 - `internal/channelapp/telegram`, `qqofficial`, `websocket`: host command,
   session, approval and run-execution policy.
 - `github.com/yurika0211/luckyagent-gateway`: platform protocols and neutral turn

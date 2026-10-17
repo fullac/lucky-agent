@@ -201,10 +201,10 @@ func TestRender(t *testing.T) {
 // TestRenderNoVariables 测试无变量模板渲染
 func TestRenderNoVariables(t *testing.T) {
 	tmpl := &Template{
-		ID:      "no-vars",
-		Name:    "No Vars",
+		ID:       "no-vars",
+		Name:     "No Vars",
 		Language: "en",
-		Content: "You are a helpful assistant.",
+		Content:  "You are a helpful assistant.",
 	}
 
 	rendered := tmpl.Render(nil)
@@ -228,7 +228,7 @@ func TestDetectLanguage(t *testing.T) {
 		{"今日は良い天気ですね", "ja"},
 		{"대한민국", "ko"},
 		{"1234567890", "en"}, // 纯数字默认英文
-		{"", "en"},            // 空字符串默认英文
+		{"", "en"},           // 空字符串默认英文
 	}
 
 	for _, tt := range tests {

@@ -1,8 +1,9 @@
-package tool
+package tool_test
 
 import (
 	"encoding/json"
-	"github.com/yurika0211/luckyagent/internal/memory"
+	. "github.com/yurika0211/luckyagent-tools"
+	"github.com/yurika0211/luckyagent-tools/memory"
 	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"strings"
 	"testing"
@@ -62,13 +63,13 @@ func TestMemoryToolServiceRecallRejectsBounds(t *testing.T) {
 	}
 	svc := NewMemoryToolService(store)
 
-	if _, err := svc.HandleRecall(map[string]any{"query": strings.Repeat("x", maxRecallQueryRunes+1)}); err == nil {
+	if _, err := svc.HandleRecall(map[string]any{"query": strings.Repeat("x", 1000+1)}); err == nil {
 		t.Fatal("expected query length error")
 	}
-	if _, err := svc.HandleRecall(map[string]any{"query": "x", "limit": maxRecallLimit + 1}); err == nil {
+	if _, err := svc.HandleRecall(map[string]any{"query": "x", "limit": 50 + 1}); err == nil {
 		t.Fatal("expected limit error")
 	}
-	if _, err := svc.HandleRecall(map[string]any{"query": "x", "graph_depth": maxRecallGraphDepth + 1}); err == nil {
+	if _, err := svc.HandleRecall(map[string]any{"query": "x", "graph_depth": 3 + 1}); err == nil {
 		t.Fatal("expected graph_depth error")
 	}
 }

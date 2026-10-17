@@ -12,8 +12,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	taskstore "github.com/yurika0211/luckyagent-tools/task"
 	"github.com/yurika0211/luckyagent/internal/gateway"
-	taskstore "github.com/yurika0211/luckyagent/internal/task"
 	"github.com/yurika0211/luckyagent/internal/tool"
 )
 

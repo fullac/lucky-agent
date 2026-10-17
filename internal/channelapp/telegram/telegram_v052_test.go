@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"github.com/yurika0211/luckyagent-gateway/telegram/presentation"
 	"testing"
 )
 
@@ -52,14 +53,14 @@ func TestHandlerHasSession(t *testing.T) {
 	}
 }
 
-// TestHandlerTruncateString 测试 truncateString
+// TestHandlerTruncateString 测试 presentation.TruncateString
 func TestHandlerTruncateString(t *testing.T) {
-	result := truncateString("hello", 10)
+	result := presentation.TruncateString("hello", 10)
 	if result != "hello" {
 		t.Errorf("expected 'hello', got '%s'", result)
 	}
 
-	result = truncateString("this is a long string", 10)
+	result = presentation.TruncateString("this is a long string", 10)
 	if len(result) != 10 {
 		t.Errorf("expected length 10, got %d", len(result))
 	}

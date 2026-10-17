@@ -231,7 +231,7 @@ internal/config          配置加载、默认值和运行目录
 internal/memory          Markdown 记忆 vault 和召回
 internal/rag             RAG 索引、检索和持久化
 internal/tool            独立工具模块与宿主适配的兼容入口
-internal/toolapp         记忆、任务、多模态等工具的宿主适配
+internal/toolapp         凭据存储适配；通用工具运行逻辑由独立模块提供
 internal/server           HTTP API、SSE 和 WebSocket
 internal/gateway          Telegram、QQ、飞书、微信等消息网关
 docker-compose.yml       开发环境 Compose

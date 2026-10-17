@@ -105,7 +105,7 @@ func (h *AgentHandler) Start() {
 	h.started = true
 	h.mu.Unlock()
 
-	for _, persisted := range h.store.restoreable() {
+	for _, persisted := range h.store.Restoreable() {
 		data := ChatData{
 			Message:     persisted.Message,
 			Stream:      persisted.Stream,
@@ -194,10 +194,10 @@ func (h *AgentHandler) HandleReconnect(client *Client, msg *Message) {
 	if len(msg.Data) > 0 && msg.ParseData(&data) != nil {
 		data.LastMessageID = ""
 	}
-	for _, event := range h.store.replayForReconnect(client.SessionID, strings.TrimSpace(data.LastMessageID)) {
+	for _, event := range h.store.ReplayForReconnect(client.SessionID, strings.TrimSpace(data.LastMessageID)) {
 		client.TrySend(event)
 	}
-	for _, run := range h.store.activeRuns(client.SessionID) {
+	for _, run := range h.store.ActiveRuns(client.SessionID) {
 		state := "queued"
 		message := "message queued"
 		if run.State == "running" {
@@ -420,7 +420,7 @@ func (h *AgentHandler) handleChat(client *Client, msg *Message) {
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
-	if err := h.store.upsertRun(persisted); err != nil {
+	if err := h.store.UpsertRun(persisted); err != nil {
 		logger.Error("persist websocket run failed", "session", client.SessionID, "error", err)
 	}
 	h.mu.Lock()
@@ -487,7 +487,7 @@ func (h *AgentHandler) startNext(sessionID string) {
 		h.done[sessionID] = make(chan struct{})
 	}
 	h.mu.Unlock()
-	_ = h.store.updateRun(sessionID, run.id, func(record *persistedRun) { record.State = "running" })
+	_ = h.store.UpdateRun(sessionID, run.id, func(record *persistedRun) { record.State = "running" })
 	go func() {
 		var err error
 		client := run.client
@@ -528,7 +528,7 @@ func (h *AgentHandler) finishRun(sessionID string, run *queuedRun, err error) {
 	} else if err != nil {
 		state = "error"
 	}
-	_ = h.store.updateRun(sessionID, run.id, func(record *persistedRun) { record.State = state })
+	_ = h.store.UpdateRun(sessionID, run.id, func(record *persistedRun) { record.State = state })
 	h.startNext(sessionID)
 }
 
@@ -540,7 +540,7 @@ func (h *AgentHandler) emit(client *Client, sessionID, runID string, msg *Messag
 	if runID != "" {
 		msg.RunID = runID
 	}
-	if err := h.store.appendEvent(sessionID, runID, msg); err != nil {
+	if err := h.store.AppendEvent(sessionID, runID, msg); err != nil {
 		logger.Error("persist websocket event failed", "session", sessionID, "error", err)
 	}
 	h.mu.Lock()
@@ -716,7 +716,7 @@ func (h *AgentHandler) streamChatRun(ctx context.Context, client *Client, data C
 		switch evt.Type {
 		case agent.ChatEventThinking:
 			if evt.TaskID != "" && runID != "" {
-				_ = h.store.updateRun(client.SessionID, runID, func(record *persistedRun) { record.TaskID = evt.TaskID })
+				_ = h.store.UpdateRun(client.SessionID, runID, func(record *persistedRun) { record.TaskID = evt.TaskID })
 			}
 			reasoning, ok := reasoningDataForEvent(evt.Content)
 			if !ok {
@@ -1176,7 +1176,7 @@ func (h *AgentHandler) cancelSession(sessionID string) []*queuedRun {
 		cancel()
 	}
 	for _, run := range queued {
-		_ = h.store.updateRun(sessionID, run.id, func(record *persistedRun) { record.State = "cancelled" })
+		_ = h.store.UpdateRun(sessionID, run.id, func(record *persistedRun) { record.State = "cancelled" })
 	}
 	cancelled = append(cancelled, queued...)
 	return cancelled

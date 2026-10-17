@@ -1,8 +1,9 @@
-package tool
+package tool_test
 
 import (
 	"context"
 	"encoding/json"
+	. "github.com/yurika0211/luckyagent-tools"
 	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"strings"
 	"testing"

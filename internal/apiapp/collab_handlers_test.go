@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yurika0211/luckyagent/internal/collab"
+	"github.com/yurika0211/luckyagent-tools/collab"
 )
 
 func TestHandleAgentsList(t *testing.T) {

@@ -1,7 +1,8 @@
-package tool
+package tool_test
 
 import (
 	"encoding/json"
+	. "github.com/yurika0211/luckyagent-tools"
 	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/rag"
 	"os"
@@ -82,7 +83,7 @@ func TestRAGToolServiceIndexRejectsBounds(t *testing.T) {
 
 	if _, err := svc.HandleIndex(map[string]any{
 		"path":      t.TempDir(),
-		"max_files": defaultRAGIndexMaxFiles + 1,
+		"max_files": 200 + 1,
 	}); err == nil {
 		t.Fatal("expected max_files bound error")
 	}

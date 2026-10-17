@@ -1,8 +1,9 @@
-package tool
+package tool_test
 
 import (
 	"encoding/json"
-	"github.com/yurika0211/luckyagent/internal/memory"
+	. "github.com/yurika0211/luckyagent-tools"
+	"github.com/yurika0211/luckyagent-tools/memory"
 	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"testing"
 )

@@ -85,9 +85,9 @@ func (s *Server) handleRAGStreamScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"changes":     len(changes),
-		"queue_len":   streamIndexer.Queue().Len(),
-		"details":     changeResults,
+		"changes":   len(changes),
+		"queue_len": streamIndexer.Queue().Len(),
+		"details":   changeResults,
 	})
 }
 
@@ -204,10 +204,10 @@ func (s *Server) handleRAGStreamIndex(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.sendJSON(w, http.StatusOK, map[string]interface{}{
-			"action":    "index_path",
-			"doc_id":    doc.ID,
-			"title":     doc.Title,
-			"chunks":    len(doc.Chunks),
+			"action":     "index_path",
+			"doc_id":     doc.ID,
+			"title":      doc.Title,
+			"chunks":     len(doc.Chunks),
 			"indexed_at": doc.IndexedAt,
 		})
 
@@ -253,10 +253,10 @@ func (s *Server) handleRAGStreamQueue(w http.ResponseWriter, r *http.Request) {
 	jobResults := make([]map[string]interface{}, len(jobs))
 	for i, job := range jobs {
 		jobResults[i] = map[string]interface{}{
-			"id":        job.ID,
-			"path":      job.Path,
-			"type":      job.JobType.String(),
-			"priority":  job.Priority,
+			"id":         job.ID,
+			"path":       job.Path,
+			"type":       job.JobType.String(),
+			"priority":   job.Priority,
 			"created_at": job.CreatedAt,
 		}
 	}
@@ -293,10 +293,10 @@ func (s *Server) handleRAGStreamProcess(w http.ResponseWriter, r *http.Request) 
 	results := make([]map[string]interface{}, len(jobs))
 	for i := range jobs {
 		result := map[string]interface{}{
-			"job_id":   jobs[i].ID,
-			"path":     jobs[i].Path,
-			"type":     jobs[i].JobType.String(),
-			"error":    nil,
+			"job_id": jobs[i].ID,
+			"path":   jobs[i].Path,
+			"type":   jobs[i].JobType.String(),
+			"error":  nil,
 		}
 		if errs[i] != nil {
 			result["error"] = errs[i].Error()

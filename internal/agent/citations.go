@@ -133,7 +133,7 @@ func naturalCitationsFromToolLogs(toolCalls []toolCallLog) []naturalCitation {
 	return citations
 }
 
-	func shouldSkipCitationTool(call toolCallLog) bool {
+func shouldSkipCitationTool(call toolCallLog) bool {
 	name := strings.TrimSpace(call.Name)
 	if name == "" {
 		return true

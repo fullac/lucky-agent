@@ -1,8 +1,9 @@
-package tool
+package tool_test
 
 import (
 	"encoding/json"
-	"github.com/yurika0211/luckyagent/internal/memory"
+	. "github.com/yurika0211/luckyagent-tools"
+	"github.com/yurika0211/luckyagent-tools/memory"
 	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"testing"
 )
@@ -65,7 +66,7 @@ func TestMemoryHygieneRejectsUnsafeLimit(t *testing.T) {
 	if _, err := svc.HandleHygiene(map[string]any{"limit": -1}); err == nil {
 		t.Fatal("expected negative limit error")
 	}
-	if _, err := svc.HandleHygiene(map[string]any{"limit": maxHygieneLimit + 1}); err == nil {
+	if _, err := svc.HandleHygiene(map[string]any{"limit": 200 + 1}); err == nil {
 		t.Fatal("expected max limit error")
 	}
 	if _, err := svc.HandleHygiene(map[string]any{"limit": 0}); err == nil {

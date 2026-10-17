@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yurika0211/luckyagent-tools/cron"
+	"github.com/yurika0211/luckyagent-tools/memory"
 	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/cli/profile"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/contextx"
-	"github.com/yurika0211/luckyagent/internal/cron"
-	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/server"
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/tool"
@@ -721,13 +721,13 @@ func currentSessionID(currentSession **session.Session) string {
 	return strings.TrimSpace((*currentSession).ID)
 }
 
-	func callCronMutationTool(a *agent.Agent, action, id string) error {
-		if a == nil || a.Tools() == nil {
-			return fmt.Errorf("agent cron service is not initialized")
-		}
-		_, err := a.Tools().Call("cron", map[string]any{"action": action, "id": id})
-		return err
+func callCronMutationTool(a *agent.Agent, action, id string) error {
+	if a == nil || a.Tools() == nil {
+		return fmt.Errorf("agent cron service is not initialized")
 	}
+	_, err := a.Tools().Call("cron", map[string]any{"action": action, "id": id})
+	return err
+}
 
 func saveCronStore(store *cron.Store, engine *cron.Engine) error {
 	if store == nil {

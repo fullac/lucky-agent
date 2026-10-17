@@ -11,11 +11,11 @@ import (
 
 // TokenEntry 存储一个 provider 的 token 信息
 type TokenEntry struct {
-	Provider    string    `json:"provider"`
-	AccessToken string   `json:"access_token"`
-	RefreshToken string  `json:"refresh_token,omitempty"`
-	ExpiresAt   time.Time `json:"expires_at,omitempty"`
-	Scope      string    `json:"scope,omitempty"`
+	Provider     string    `json:"provider"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	Scope        string    `json:"scope,omitempty"`
 }
 
 // IsExpired 检查 token 是否已过期
@@ -36,9 +36,9 @@ func (t *TokenEntry) IsExpiringSoon() bool {
 
 // TokenStore 管理 OAuth token 的持久化存储
 type TokenStore struct {
-	mu      sync.RWMutex
-	tokens  map[string]*TokenEntry
-	path    string
+	mu     sync.RWMutex
+	tokens map[string]*TokenEntry
+	path   string
 }
 
 // NewTokenStore 创建 token 存储

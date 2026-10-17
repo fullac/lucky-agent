@@ -96,11 +96,11 @@ func TestHandlerEventsReplayFromCursor(t *testing.T) {
 	data, _ := json.Marshal(ChatData{Message: "hello", Stream: true})
 	h.HandleMessage(client, &Message{Type: TypeChat, SessionID: client.SessionID, ID: "request-replay", Data: data})
 	h.WaitSession(client.SessionID, 2*time.Second)
-	events := h.store.replay(client.SessionID, "")
+	events := h.store.Replay(client.SessionID, "")
 	if len(events) < 3 {
 		t.Fatalf("expected persisted lifecycle events, got %d", len(events))
 	}
-	remaining := h.store.replay(client.SessionID, events[0].ID)
+	remaining := h.store.Replay(client.SessionID, events[0].ID)
 	if len(remaining) != len(events)-1 {
 		t.Fatalf("cursor replay returned %d events, want %d", len(remaining), len(events)-1)
 	}
@@ -114,28 +114,28 @@ func TestRunStoreReconnectReplaySkipsCompletedRunsWithoutCursor(t *testing.T) {
 	now := time.Now().UTC()
 	completed := persistedRun{ID: "completed-run", SessionID: "reconnect-session", State: "completed", CreatedAt: now, UpdatedAt: now}
 	active := persistedRun{ID: "active-run", SessionID: "reconnect-session", State: "running", CreatedAt: now, UpdatedAt: now}
-	if err := store.upsertRun(completed); err != nil {
+	if err := store.UpsertRun(completed); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.upsertRun(active); err != nil {
+	if err := store.UpsertRun(active); err != nil {
 		t.Fatal(err)
 	}
 	completedEvent, _ := NewMessage(TypeStreamEnd, completed.SessionID, StreamEndData{FullResponse: "old answer"})
 	completedEvent.RunID = completed.ID
 	activeEvent, _ := NewMessage(TypeStreamChunk, active.SessionID, StreamChunkData{Content: "current answer"})
 	activeEvent.RunID = active.ID
-	if err := store.appendEvent(completed.SessionID, completed.ID, completedEvent); err != nil {
+	if err := store.AppendEvent(completed.SessionID, completed.ID, completedEvent); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.appendEvent(active.SessionID, active.ID, activeEvent); err != nil {
+	if err := store.AppendEvent(active.SessionID, active.ID, activeEvent); err != nil {
 		t.Fatal(err)
 	}
 
-	events := store.replayForReconnect(active.SessionID, "")
+	events := store.ReplayForReconnect(active.SessionID, "")
 	if len(events) != 1 || events[0].RunID != active.ID {
 		t.Fatalf("empty cursor replayed %#v, want only active run", events)
 	}
-	events = store.replayForReconnect(active.SessionID, "missing-cursor")
+	events = store.ReplayForReconnect(active.SessionID, "missing-cursor")
 	if len(events) != 1 || events[0].RunID != active.ID {
 		t.Fatalf("stale cursor replayed %#v, want only active run", events)
 	}
@@ -161,7 +161,7 @@ func TestHandlerStartRestoresPersistedRunOnlyOnce(t *testing.T) {
 	h := NewAgentHandler(runtime)
 	h.store = newRunStore(t.TempDir())
 	now := time.Now().UTC()
-	if err := h.store.upsertRun(persistedRun{
+	if err := h.store.UpsertRun(persistedRun{
 		ID:        "restore-once",
 		SessionID: "restore-session",
 		ParentID:  "restore-once",
@@ -192,7 +192,7 @@ func TestHandlerStartRestoresPersistedRunOnlyOnce(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	active := h.store.activeRuns("restore-session")
+	active := h.store.ActiveRuns("restore-session")
 	if len(active) != 0 {
 		t.Fatalf("restored run remained active after completion: %#v", active)
 	}
