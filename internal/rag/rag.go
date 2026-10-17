@@ -3,6 +3,7 @@ package rag
 import (
 	"context"
 	"fmt"
+	toolrag "github.com/yurika0211/luckyagent-tools/rag"
 	"strings"
 	"sync"
 
@@ -97,15 +98,7 @@ type RAGConfig struct {
 	EnableGraph     bool // 是否启用知识图谱
 }
 
-// SearchOptions configures a single RAG search without mutating shared
-// retriever state.
-type SearchOptions struct {
-	TopK         int
-	MinScore     float64
-	UseMMR       bool
-	MMRLambda    float64
-	FilterSource string
-}
+type SearchOptions = toolrag.SearchOptions
 
 func DefaultRAGConfig() RAGConfig {
 	return RAGConfig{

@@ -52,26 +52,37 @@ Important context behavior:
   memory gate, skill routing, session-aware chat.
 - `internal/config`: config loading, defaults, runtime home initialization.
 - `internal/session`: persistent conversation sessions.
-- `internal/memory`: provider/SDK-independent memory contracts, evidence DTOs,
-  shared write admission and context presentation.
+- `github.com/yurika0211/luckyagent-tools/memory`: provider-independent memory
+  contracts, evidence DTOs, write admission and context presentation. The host's
+  `internal/memory` retains only the Aestus import-boundary test.
 - `internal/memoryaestus`: sole Aestus SDK integration for the Markdown vault,
   recall, session buffers/summaries, maintenance and optional Tidal resources.
   `Open` owns backend construction; `agent/memory_runtime.go` is the default
   assembly point. `NewWithMemory` accepts an injected runtime. Consumers use
   Inspector, ToolBackend, ContextReader and maintenance ports; legacy Store is
   for adapter compatibility and fixture/benchmark seeding. Backend diagnostic
-  values live in `internal/memory/diagnostic`.
+  values live in `luckyagent-tools/memory/diagnostic`.
 - `internal/rag`: RAG indexing, SQLite persistence, retrieval, stream indexer.
+- `internal/tool`: compatibility aliases for the standalone tool module and
+  host credential adapter; `internal/toolapp` opens/closes the encrypted store
+  per call and keeps real-backend integration tests.
+- `github.com/yurika0211/luckyagent-tools`: tool contracts, registry, generic
+  builtins, Skills, MCP, search and reusable runtime services. Optional task,
+  collaboration, cron/autonomy, computer/media and coding-agent engines live in
+  its public subpackages. Agent execution, Aestus/RAG persistence, credentials
+  and provider selection remain host-owned. It never imports LuckyAgent.
+- `internal/server`, `internal/gateway/*`, `internal/websocket`: thin compatibility
+  bindings to the extracted modules and host application packages.
+- `internal/apiapp`: HTTP API domain operations and runtime assembly; resource
+  parsing/rendering and WebSocket run replay live in the API module.
+- `internal/channelapp/telegram`, `qqofficial`, `websocket`: host command,
+  session, approval and run-execution policy.
+- `github.com/yurika0211/luckyagent-gateway`: platform protocols and neutral turn
+  contracts. `github.com/yurika0211/luckyagent-api`: HTTP/SSE/WebSocket/gRPC
+  transport and protocol. These modules must never import the LuckyAgent runtime.
 - `internal/mcpclient`: runtime-owned MCP manager, stdio/Streamable HTTP,
   versioned tool catalogs, calls and credential resolver port. Independent of
   agent/tool packages; the official MCP Go SDK stays behind this boundary.
-- `internal/tool`: built-in tools, skill loading, MCP/opencli/web/filesystem
-  adapters, cron/autonomy services.
-- `internal/server`: HTTP API, SSE chat, WebSocket, health, context, RAG,
-  memory, sessions, soul endpoints.
-- `internal/gateway`: shared gateway abstractions and runtime state.
-- `internal/gateway/telegram`, `qqofficial`, `napcat`, `feishu`, `weixin`,
-  `openclawweixin`: platform adapters.
 - `internal/cli/lhcmd`: Cobra command definitions and command handlers.
 
 ## HTTP API Surface
@@ -98,7 +109,9 @@ Common routes include:
 - `/api/v1/health/live`, `/ready`, `/detail`, and `/api/v1/metrics`.
 - `/api/v1/ws` and `/api/v1/ws/stats`.
 
-Check `internal/server/server.go` before documenting or relying on an endpoint.
+Check the extracted API route catalog and `internal/apiapp` before documenting
+or relying on an endpoint. See `docs/edge-modules.md` for checkout and test setup.
+Tool ownership and joint development are documented in `docs/tool-module.md`.
 
 ## Gateways
 
@@ -117,9 +130,9 @@ Telegram supports progress-message modes and session commands. NapCat uses
 OneBot v11 reverse WebSocket settings (`listen_addr`, `path`, `access_token`).
 Feishu uses an HTTP event callback and tenant access tokens; its Phase 1 adapter
 supports unencrypted text events. QQ Official and Weixin have their own
-auth/config paths. Verify adapter behavior and tests under the matching
-`internal/gateway/<platform>` package before changing platform-specific
-assumptions.
+auth/config paths. Platform implementation tests live in `luckyagent-gateway`;
+host integration tests live under `internal/channelapp`. Verify both before
+changing platform-specific assumptions.
 
 `/lucky on` and `/lucky off` collect multiple gateway messages into one user
 turn through `internal/gateway/collector`, preserving segment boundaries and
@@ -190,10 +203,10 @@ Focused test examples:
 ```bash
 go test ./internal/agent
 go test ./internal/config
-go test ./internal/server
-go test ./internal/gateway/telegram
-go test ./internal/gateway/napcat
-go test ./internal/gateway/feishu
+go test ./internal/apiapp
+go test ./internal/channelapp/telegram
+go test ./internal/channelapp/qqofficial
+go test ./internal/channelapp/websocket
 go test ./internal/memory ./internal/memoryaestus ./internal/rag
 ```
 

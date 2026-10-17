@@ -22,10 +22,10 @@ const (
 	// "generate summary: context deadline exceeded" on long sessions.
 	compactTranscriptMaxRunes = 48_000
 
-	compactTranscriptUserRunes     = 420
+	compactTranscriptUserRunes      = 420
 	compactTranscriptAssistantRunes = 300
-	compactTranscriptToolRunes     = 220
-	compactTranscriptDefaultRunes  = 260
+	compactTranscriptToolRunes      = 220
+	compactTranscriptDefaultRunes   = 260
 )
 
 // compactSummaryContext builds the context used for the compaction LLM call.

@@ -28,11 +28,11 @@ type MigrateResult struct {
 
 // GCResult describes blob garbage collection for one session.
 type GCResult struct {
-	ID            string `json:"id"`
-	Removed       int    `json:"removed"`
-	FreedBytes    int64  `json:"freed_bytes"`
-	Referenced    int    `json:"referenced"`
-	Error         string `json:"error,omitempty"`
+	ID         string `json:"id"`
+	Removed    int    `json:"removed"`
+	FreedBytes int64  `json:"freed_bytes"`
+	Referenced int    `json:"referenced"`
+	Error      string `json:"error,omitempty"`
 }
 
 // RollResult describes an in-place session roll that keeps the same session id.
@@ -46,9 +46,9 @@ type RollResult struct {
 
 // ExportOptions controls Markdown export content.
 type ExportOptions struct {
-	IncludeTools bool
+	IncludeTools  bool
 	IncludeSystem bool
-	MaxToolChars int
+	MaxToolChars  int
 }
 
 // ByteSize returns on-disk size for the session storage.

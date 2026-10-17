@@ -55,10 +55,10 @@ func TestSetupStdout(t *testing.T) {
 func TestSetupOTLP(t *testing.T) {
 	// OTLP requires a running collector, so we just test config parsing
 	cfg := Config{
-		Enabled:       true,
-		ExporterType:  "otlp",
-		OTLPEndpoint:  "localhost:4317",
-		SampleRate:    0.5,
+		Enabled:      true,
+		ExporterType: "otlp",
+		OTLPEndpoint: "localhost:4317",
+		SampleRate:   0.5,
 	}
 
 	// This will fail without a collector, but we test the config path

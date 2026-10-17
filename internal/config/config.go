@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 
+	toolcomputer "github.com/yurika0211/luckyagent-tools/computer"
+	toolopencli "github.com/yurika0211/luckyagent-tools/opencli"
 	"github.com/yurika0211/luckyagent/internal/mcpclient"
 )
 
@@ -174,35 +176,7 @@ type FilesystemToolConfig struct {
 	AllowedReadRoots []string `json:"allowed_read_roots,omitempty"`
 }
 
-// ComputerUseToolConfig controls the optional local desktop automation tools.
-// Computer use is disabled by default because it can observe and control the
-// interactive desktop, including applications outside LuckyAgent.
-type ComputerUseToolConfig struct {
-	Enabled             bool     `json:"enabled,omitempty"`
-	Mode                string   `json:"mode,omitempty"`    // observe, assist, control
-	Backend             string   `json:"backend,omitempty"` // auto, x11, wayland, wslg, windows, darwin
-	CaptureDir          string   `json:"capture_dir,omitempty"`
-	AllowedSources      []string `json:"allowed_sources,omitempty"`
-	AllowedWindows      []string `json:"allowed_windows,omitempty"`
-	RequireApproval     bool     `json:"require_approval,omitempty"`
-	MaxSteps            int      `json:"max_steps,omitempty"`
-	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
-	StepTimeoutSeconds  int      `json:"step_timeout_seconds,omitempty"`
-	SettleMS            int      `json:"settle_ms,omitempty"`
-	SettleMilliseconds  int      `json:"settle_milliseconds,omitempty"`
-	MaxObservationBytes int      `json:"max_observation_bytes,omitempty"`
-	MaxScreenshotWidth  int      `json:"max_screenshot_width,omitempty"`
-	MaxBatchActions     int      `json:"max_batch_actions,omitempty"`
-	// MaxConsecutiveObserveOnly stops screenshot-only computer-use loops after N
-	// consecutive observe batches without a computer_act. Default 2.
-	MaxConsecutiveObserveOnly int    `json:"max_consecutive_observe_only,omitempty"`
-	SettleMode                string `json:"settle_mode,omitempty"`
-	KeepFrames                int    `json:"keep_frames,omitempty"`
-	FrameTTLSeconds           int    `json:"frame_ttl_seconds,omitempty"`
-	RetainFrames              int    `json:"retain_frames,omitempty"`
-	AllowTextInput            bool   `json:"allow_text_input,omitempty"`
-	AllowHighRiskActions      bool   `json:"allow_high_risk_actions,omitempty"`
-}
+type ComputerUseToolConfig = toolcomputer.ToolConfig
 
 // HooksConfig 配置工具执行边界上的 hook。Enabled 为 false 时所有 hook 不生效，
 // 保持未配置 hook 的运行时行为不变。
@@ -772,15 +746,8 @@ type WebSearchConfig struct {
 	Proxy      string `json:"proxy,omitempty"`       // HTTP/SOCKS5 代理
 }
 
-// OpenCLIConfig OpenCLI 内容抽取配置
-type OpenCLIConfig struct {
-	Enabled            bool     `json:"enabled,omitempty"`               // 是否启用 OpenCLI 抽取器
-	Command            string   `json:"command,omitempty"`               // 可执行文件名，默认 opencli
-	Args               []string `json:"args,omitempty"`                  // 参数模板，支持 {url} / {max_chars} 占位符
-	TimeoutSeconds     int      `json:"timeout_seconds,omitempty"`       // 超时时间（秒）
-	MaxChars           int      `json:"max_chars,omitempty"`             // 默认最大返回字符数
-	FallbackToWebFetch bool     `json:"fallback_to_web_fetch,omitempty"` // OpenCLI 失败后是否回退到 web_fetch
-}
+// OpenCLIConfig is shared with the standalone tool module.
+type OpenCLIConfig = toolopencli.Config
 
 // CodexConfig configures the optional local Codex App Server bridge. The
 // bridge is deliberately disabled by default; enabling it exposes codex.*

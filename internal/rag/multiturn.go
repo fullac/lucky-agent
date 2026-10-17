@@ -246,7 +246,7 @@ func (qr *QueryRewriter) clarifyQuery(query string, ctx *ConversationContext) ([
 
 	// Look for pronouns and references that need clarification
 	replacements := map[string]string{
-		"it":      "", "they": "", "them": "", "this": "", "that": "",
+		"it": "", "they": "", "them": "", "this": "", "that": "",
 		"这些": "", "那个": "", "这个": "", "它": "", "它们": "",
 	}
 
@@ -342,12 +342,12 @@ func (qr *QueryRewriter) SetStrategy(s RewriteStrategy) {
 type FollowUpType string
 
 const (
-	FollowUpNone       FollowUpType = "none"       // not a follow-up
-	FollowUpClarify    FollowUpType = "clarify"    // asking for clarification
-	FollowUpDeepen     FollowUpType = "deepen"     // going deeper on same topic
-	FollowUpPivot      FollowUpType = "pivot"      // changing topic
-	FollowUpCompare    FollowUpType = "compare"    // comparing with previous results
-	FollowUpElaborate  FollowUpType = "elaborate"  // asking for more detail
+	FollowUpNone      FollowUpType = "none"      // not a follow-up
+	FollowUpClarify   FollowUpType = "clarify"   // asking for clarification
+	FollowUpDeepen    FollowUpType = "deepen"    // going deeper on same topic
+	FollowUpPivot     FollowUpType = "pivot"     // changing topic
+	FollowUpCompare   FollowUpType = "compare"   // comparing with previous results
+	FollowUpElaborate FollowUpType = "elaborate" // asking for more detail
 )
 
 // FollowUpResult is the result of follow-up detection.
@@ -542,12 +542,12 @@ func NewContextAwareRetriever(rag *RAGManager, rewriter *QueryRewriter, detector
 
 // MultiTurnResult is the result of a multi-turn retrieval.
 type MultiTurnResult struct {
-	Query          string              // original query
-	RewrittenQuery []string            // rewritten queries (may be multiple for decomposition)
-	IsFollowUp     bool                // whether this was detected as a follow-up
-	FollowUpType   FollowUpType        // type of follow-up
-	Results        []RetrievalResult   // combined results from all queries
-	Context        string              // assembled context string
+	Query          string            // original query
+	RewrittenQuery []string          // rewritten queries (may be multiple for decomposition)
+	IsFollowUp     bool              // whether this was detected as a follow-up
+	FollowUpType   FollowUpType      // type of follow-up
+	Results        []RetrievalResult // combined results from all queries
+	Context        string            // assembled context string
 }
 
 // Search performs a context-aware search.

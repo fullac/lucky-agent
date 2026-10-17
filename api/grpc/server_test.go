@@ -6,7 +6,7 @@ import (
 
 	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/embedder"
-	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent-tools/memory"
 	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/rag"
 	"github.com/yurika0211/luckyagent/internal/workflow"

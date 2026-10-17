@@ -14,10 +14,10 @@ var templateFS embed.FS
 type Template struct {
 	ID          string            `yaml:"id" json:"id"`
 	Name        string            `yaml:"name" json:"name"`
-	Language    string            `yaml:"language" json:"language"`       // zh, en, ja, ko 等
+	Language    string            `yaml:"language" json:"language"` // zh, en, ja, ko 等
 	Description string            `yaml:"description" json:"description"`
 	Content     string            `yaml:"content" json:"content"`
-	Variables   map[string]string  `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Variables   map[string]string `yaml:"variables,omitempty" json:"variables,omitempty"`
 	Tags        []string          `yaml:"tags,omitempty" json:"tags,omitempty"`
 }
 

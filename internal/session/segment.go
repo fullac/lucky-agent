@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	FormatLegacyMD   = "legacy_md"
-	FormatSegmentV1  = "segment_v1"
+	FormatLegacyMD    = "legacy_md"
+	FormatSegmentV1   = "segment_v1"
 	messagesJSONLName = "messages.jsonl"
 )
 

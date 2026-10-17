@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yurika0211/luckyagent-tools/multimodal"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/contextx"
 	"github.com/yurika0211/luckyagent/internal/gateway"
-	"github.com/yurika0211/luckyagent/internal/multimodal"
 	"github.com/yurika0211/luckyagent/internal/provider"
 )
 

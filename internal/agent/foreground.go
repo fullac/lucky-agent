@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	autonomybridge "github.com/yurika0211/luckyagent/internal/autonomy"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/yurika0211/luckyagent/internal/autonomy"
+	"github.com/yurika0211/luckyagent-tools/autonomy"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/session"
@@ -226,7 +227,7 @@ func (a *Agent) runForeground(ctx context.Context, sess *session.Session, input 
 			task, _ = q.Get(task.ID)
 			return last, foregroundInterrupted(task, errors.New("执行预算已用完"))
 		}
-		cfg.Execution = autonomy.NewTurnExecution(autonomy.NewExecution(q, claimed))
+		cfg.Execution = autonomybridge.NewTurnExecution(autonomy.NewExecution(q, claimed))
 		if err := cfg.Execution.BindSession(sess.ID); err != nil {
 			return last, err
 		}

@@ -3,8 +3,8 @@ package agent
 import (
 	"strings"
 
+	"github.com/yurika0211/luckyagent-tools/multimodal"
 	"github.com/yurika0211/luckyagent/internal/config"
-	"github.com/yurika0211/luckyagent/internal/multimodal"
 	"github.com/yurika0211/luckyagent/internal/tool"
 )
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	toolrag "github.com/yurika0211/luckyagent-tools/rag"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,15 +24,7 @@ type Chunk struct {
 	Metadata map[string]string
 }
 
-// Document is an indexed document with its chunks.
-type Document struct {
-	ID        string
-	Path      string
-	Title     string
-	Chunks    []string // chunk IDs
-	IndexedAt time.Time
-	Metadata  map[string]string
-}
+type Document = toolrag.Document
 
 // IndexStats holds statistics about the index.
 type IndexStats struct {

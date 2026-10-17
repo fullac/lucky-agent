@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	contract "github.com/yurika0211/luckyagent-tools/credentials"
 	"io"
 	"os"
 	"path/filepath"
@@ -120,11 +121,11 @@ func (s *Store) put(ctx context.Context, id, kind, scope string, value []byte) e
 		return fmt.Errorf("credential store is closed")
 	}
 	ctx = ensureContext(ctx)
-	id, err := validatePart("credential id", id)
+	id, err := ValidateID(id)
 	if err != nil {
 		return err
 	}
-	kind, err = validatePart("credential kind", kind)
+	kind, err = ValidateKind(kind)
 	if err != nil {
 		return err
 	}
@@ -188,7 +189,7 @@ func (s *Store) WithCredential(ctx context.Context, id string, fn func([]byte) e
 		return fmt.Errorf("credential callback is required")
 	}
 	ctx = ensureContext(ctx)
-	id, err := validatePart("credential id", id)
+	id, err := ValidateID(id)
 	if err != nil {
 		return err
 	}
@@ -275,7 +276,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("credential store is closed")
 	}
 	ctx = ensureContext(ctx)
-	id, err := validatePart("credential id", id)
+	id, err := ValidateID(id)
 	if err != nil {
 		return err
 	}
@@ -413,51 +414,6 @@ func wrapAssociatedData(aad []byte) []byte {
 	return append([]byte("luckyagent:dek-wrap:v1\x00"), aad...)
 }
 
-// ValidateID checks a credential reference before it is shown to a client.
-func ValidateID(id string) (string, error) {
-	return validatePart("credential id", id)
-}
-
-// ValidateKind checks a credential type label.
-func ValidateKind(kind string) (string, error) {
-	return validatePart("credential kind", kind)
-}
-
-// NormalizeScope applies the default scope and validates the result.
-func NormalizeScope(scope string) (string, error) {
-	return normalizeScope(scope)
-}
-
-func validatePart(name, value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", fmt.Errorf("%s is required", name)
-	}
-	if strings.ContainsAny(value, "\x00\r\n") {
-		return "", fmt.Errorf("%s contains an invalid control character", name)
-	}
-	if name == "credential id" {
-		if len(value) > 64 {
-			return "", fmt.Errorf("%s is too long", name)
-		}
-		for _, r := range value {
-			switch {
-			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-			default:
-				return "", fmt.Errorf("%s may contain only letters, numbers, dot, underscore, and hyphen", name)
-			}
-		}
-	}
-	return value, nil
-}
-
-func normalizeScope(scope string) (string, error) {
-	if strings.TrimSpace(scope) == "" {
-		scope = defaultScope
-	}
-	return validatePart("credential scope", scope)
-}
-
 func contextErr(ctx context.Context) error {
 	if ctx == nil {
 		return nil
@@ -484,3 +440,8 @@ func zero(value []byte) {
 		value[i] = 0
 	}
 }
+
+var ValidateID = contract.ValidateID
+var ValidateKind = contract.ValidateKind
+var NormalizeScope = contract.NormalizeScope
+var normalizeScope = contract.NormalizeScope

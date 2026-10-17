@@ -144,9 +144,9 @@ func (ce *CachedEmbedder) Cache() *EmbeddingCache {
 	return ce.cache
 }
 
-func (ce *CachedEmbedder) Name() string      { return ce.inner.Name() }
-func (ce *CachedEmbedder) Model() string     { return ce.inner.Model() }
-func (ce *CachedEmbedder) Dimension() int    { return ce.inner.Dimension() }
+func (ce *CachedEmbedder) Name() string   { return ce.inner.Name() }
+func (ce *CachedEmbedder) Model() string  { return ce.inner.Model() }
+func (ce *CachedEmbedder) Dimension() int { return ce.inner.Dimension() }
 
 func (ce *CachedEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
 	key := CacheKey(text)
@@ -197,9 +197,9 @@ func (ce *CachedEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]f
 
 // Registry manages multiple embedder providers with registration and switching.
 type Registry struct {
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 	embedders map[string]Embedder
-	active   string // ID of the active embedder
+	active    string // ID of the active embedder
 }
 
 // NewRegistry creates a new embedder registry.

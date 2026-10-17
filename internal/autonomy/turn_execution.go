@@ -1,15 +1,18 @@
 package autonomy
 
-import "github.com/yurika0211/luckyagent/internal/turn"
+import (
+	runtime "github.com/yurika0211/luckyagent-tools/autonomy"
+	"github.com/yurika0211/luckyagent/internal/turn"
+)
 
 // TurnExecution adapts the autonomy queue lease to the neutral durable-turn
 // contract. The adapter keeps queue persistence and stale-claim checks in this
 // package while the agent loop only sees turn DTOs.
 type TurnExecution struct {
-	inner *Execution
+	inner *runtime.Execution
 }
 
-func NewTurnExecution(inner *Execution) *TurnExecution {
+func NewTurnExecution(inner *runtime.Execution) *TurnExecution {
 	if inner == nil {
 		return nil
 	}
@@ -18,7 +21,7 @@ func NewTurnExecution(inner *Execution) *TurnExecution {
 
 func (e *TurnExecution) Snapshot() (*turn.DurableTask, error) {
 	if e == nil || e.inner == nil {
-		return nil, ErrStaleExecution
+		return nil, runtime.ErrStaleExecution
 	}
 	task, err := e.inner.Snapshot()
 	if err != nil {
@@ -29,23 +32,23 @@ func (e *TurnExecution) Snapshot() (*turn.DurableTask, error) {
 
 func (e *TurnExecution) BindSession(id string) error {
 	if e == nil || e.inner == nil {
-		return ErrStaleExecution
+		return runtime.ErrStaleExecution
 	}
 	return e.inner.BindSession(id)
 }
 
 func (e *TurnExecution) SaveCheckpoint(data []byte) error {
 	if e == nil || e.inner == nil {
-		return ErrStaleExecution
+		return runtime.ErrStaleExecution
 	}
 	return e.inner.SaveCheckpoint(data)
 }
 
 func (e *TurnExecution) BeginOperation(op turn.DurableOperation) (turn.DurableOperation, error) {
 	if e == nil || e.inner == nil {
-		return turn.DurableOperation{}, ErrStaleExecution
+		return turn.DurableOperation{}, runtime.ErrStaleExecution
 	}
-	result, err := e.inner.BeginOperation(Operation{
+	result, err := e.inner.BeginOperation(runtime.Operation{
 		ID:         op.ID,
 		Name:       op.Name,
 		Arguments:  op.Arguments,
@@ -69,16 +72,16 @@ func (e *TurnExecution) BeginOperation(op turn.DurableOperation) (turn.DurableOp
 
 func (e *TurnExecution) FinishOperation(id, output string, failed bool, detail []byte) error {
 	if e == nil || e.inner == nil {
-		return ErrStaleExecution
+		return runtime.ErrStaleExecution
 	}
 	return e.inner.FinishOperation(id, output, failed, append([]byte(nil), detail...))
 }
 
 func (e *TurnExecution) Finish(result *turn.DurableResult, canceled bool) error {
 	if e == nil || e.inner == nil {
-		return ErrStaleExecution
+		return runtime.ErrStaleExecution
 	}
-	worker := &WorkerResult{}
+	worker := &runtime.WorkerResult{}
 	if result != nil {
 		worker.Output = result.Output
 		worker.Error = result.Error
@@ -89,7 +92,7 @@ func (e *TurnExecution) Finish(result *turn.DurableResult, canceled bool) error 
 	return e.inner.Finish(worker, canceled)
 }
 
-func toTurnTask(task *QueueTask) *turn.DurableTask {
+func toTurnTask(task *runtime.QueueTask) *turn.DurableTask {
 	if task == nil {
 		return nil
 	}

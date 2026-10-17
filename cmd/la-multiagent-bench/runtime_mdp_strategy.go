@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yurika0211/luckyagent/internal/collab"
+	"github.com/yurika0211/luckyagent-tools/collab"
 )
 
 type strategyRunner struct {

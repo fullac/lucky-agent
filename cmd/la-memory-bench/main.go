@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent-tools/memory"
 	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 )
 

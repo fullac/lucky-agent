@@ -335,8 +335,8 @@ func TestCircuitBreakerSuccessResetsFailures(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type mockProvider struct {
-	chatFn    func(ctx context.Context, messages []provider.Message) (*provider.Response, error)
-	streamFn  func(ctx context.Context, messages []provider.Message) (<-chan provider.StreamChunk, error)
+	chatFn     func(ctx context.Context, messages []provider.Message) (*provider.Response, error)
+	streamFn   func(ctx context.Context, messages []provider.Message) (<-chan provider.StreamChunk, error)
 	validateFn func() error
 }
 

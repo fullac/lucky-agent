@@ -4,8 +4,8 @@ import (
 	"time"
 
 	sdk "github.com/yurika0211/aestus/memory"
-	"github.com/yurika0211/luckyagent/internal/memory"
-	"github.com/yurika0211/luckyagent/internal/memory/diagnostic"
+	"github.com/yurika0211/luckyagent-tools/memory"
+	"github.com/yurika0211/luckyagent-tools/memory/diagnostic"
 )
 
 type TidalStore struct{ inner *sdk.TidalStore }

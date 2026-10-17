@@ -182,6 +182,8 @@ lh rag search "deployment"
 - [特色功能](docs/wiki/特色功能.md)：记忆、RAG、工具、自动化和多 Agent
 - [使用场景](docs/wiki/使用场景.md)：本地调试、知识库问答、机器人和团队 API
 - [HTTP API](docs/API.md)
+- [消息网关与服务接口的模块边界](docs/edge-modules.md)
+- [独立工具模块与宿主适配](docs/tool-module.md)
 - [Codex App Server 集成](docs/codex-app-server.md)
 - [Grok agent 集成](docs/grok-agent.md)
 - [记忆系统](docs/memory_system.md)
@@ -226,11 +228,18 @@ HOME="$PWD/.lh-home" go run ./cmd/la chat "Test the local runtime"
 cmd/la                   CLI 入口
 internal/agent           Agent 核心运行时和 Agent loop
 internal/config          配置加载、默认值和运行目录
-internal/memory          Markdown 记忆 vault 和召回
+internal/memoryaestus     Aestus 记忆后端适配与资源生命周期
+internal/memory          记忆 SDK 导入边界检查
 internal/rag             RAG 索引、检索和持久化
-internal/tool            工具、技能、MCP 和 OpenCLI
-internal/server           HTTP API、SSE 和 WebSocket
-internal/gateway          Telegram、QQ、飞书、微信等消息网关
+internal/tool            独立工具模块与宿主适配的兼容入口
+internal/toolapp         凭据存储适配；通用工具运行逻辑由独立模块提供
+internal/server          API 构造兼容入口
+internal/apiapp          API 业务与运行时组装
+internal/gateway         消息平台兼容入口
+internal/channelapp      网关业务与 Agent 接入
+luckyagent-tools         公共工具、任务引擎与能力接口（独立模块）
+luckyagent-gateway       平台协议与回复展示（独立模块）
+luckyagent-api           HTTP/WS/gRPC、资源处理与重连存储（独立模块）
 docker-compose.yml       开发环境 Compose
 docker-compose.prod.yml  生产环境 Compose
 config.example.json      配置模板

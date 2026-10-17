@@ -157,7 +157,7 @@ func (e *WorkflowEngine) CancelInstance(id string) error {
 func (e *WorkflowEngine) runWorkflow(instance *WorkflowInstance, workflow *Workflow, ready chan<- struct{}) {
 	instance.SetStatus(StatusRunning)
 	instance.SetStartTime(time.Now())
-	
+
 	// Signal that workflow has started
 	if ready != nil {
 		close(ready)
