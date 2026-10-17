@@ -17,15 +17,22 @@ import (
 
 	"github.com/yurika0211/luckyagent/internal/agent"
 	"github.com/yurika0211/luckyagent/internal/cli/profile"
+	"github.com/yurika0211/luckyagent/internal/config"
+	"github.com/yurika0211/luckyagent/internal/contextx"
 	"github.com/yurika0211/luckyagent/internal/cron"
+	"github.com/yurika0211/luckyagent/internal/embedder"
 	"github.com/yurika0211/luckyagent/internal/gateway"
 	luckycollector "github.com/yurika0211/luckyagent/internal/gateway/collector"
 	"github.com/yurika0211/luckyagent/internal/mcpclient"
 	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/metrics"
+	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
+	"github.com/yurika0211/luckyagent/internal/sandbox"
 	"github.com/yurika0211/luckyagent/internal/session"
+	"github.com/yurika0211/luckyagent/internal/soul"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
@@ -65,6 +72,48 @@ type messageFeedbackSender interface {
 	AcknowledgeMessage(ctx context.Context, chatID string, messageID string) error
 }
 
+// turnChatRuntime is the provider-independent chat boundary. The handler
+// keeps the broader Runtime contract for legacy commands; only the message
+// path uses this narrow interface while those commands are migrated.
+type turnChatRuntime = turn.ChatRuntime
+
+// Runtime is the host contract consumed by the QQ-family handlers.
+//
+// Keeping this contract at the gateway boundary means constructors do not
+// require the concrete agent.Agent.  The message path only needs the neutral
+// turn.ChatRuntime methods; command handlers use the remaining state methods
+// until those commands are migrated to smaller contracts.
+type Runtime interface {
+	turn.ChatRuntime
+
+	ChatWithSessionStreamInput(context.Context, string, agent.UserTurnInput) (<-chan agent.ChatEvent, error)
+	ResolvePendingText(string, string) (tool.PendingApproval, bool, error)
+	RecordRecentChatTarget(string, string, string)
+
+	Config() *config.Manager
+	Sessions() *session.Manager
+	SetSandboxMode(string) error
+	SandboxMode() sandbox.Mode
+	Catalog() *provider.ModelCatalog
+	SwitchModel(string) error
+	Soul() *soul.Soul
+	Tools() *tool.Registry
+	Skills() []*tool.SkillInfo
+	CronEngine() *cron.Engine
+	RAG() *rag.RAGManager
+	Memory() *memory.Store
+	Remember(string, string) error
+	RememberLongTerm(string, string) error
+	Recall(string) []memory.Entry
+	MemoryStats() map[memory.Tier]int
+	DecayMemory(float64) int
+	PromoteMemory(string) error
+	ContextWindow() *contextx.ContextWindow
+	ContextCacheStats() map[string]any
+	EmbedderRegistry() *embedder.Registry
+	Metrics() *metrics.Metrics
+}
+
 type HandlerOptions struct {
 	PlatformName     string
 	DisplayName      string
@@ -76,7 +125,8 @@ type HandlerOptions struct {
 type Handler struct {
 	adapter  sender
 	mcpAdmin mcpclient.Admin
-	agent    *agent.Agent
+	agent    Runtime
+	chat     turnChatRuntime
 	commands map[string]commandHandler
 	watcher  *cron.Watcher
 
@@ -97,11 +147,15 @@ type Handler struct {
 	workerGeneration  uint64
 }
 
-func NewHandler(adapter sender, agentRuntime *agent.Agent) *Handler {
+func NewHandler(adapter sender, agentRuntime Runtime) *Handler {
 	return NewHandlerWithOptions(adapter, agentRuntime, HandlerOptions{})
 }
 
-func NewHandlerWithOptions(adapter sender, agentRuntime *agent.Agent, opts HandlerOptions) *Handler {
+func NewHandlerWithOptions(adapter sender, agentRuntime Runtime, opts HandlerOptions) *Handler {
+	var mcpAdmin mcpclient.Admin
+	if source, ok := agentRuntime.(interface{ MCPAdmin() mcpclient.Admin }); ok {
+		mcpAdmin = source.MCPAdmin()
+	}
 	platformName := strings.TrimSpace(opts.PlatformName)
 	if platformName == "" {
 		platformName = "qqofficial"
@@ -121,8 +175,9 @@ func NewHandlerWithOptions(adapter sender, agentRuntime *agent.Agent, opts Handl
 
 	h := &Handler{
 		adapter:           adapter,
-		mcpAdmin:          agentRuntime.MCPAdmin(),
+		mcpAdmin:          mcpAdmin,
 		agent:             agentRuntime,
+		chat:              agentRuntime,
 		commands:          make(map[string]commandHandler),
 		watcher:           cron.NewWatcher(resolveQQCronEngine(agentRuntime)),
 		sessions:          make(map[string]string),
@@ -167,7 +222,7 @@ func (h *Handler) HandleMessage(ctx context.Context, msg *gateway.Message) error
 	return h.dispatchChatAsync(ctx, msg, input)
 }
 
-func formatQQApprovalPrompt(evt agent.ChatEvent) string {
+func formatQQApprovalPrompt(evt turn.ChatEvent) string {
 	kind := "approval"
 	requestID := ""
 	prompt := strings.TrimSpace(evt.Content)
@@ -469,7 +524,7 @@ func (h *Handler) handleLucky(ctx context.Context, msg *gateway.Message) error {
 		if err != nil {
 			return h.reply(ctx, msg, fmt.Sprintf("Lucky 提交失败：%s", err.Error()))
 		}
-		input := batch.UserTurnInput()
+		input := agent.UserTurnInputFromTurn(batch.UserTurnInput())
 		finalMsg := *msg
 		finalMsg.IsCommand = false
 		finalMsg.Command = ""
@@ -2094,8 +2149,18 @@ func napcatSenderContextText(text string, sender gateway.User) string {
 	return b.String()
 }
 
-func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan agent.ChatEvent, error) {
-	events, err := h.agent.ChatWithSessionStreamInput(ctx, sessionID, input)
+func (h *Handler) openTurnChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan turn.ChatEvent, error) {
+	var events <-chan turn.ChatEvent
+	var err error
+	if h.chat != nil {
+		events, err = h.chat.ChatWithSessionStreamTurnEvents(ctx, sessionID, agent.TurnInput(input))
+	} else {
+		legacyEvents, legacyErr := h.agent.ChatWithSessionStreamInput(ctx, sessionID, input)
+		err = legacyErr
+		if legacyErr == nil {
+			events = agent.ToTurnChatEventStream(ctx, legacyEvents)
+		}
+	}
 	if err == nil {
 		return events, nil
 	}
@@ -2104,7 +2169,24 @@ func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input 
 	}
 	h.resetSession(chatID)
 	retrySessionID := h.getSessionID(chatID)
-	return h.agent.ChatWithSessionStreamInput(ctx, retrySessionID, input)
+	if h.chat != nil {
+		return h.chat.ChatWithSessionStreamTurnEvents(ctx, retrySessionID, agent.TurnInput(input))
+	}
+	legacyEvents, retryErr := h.agent.ChatWithSessionStreamInput(ctx, retrySessionID, input)
+	if retryErr != nil {
+		return nil, retryErr
+	}
+	return agent.ToTurnChatEventStream(ctx, legacyEvents), nil
+}
+
+// openChatEventStream is retained for callers that still render legacy agent
+// events. The message path uses openTurnChatEventStream directly.
+func (h *Handler) openChatEventStream(ctx context.Context, chatID string, input agent.UserTurnInput, sessionID string) (<-chan agent.ChatEvent, error) {
+	events, err := h.openTurnChatEventStream(ctx, chatID, input, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return agent.FromTurnChatEventStream(ctx, events), nil
 }
 
 func (h *Handler) sendProgress(ctx context.Context, msg *gateway.Message, text string) {
@@ -2278,7 +2360,7 @@ func (h *Handler) handleChatStream(ctx context.Context, msg *gateway.Message, in
 	stopTyping := h.startTypingIndicator(chatCtx, msg)
 	defer stopTyping()
 
-	events, err := h.openChatEventStream(chatCtx, msg.Chat.ID, input, sessionID)
+	events, err := h.openTurnChatEventStream(chatCtx, msg.Chat.ID, input, sessionID)
 	if err != nil {
 		if isTaskTimeoutError(err) {
 			h.sendProgress(ctx, msg, "⏱ 请求超时")
@@ -2291,7 +2373,7 @@ func (h *Handler) handleChatStream(ctx context.Context, msg *gateway.Message, in
 		return err
 	}
 
-	return h.handleChatEventStream(chatCtx, msg, events)
+	return h.handleTurnChatEventStream(chatCtx, msg, events)
 }
 
 func (h *Handler) startTypingIndicator(ctx context.Context, msg *gateway.Message) context.CancelFunc {
@@ -2321,12 +2403,18 @@ func (h *Handler) startTypingIndicator(ctx context.Context, msg *gateway.Message
 	return cancel
 }
 
+// handleChatEventStream keeps the legacy event signature used by older tests
+// and in-process callers. New message handling consumes turn.ChatEvent below.
 func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Message, events <-chan agent.ChatEvent) error {
+	return h.handleTurnChatEventStream(chatCtx, msg, agent.ToTurnChatEventStream(chatCtx, events))
+}
+
+func (h *Handler) handleTurnChatEventStream(chatCtx context.Context, msg *gateway.Message, events <-chan turn.ChatEvent) error {
 	if h.finalAnswerOnly {
 		if streamGateway, ok := h.adapter.(gateway.StreamGateway); ok {
 			stream, err := streamGateway.SendStream(chatCtx, msg.Chat.ID, msg.ID)
 			if err == nil && stream != nil {
-				return h.handleChatEventStreamWithSender(chatCtx, msg, events, stream)
+				return h.handleTurnChatEventStreamWithSender(chatCtx, msg, events, stream)
 			}
 			if err != nil {
 				fmt.Printf("[%s] streaming unavailable; falling back to text: %v\n", h.logPrefixValue(), err)
@@ -2362,7 +2450,7 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 				return h.sendAssistantResponseWithTrace(context.Background(), msg, out, trace)
 			}
 			switch evt.Type {
-			case agent.ChatEventThinking:
+			case turn.ChatEventThinking:
 				if nextRound := extractQQRoundNumber(evt.Content); nextRound > currentRound {
 					currentRound = nextRound
 				}
@@ -2371,24 +2459,24 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 				}
 				trace.AddThinking(evt.Content, currentRound)
 				h.sendProgress(context.Background(), msg, qqThinkingMessage(evt.Content, currentRound))
-			case agent.ChatEventApprovalRequired:
+			case turn.ChatEventApprovalRequired:
 				h.sendProgress(context.Background(), msg, formatQQApprovalPrompt(evt))
-			case agent.ChatEventToolCall:
+			case turn.ChatEventToolCall:
 				if h.finalAnswerOnly {
 					continue
 				}
 				trace.AddToolCall(evt.Name, evt.Args)
 				h.sendProgress(context.Background(), msg, qqToolCallMessage(evt.Name, evt.Args))
-			case agent.ChatEventToolResult:
+			case turn.ChatEventToolResult:
 				if h.finalAnswerOnly {
 					continue
 				}
 				result := qqToolResultText(evt)
 				trace.AddToolResult(evt.Name, result)
 				h.sendProgress(context.Background(), msg, qqToolResultMessage(evt.Name, result))
-			case agent.ChatEventContent:
+			case turn.ChatEventContent:
 				finalContent.WriteString(evt.Content)
-			case agent.ChatEventDone:
+			case turn.ChatEventDone:
 				if evt.Content != "" {
 					finalContent.Reset()
 					finalContent.WriteString(evt.Content)
@@ -2401,7 +2489,7 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 					return h.sendAssistantResponse(context.Background(), msg, out)
 				}
 				return h.sendAssistantResponseWithTrace(context.Background(), msg, out, trace)
-			case agent.ChatEventError:
+			case turn.ChatEventError:
 				if isTaskTimeoutError(evt.Err) {
 					h.sendProgress(context.Background(), msg, "⏱ 请求超时")
 					return nil
@@ -2416,7 +2504,13 @@ func (h *Handler) handleChatEventStream(chatCtx context.Context, msg *gateway.Me
 	}
 }
 
+// handleChatEventStreamWithSender is the legacy wrapper for callers that
+// still produce agent.ChatEvent values.
 func (h *Handler) handleChatEventStreamWithSender(chatCtx context.Context, msg *gateway.Message, events <-chan agent.ChatEvent, stream gateway.StreamSender) error {
+	return h.handleTurnChatEventStreamWithSender(chatCtx, msg, agent.ToTurnChatEventStream(chatCtx, events), stream)
+}
+
+func (h *Handler) handleTurnChatEventStreamWithSender(chatCtx context.Context, msg *gateway.Message, events <-chan turn.ChatEvent, stream gateway.StreamSender) error {
 	var finalContent strings.Builder
 	streamHealthy := true
 	failStream := func(err error) {
@@ -2467,38 +2561,38 @@ func (h *Handler) handleChatEventStreamWithSender(chatCtx context.Context, msg *
 				return finish()
 			}
 			switch evt.Type {
-			case agent.ChatEventThinking:
+			case turn.ChatEventThinking:
 				if streamHealthy {
 					if err := stream.SetThinking(evt.Content); err != nil {
 						failStream(err)
 					}
 				}
-			case agent.ChatEventApprovalRequired:
+			case turn.ChatEventApprovalRequired:
 				if streamHealthy {
 					if err := stream.SetThinking(formatQQApprovalPrompt(evt)); err != nil {
 						failStream(err)
 					}
 				}
-			case agent.ChatEventToolCall:
+			case turn.ChatEventToolCall:
 				if streamHealthy {
 					if err := stream.SetToolCall(evt.Name, evt.Args); err != nil {
 						failStream(err)
 					}
 				}
-			case agent.ChatEventContent:
+			case turn.ChatEventContent:
 				finalContent.WriteString(evt.Content)
 				if streamHealthy {
 					if err := stream.Append(evt.Content); err != nil {
 						failStream(err)
 					}
 				}
-			case agent.ChatEventDone:
+			case turn.ChatEventDone:
 				if evt.Content != "" {
 					finalContent.Reset()
 					finalContent.WriteString(evt.Content)
 				}
 				return finish()
-			case agent.ChatEventError:
+			case turn.ChatEventError:
 				message := fmt.Sprintf("处理消息时出错：%v", evt.Err)
 				if isTaskTimeoutError(evt.Err) {
 					message = "⏱ 请求超时"
@@ -2529,7 +2623,7 @@ func extractQQRoundNumber(thinking string) int {
 	return 0
 }
 
-func qqToolResultText(evt agent.ChatEvent) string {
+func qqToolResultText(evt turn.ChatEvent) string {
 	if strings.TrimSpace(evt.Result) != "" {
 		return evt.Result
 	}
@@ -2777,7 +2871,7 @@ func (h *Handler) sessionManager() *session.Manager {
 	return h.agent.Sessions()
 }
 
-func resolveQQCronEngine(a *agent.Agent) *cron.Engine {
+func resolveQQCronEngine(a Runtime) *cron.Engine {
 	if a == nil {
 		return nil
 	}

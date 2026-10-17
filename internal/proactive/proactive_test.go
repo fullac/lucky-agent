@@ -68,6 +68,29 @@ func TestSamplerIncludesRuntimeActivitySignals(t *testing.T) {
 	}
 }
 
+func TestRecordRuntimeEventGeneratesUniqueIDsForSameTimestamp(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "proactive.db"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer store.Close()
+
+	createdAt := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	for _, eventType := range []string{"chat_turn", "tool_call"} {
+		if err := store.RecordRuntimeEvent(RuntimeEvent{Type: eventType, CreatedAt: createdAt}); err != nil {
+			t.Fatalf("RecordRuntimeEvent(%q): %v", eventType, err)
+		}
+	}
+
+	stats, err := store.RuntimeEventStats()
+	if err != nil {
+		t.Fatalf("RuntimeEventStats: %v", err)
+	}
+	if stats.Events != 2 || stats.ByType["chat_turn"] != 1 || stats.ByType["tool_call"] != 1 {
+		t.Fatalf("expected both same-timestamp events to persist, got %#v", stats)
+	}
+}
+
 func TestEstimatorPredictsCodingForRepoDuringWorkHours(t *testing.T) {
 	now := time.Date(2026, 7, 1, 15, 0, 0, 0, time.UTC)
 	estimate := NewEstimator().Estimate([]Signal{

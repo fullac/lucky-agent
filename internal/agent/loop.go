@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/yurika0211/luckyagent/internal/autonomy"
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/logger"
 	"github.com/yurika0211/luckyagent/internal/provider"
@@ -22,6 +22,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/session"
 	"github.com/yurika0211/luckyagent/internal/telemetry"
 	"github.com/yurika0211/luckyagent/internal/tool"
+	"github.com/yurika0211/luckyagent/internal/turn"
 	"github.com/yurika0211/luckyagent/internal/utils"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -111,19 +112,83 @@ type LoopConfig struct {
 	Foreground             bool // continue and checkpoint in the caller's request
 	emit                   func(context.Context, ChatEvent)
 	eventContext           context.Context
-	Execution              *autonomy.Execution // durable background task claim
-	MaxIterations          int                 // 最大循环次数
-	Timeout                time.Duration       // 单次循环超时
-	AutoApprove            bool                // 自动批准工具调用 (--yolo)
-	RepeatToolCallLimit    int                 // 相同工具签名重复上限
-	ToolOnlyIterationLimit int                 // 连续纯工具轮次上限
-	DuplicateFetchLimit    int                 // 同一 URL 抓取上限
-	DisabledTools          []string            // 本轮对模型隐藏的工具名
-	BlockedActions         map[string][]string // 工具名到本轮禁止的 action
-	Ephemeral              bool                // 临时后台执行，不写会话外持久化上下文
-	Source                 string              // 调用入口，例如 cli、tui、http、telegram
-	SessionID              string              // 当前回合的会话作用域（临时工具使用）
-	Sandbox                *sandbox.Snapshot   // task-scoped execution boundary
+	Execution              turn.DurableExecution // durable background task claim
+	MaxIterations          int                   // 最大循环次数
+	Timeout                time.Duration         // 单次循环超时
+	AutoApprove            bool                  // 自动批准工具调用 (--yolo)
+	RepeatToolCallLimit    int                   // 相同工具签名重复上限
+	ToolOnlyIterationLimit int                   // 连续纯工具轮次上限
+	DuplicateFetchLimit    int                   // 同一 URL 抓取上限
+	DisabledTools          []string              // 本轮对模型隐藏的工具名
+	BlockedActions         map[string][]string   // 工具名到本轮禁止的 action
+	Ephemeral              bool                  // 临时后台执行，不写会话外持久化上下文
+	Source                 string                // 调用入口，例如 cli、tui、http、telegram
+	SessionID              string                // 当前回合的会话作用域（临时工具使用）
+	Sandbox                *sandbox.Snapshot     // task-scoped execution boundary
+}
+
+// loopRuntime is the narrow set of services used by one ordinary turn. The
+// runtime is deliberately an interface: Loop does not own or reference the
+// Agent coordinator, autonomy kit, or gateway manager.
+type loopRuntime interface {
+	providerSnapshotForTurn(string) providerSnapshot
+	sandboxSnapshot(*session.Session) (*sandbox.Snapshot, error)
+	SandboxMode() sandbox.Mode
+	applySandboxToolPolicy(*LoopConfig, *sandbox.Snapshot)
+	applyIntentToolGating(*LoopConfig, string)
+	applyVisionToolPolicy(*LoopConfig, providerSnapshot)
+	getStreamMode() StreamMode
+	appendNaturalCitationsIfEnabled(string, []toolCallLog) string
+	loopHasRAG() bool
+	indexConversationTurn(string, string)
+	saveFinalAnswerDocument(string, string, string) error
+	maybeRollSession(*session.Session)
+	buildMemoryToolGate(string, TurnScope, []string) *memoryToolGate
+	maybeAutoCompactSessionWithProvider(context.Context, *session.Session, string, bool, providerSnapshot, func(CompactProgress))
+	buildContextMessagesForInputWithProvider(context.Context, *session.Session, UserTurnInput, contextBuildOptions, providerSnapshot) []provider.Message
+	buildLoopCallOptions(string, LoopConfig) provider.CallOptions
+	appendEphemeralToolSchemas(provider.CallOptions, string) provider.CallOptions
+	chatLoopIterationWithSoftRetry(context.Context, time.Duration, []provider.Message, provider.CallOptions, bool, providerSnapshot, func()) (*provider.Response, error, bool)
+	processToolCallBatch(*provider.Response, LoopConfig, *LoopResult, *session.Session, []provider.Message, *loopRuntimeState, *memoryToolGate, string) ([]provider.Message, bool, string)
+	executeMemoryGateForLoop(*memoryToolGate, LoopConfig, *LoopResult, *session.Session, []provider.Message, *loopRuntimeState) ([]provider.Message, bool)
+	processDirectResponse(*provider.Response, []provider.Message, *loopRuntimeState) ([]provider.Message, bool, string)
+}
+
+// Loop executes one turn using only the services exposed by loopRuntime.
+// Agent remains the compatibility coordinator and constructs this facade.
+type Loop struct {
+	runtime loopRuntime
+	options LoopOptions
+}
+
+// LoopOptions contains coordinator callbacks that sit outside the turn
+// execution core. They are optional so background callers can run a turn
+// without starting process-wide autonomy or appending coordinator notices.
+type LoopOptions struct {
+	EnsureAutonomy          func(context.Context) error
+	AppendRunningTaskNotice func(string) string
+	UseForeground           func(*session.Session, LoopConfig) bool
+	RunDurable              func(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
+	RunForeground           func(context.Context, *session.Session, UserTurnInput, LoopConfig, providerSnapshot) (*LoopResult, error)
+}
+
+func NewLoop(runtime loopRuntime, options ...LoopOptions) *Loop {
+	var opts LoopOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	return &Loop{runtime: runtime, options: opts}
+}
+
+// Run executes one turn using the provider snapshot selected by the runtime.
+// Callers such as autonomy and cron do not need to know provider selection or
+// Agent's model registry.
+func (l *Loop) Run(ctx context.Context, sess *session.Session, input UserTurnInput, cfg LoopConfig) (*LoopResult, error) {
+	if l == nil || l.runtime == nil {
+		return nil, fmt.Errorf("loop runtime not initialized")
+	}
+	input = input.Normalize()
+	return l.RunWithProviderSnapshot(ctx, sess, input, cfg, l.runtime.providerSnapshotForTurn(input.RoutingText))
 }
 
 // DefaultLoopConfig 返回默认 Loop 配置
@@ -320,10 +385,48 @@ func (a *Agent) RunLoopWithSessionInput(ctx context.Context, sess *session.Sessi
 	return a.runLoopWithProviderSnapshot(ctx, sess, turnInput, loopCfg, a.providerSnapshotForTurn(turnInput.RoutingText))
 }
 
+func (a *Agent) loopRunner() *Loop {
+	if a == nil {
+		return nil
+	}
+	a.loopMu.Lock()
+	defer a.loopMu.Unlock()
+	if a.loop == nil {
+		a.loop = NewLoop(newAgentLoopRuntime(a), LoopOptions{
+			EnsureAutonomy: func(ctx context.Context) error {
+				if a.autonomy == nil {
+					return nil
+				}
+				return a.StartAutonomy(ctx)
+			},
+			AppendRunningTaskNotice: a.appendRunningTaskNotice,
+			UseForeground:           a.useForeground,
+			RunDurable:              a.runDurableLoop,
+			RunForeground:           a.runForeground,
+		})
+	}
+	return a.loop
+}
+
+func (a *Agent) loopHasRAG() bool {
+	return a != nil && a.ragManager != nil
+}
+
+func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.Session, turnInput UserTurnInput, loopCfg LoopConfig, turnProvider providerSnapshot) (result *LoopResult, err error) {
+	runner := a.loopRunner()
+	if runner == nil {
+		return nil, fmt.Errorf("loop runtime not initialized")
+	}
+	return runner.RunWithProviderSnapshot(ctx, sess, turnInput, loopCfg, turnProvider)
+}
+
 // runLoopWithProviderSnapshot executes one turn using the provider selected at
 // its boundary. Every model call in the loop receives this same snapshot,
 // including retries and tool-result follow-up iterations.
-func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.Session, turnInput UserTurnInput, loopCfg LoopConfig, turnProvider providerSnapshot) (result *LoopResult, err error) {
+func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Session, turnInput UserTurnInput, loopCfg LoopConfig, turnProvider providerSnapshot) (result *LoopResult, err error) {
+	if l == nil || l.runtime == nil {
+		return nil, fmt.Errorf("loop runtime not initialized")
+	}
 	turnInput = turnInput.Normalize()
 	routingText := turnInput.RoutingText
 	if !turnProvider.valid() {
@@ -336,9 +439,9 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	ownedSnapshot := false
 	if snapshot == nil {
 		var snapshotErr error
-		snapshot, snapshotErr = a.sandboxSnapshot(sess)
+		snapshot, snapshotErr = l.runtime.sandboxSnapshot(sess)
 		if snapshotErr != nil {
-			return nil, fmt.Errorf("prepare %s sandbox: %w", a.SandboxMode(), snapshotErr)
+			return nil, fmt.Errorf("prepare %s sandbox: %w", l.runtime.SandboxMode(), snapshotErr)
 		}
 		ownedSnapshot = true
 	}
@@ -353,7 +456,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 			emit(ctx, event)
 		})
 	}
-	a.applySandboxToolPolicy(&loopCfg, snapshot)
+	l.runtime.applySandboxToolPolicy(&loopCfg, snapshot)
 	if strings.TrimSpace(loopCfg.Source) == "" {
 		loopCfg.Source = "cli"
 	}
@@ -361,18 +464,26 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		loopCfg.SessionID = strings.TrimSpace(sess.ID)
 	}
 	if loopCfg.Execution != nil {
-		a.applyIntentToolGating(&loopCfg, routingText)
-		a.applyVisionToolPolicy(&loopCfg, turnProvider)
-		return a.runDurableLoop(ctx, sess, turnInput, loopCfg, turnProvider)
+		l.runtime.applyIntentToolGating(&loopCfg, routingText)
+		l.runtime.applyVisionToolPolicy(&loopCfg, turnProvider)
+		if l.options.RunDurable == nil {
+			return nil, fmt.Errorf("durable loop coordinator not initialized")
+		}
+		return l.options.RunDurable(ctx, sess, turnInput, loopCfg, turnProvider)
 	}
-	if a.useForeground(sess, loopCfg) {
-		return a.runForeground(ctx, sess, turnInput, loopCfg, turnProvider)
+	if l.options.UseForeground != nil && l.options.UseForeground(sess, loopCfg) {
+		if l.options.RunForeground == nil {
+			return nil, fmt.Errorf("foreground loop coordinator not initialized")
+		}
+		return l.options.RunForeground(ctx, sess, turnInput, loopCfg, turnProvider)
 	}
-	a.applyIntentToolGating(&loopCfg, routingText)
-	a.applyVisionToolPolicy(&loopCfg, turnProvider)
+	l.runtime.applyIntentToolGating(&loopCfg, routingText)
+	l.runtime.applyVisionToolPolicy(&loopCfg, turnProvider)
 
-	if startErr := a.StartAutonomy(ctx); startErr != nil && a.autonomy != nil {
-		return nil, fmt.Errorf("start autonomy: %w", startErr)
+	if l.options.EnsureAutonomy != nil {
+		if startErr := l.options.EnsureAutonomy(ctx); startErr != nil {
+			return nil, fmt.Errorf("start autonomy: %w", startErr)
+		}
 	}
 
 	sessionID := ""
@@ -394,7 +505,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		"max_iterations", loopCfg.MaxIterations,
 		"timeout_ms", loopCfg.Timeout.Milliseconds(),
 		"auto_approve", loopCfg.AutoApprove,
-		"stream_mode", a.getStreamMode(),
+		"stream_mode", l.runtime.getStreamMode(),
 		"input_len", len(routingText),
 	)
 	logger.Debug("agent loop input",
@@ -444,64 +555,23 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	result = &LoopResult{
 		State: StateReason,
 	}
-	finalize := func(response string, reasoningContent string) {
-		if strings.TrimSpace(response) == "" {
-			response = emptyFinalResponseMessage
-		}
-		response = utils.SanitizeToolProtocolOutput(response)
-		response = a.appendNaturalCitationsIfEnabled(response, result.ToolCalls)
-		response = a.appendRunningTaskNotice(response)
-		result.Response = response
-		result.State = StateDone
-		createdAt := time.Now().UTC()
-		result.CreatedAt = &createdAt
-
-		// 会话中保留 provider 级消息顺序：user -> assistant(tool call) -> tool -> assistant(final)
-		if sess != nil {
-			msg := provider.Message{Role: "assistant", Content: response, ReasoningContent: reasoningContent, CreatedAt: result.CreatedAt}
-			if result.Usage != nil && result.Usage.TotalTokens > 0 {
-				usage := *result.Usage
-				msg.Usage = &usage
-			}
-			sess.AddProviderMessage(msg)
-		}
-
-		// Final answers are not indexed into RAG by default: indexed source
-		// material should stay separate from model-generated conclusions.
-		if !loopCfg.Ephemeral && a.ragManager != nil && autoIndexFinalAnswersEnabled() {
-			a.indexConversationTurn(routingText, response)
-		}
-
-		if !loopCfg.Ephemeral {
-			if saveErr := a.saveFinalAnswerDocument(sessionID, routingText, response); saveErr != nil {
-				logger.Warn("save final answer document failed", "session_id", sessionID, "error", saveErr)
-			}
-		}
-
-		// v0.24.1: 保存会话到磁盘
-		if sess != nil {
-			if saveErr := sess.Save(); saveErr != nil {
-				logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
-			}
-			a.maybeRollSession(sess)
-		}
-	}
+	finalizer := newLoopFinalizer(l.runtime, l.options.AppendRunningTaskNotice, result, sess, loopCfg, sessionID, routingText)
 	loopState := newLoopRuntimeState()
 	loopState.provider = turnProvider
 	loopState.toolExecutionGuard = newTurnToolGuard(routingText, loopCfg.DisabledTools, loopCfg.BlockedActions, snapshotMode(loopCfg.Sandbox))
 	loopState.artifactGuard = newArtifactFinalizationGuard(routingText)
-	memoryGate := a.buildMemoryToolGate(routingText, turnInput.Scope, loopCfg.DisabledTools)
+	memoryGate := l.runtime.buildMemoryToolGate(routingText, turnInput.Scope, loopCfg.DisabledTools)
 
 	// 构建初始消息
-	a.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider, compactProgressEmitter(loopCfg))
+	l.runtime.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider, compactProgressEmitter(loopCfg))
 	buildOpts := defaultContextBuildOptions()
 	buildOpts.DisabledTools = append([]string(nil), loopCfg.DisabledTools...)
-	messages := a.buildContextMessagesForInputWithProvider(ctx, sess, turnInput, buildOpts, turnProvider)
+	messages := l.runtime.buildContextMessagesForInputWithProvider(ctx, sess, turnInput, buildOpts, turnProvider)
 	if sess != nil {
 		sess.AddProviderMessage(turnInput.Message)
 	}
 
-	callOpts := a.buildLoopCallOptions(routingText, loopCfg)
+	callOpts := l.runtime.buildLoopCallOptions(routingText, loopCfg)
 	logger.Debug("agent loop context prepared",
 		"session_id", sessionID,
 		"messages", len(messages),
@@ -511,7 +581,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 	)
 
 	for i := 0; i < loopCfg.MaxIterations; i++ {
-		callOpts = a.appendEphemeralToolSchemas(callOpts, loopCfg.SessionID)
+		callOpts = l.runtime.appendEphemeralToolSchemas(callOpts, loopCfg.SessionID)
 		result.Iterations = i + 1
 		result.State = StateReason
 		logger.Debug("agent loop iteration started",
@@ -525,7 +595,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		)
 
 		// Reason: 调用 LLM（带 function calling 支持）
-		resp, err, _ := a.chatLoopIterationWithSoftRetry(
+		resp, err, _ := l.runtime.chatLoopIterationWithSoftRetry(
 			ctx,
 			loopCfg.Timeout,
 			messages,
@@ -563,38 +633,38 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		if len(resp.ToolCalls) > 0 {
 			var finalized bool
 			var finalResponse string
-			messages, finalized, finalResponse = a.processToolCallBatch(resp, loopCfg, result, sess, messages, loopState, memoryGate, turnInput.RoutingText)
+			messages, finalized, finalResponse = l.runtime.processToolCallBatch(resp, loopCfg, result, sess, messages, loopState, memoryGate, turnInput.RoutingText)
 			if finalized {
-				if updatedMessages, enforced := a.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
+				if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
 					messages = updatedMessages
 					continue
 				}
-				finalize(finalResponse, "")
+				finalizer.Finalize(finalResponse, "")
 				return result, nil
 			}
-			if updatedMessages, enforced := a.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
+			if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
 				messages = updatedMessages
 			}
 			continue // 继续循环，让 LLM 处理工具结果
 		}
 
-		if updatedMessages, enforced := a.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
+		if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
 			messages = updatedMessages
 			continue
 		}
 
 		var finalized bool
 		var finalResponse string
-		messages, finalized, finalResponse = a.processDirectResponse(resp, messages, loopState)
+		messages, finalized, finalResponse = l.runtime.processDirectResponse(resp, messages, loopState)
 		if !finalized {
 			continue
 		}
-		finalize(finalResponse, directReasoningContent(resp, loopState))
+		finalizer.Finalize(finalResponse, directReasoningContent(resp, loopState))
 		return result, nil
 	}
 
 	if strings.TrimSpace(loopState.continuedResponse.String()) != "" {
-		finalize(strings.TrimSpace(loopState.continuedResponse.String())+lengthTruncatedNotice, strings.TrimSpace(loopState.continuedReasoning.String()))
+		finalizer.Finalize(strings.TrimSpace(loopState.continuedResponse.String())+lengthTruncatedNotice, strings.TrimSpace(loopState.continuedReasoning.String()))
 		return result, nil
 	}
 
@@ -605,7 +675,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 			if saveErr := sess.Save(); saveErr != nil {
 				logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
 			}
-			a.maybeRollSession(sess)
+			l.runtime.maybeRollSession(sess)
 		}
 		return result, fmt.Errorf("memory gate did not produce final synthesis")
 	}
@@ -619,7 +689,7 @@ func (a *Agent) runLoopWithProviderSnapshot(ctx context.Context, sess *session.S
 		if saveErr := sess.Save(); saveErr != nil {
 			logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
 		}
-		a.maybeRollSession(sess)
+		l.runtime.maybeRollSession(sess)
 	}
 
 	return result, fmt.Errorf("max iterations (%d) reached", loopCfg.MaxIterations)
@@ -1348,39 +1418,88 @@ func isExplicitRequiredToolMention(input string, pos int, name string) bool {
 	if end > len(input) {
 		end = len(input)
 	}
-	if isNegatedToolMention(input, pos) {
+	window := input[start:end]
+	if toolMentionNegated(window, name) {
 		return false
 	}
-	window := strings.ToLower(input[start:end])
+	lower := strings.ToLower(window)
 	lowerName := strings.ToLower(name)
-	return strings.Contains(window, "必须调用") ||
+	if strings.Contains(window, "必须调用") ||
 		strings.Contains(window, "强制调用") ||
-		strings.Contains(window, "调用 "+lowerName) ||
-		strings.Contains(window, "调用"+lowerName) ||
-		strings.Contains(window, "调用一次 "+lowerName) ||
-		strings.Contains(window, "调用一次"+lowerName) ||
-		strings.Contains(window, "调用一下 "+lowerName) ||
-		strings.Contains(window, "调用一下"+lowerName) ||
-		strings.Contains(window, "用 "+lowerName) ||
-		strings.Contains(window, "用"+lowerName) ||
-		strings.Contains(window, "use "+lowerName) ||
-		strings.Contains(window, "call "+lowerName) ||
-		strings.Contains(window, "tool "+lowerName) ||
-		strings.Contains(window, "to="+lowerName)
+		strings.Contains(window, "调用 "+name) ||
+		strings.Contains(window, "调用"+name) ||
+		strings.Contains(window, "用 "+name) ||
+		strings.Contains(window, "用"+name) ||
+		strings.Contains(lower, "use "+lowerName) ||
+		strings.Contains(lower, "call "+lowerName) ||
+		strings.Contains(lower, "tool "+lowerName) ||
+		strings.Contains(lower, "to="+lowerName) {
+		return true
+	}
+	// "调用一次 file_read" keeps the verb in the same clause without gluing
+	// it to the tool name.
+	return clauseRequestsTool(window, name)
 }
 
-func isNegatedToolMention(input string, pos int) bool {
-	runes := []rune(input[:pos])
-	if len(runes) > 24 {
-		runes = runes[len(runes)-24:]
+func clauseRequestsTool(window, name string) bool {
+	idx := strings.Index(window, name)
+	if idx < 0 {
+		idx = strings.Index(strings.ToLower(window), strings.ToLower(name))
 	}
-	before := strings.ToLower(string(runes))
-	for _, phrase := range []string{"不要", "禁止", "不用", "不能", "不可", "别用", "别调用", "do not", "don't", "never "} {
-		if strings.Contains(before, phrase) {
+	if idx < 0 {
+		return false
+	}
+	clause := strings.ToLower(clauseBeforeTool(window[:idx]))
+	if clause == "" {
+		return false
+	}
+	for _, verb := range []string{"调用", "使用", "use ", "call "} {
+		if strings.Contains(clause, verb) {
 			return true
 		}
 	}
 	return false
+}
+
+// toolMentionNegated reports whether this occurrence is in a clause that
+// forbids the tool. Only the text between the previous sentence boundary and
+// the tool name counts, so an earlier "不要解释" cannot drop a later
+// "调用 file_read".
+func toolMentionNegated(window, name string) bool {
+	idx := strings.Index(window, name)
+	if idx < 0 {
+		idx = strings.Index(strings.ToLower(window), strings.ToLower(name))
+	}
+	if idx < 0 {
+		return false
+	}
+	clause := clauseBeforeTool(window[:idx])
+	if clause == "" {
+		return false
+	}
+	negatives := []string{
+		"不要调用", "不要用", "别调用", "别用", "禁止调用", "禁止用",
+		"不能调用", "不能用", "不可调用", "不可用", "不用调用",
+		"do not call", "do not use", "don't call", "don't use", "never call", "never use",
+	}
+	lower := strings.ToLower(clause)
+	for _, neg := range negatives {
+		if strings.Contains(lower, strings.ToLower(neg)) {
+			return true
+		}
+	}
+	return false
+}
+
+func clauseBeforeTool(before string) string {
+	cut := 0
+	for i, r := range before {
+		switch r {
+		case '。', '\n', '；', ';', '!', '！', '？', '?':
+			cut = i + utf8.RuneLen(r)
+		}
+	}
+	return strings.TrimSpace(before[cut:])
 }
 
 // fitContextWindow 裁剪消息列表到上下文窗口内

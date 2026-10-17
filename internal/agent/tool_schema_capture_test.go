@@ -14,7 +14,7 @@ func TestExplicitReadSurvivesNegatedWrite(t *testing.T) {
 	visible := toolNamesFromSchemas(opts.Tools)
 
 	assertEnabledTools(t, visible, "file_read")
-	if len(visible) < 2 {
-		t.Fatalf("negated file_write should not replace the schema, got %v", visible)
+	if len(visible) != 1 || visible[0] != "file_read" {
+		t.Fatalf("expected only the explicitly requested file_read schema, got %v", visible)
 	}
 }

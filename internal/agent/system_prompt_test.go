@@ -405,3 +405,26 @@ func TestMaterializedContextFallsBackWithoutSessionCwd(t *testing.T) {
 		t.Fatalf("did not expect supplementary context intro without manual/context files, got %q", prompt)
 	}
 }
+
+func TestFindAgentsFileIgnoresMissingEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	agents := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(agents, []byte("# rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LUCKYAGENT_AGENTS_FILE", filepath.Join(dir, "missing.md"))
+	t.Setenv("LUCKYHARNESS_AGENTS_FILE", "")
+	got := findAgentsFile(dir)
+	if got != agents {
+		t.Fatalf("stale env hid workspace file: got %q want %q", got, agents)
+	}
+
+	override := filepath.Join(dir, "override.md")
+	if err := os.WriteFile(override, []byte("# override\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LUCKYAGENT_AGENTS_FILE", override)
+	if got := findAgentsFile(dir); got != override {
+		t.Fatalf("existing override ignored: got %q", got)
+	}
+}

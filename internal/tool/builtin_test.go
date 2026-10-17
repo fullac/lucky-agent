@@ -2158,6 +2158,71 @@ func TestMemoryToolServiceRememberAndRecall(t *testing.T) {
 	}
 }
 
+func TestMemoryToolServiceRecallInjectsLinkedBlock(t *testing.T) {
+	store, err := memory.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	target := "## 失败原因\n凭据过期\n^block-9\n\n## 无关配置\n不要把这一节注入"
+	if err := store.SaveWithOptions(target, "fact", memory.TierLong, 0.9, memory.SaveOptions{}); err != nil {
+		t.Fatalf("save target: %v", err)
+	}
+	var targetID string
+	for _, entry := range store.Search("凭据过期") {
+		targetID = entry.ID
+		break
+	}
+	if err := store.SaveWithOptions("排障指向 [["+targetID+"#^block-9]]", "fact", memory.TierLong, 0.8, memory.SaveOptions{}); err != nil {
+		t.Fatalf("save source: %v", err)
+	}
+	svc := NewMemoryToolService(store)
+
+	recall, err := svc.HandleRecall(map[string]any{"query": "排障指向", "graph_depth": 1})
+	if err != nil {
+		t.Fatalf("HandleRecall: %v", err)
+	}
+	if !strings.Contains(recall, "凭据过期") || strings.Contains(recall, "无关配置") {
+		t.Fatalf("text recall should show only the linked block, got %q", recall)
+	}
+
+	out, err := svc.HandleRecall(map[string]any{"query": "排障指向", "graph_depth": 1, "format": "json"})
+	if err != nil {
+		t.Fatalf("HandleRecall json: %v", err)
+	}
+	if !strings.Contains(out, "\"context\"") || !strings.Contains(out, "凭据过期") {
+		t.Fatalf("json recall missing located context: %s", out)
+	}
+	if strings.Contains(out, "无关配置") && !strings.Contains(out, "\"content\"") {
+		t.Fatalf("unlocated section leaked without the stored note: %s", out)
+	}
+	var payload struct {
+		Results []struct {
+			Content string `json:"content"`
+			Context string `json:"context"`
+			Block   string `json:"block"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	var found bool
+	for _, item := range payload.Results {
+		if item.Block != "block-9" {
+			continue
+		}
+		found = true
+		if !strings.Contains(item.Content, "无关配置") {
+			t.Fatalf("stored content should remain the whole note: %+v", item)
+		}
+		if !strings.Contains(item.Context, "凭据过期") || strings.Contains(item.Context, "无关配置") {
+			t.Fatalf("context should be only the block: %+v", item)
+		}
+	}
+	if !found {
+		t.Fatalf("linked block was not recalled: %s", out)
+	}
+}
+
 func TestMemoryToolServiceRememberLongTerm(t *testing.T) {
 	dir := t.TempDir()
 	store, err := memory.NewStore(dir)

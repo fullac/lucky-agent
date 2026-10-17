@@ -359,7 +359,7 @@ func (h *AgentHandler) handleLucky(client *Client, msg *Message) {
 			return
 		}
 		h.emitLucky(client, msg.ID, fmt.Sprintf("Lucky 已提交 %d 段消息。", len(batch.Segments)))
-		input := batch.UserTurnInput()
+		input := agent.UserTurnInputFromTurn(batch.UserTurnInput())
 		chat := &Message{
 			Type:      TypeChat,
 			SessionID: sessionID,

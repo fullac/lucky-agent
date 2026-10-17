@@ -211,10 +211,20 @@ Tool-trace query parameters:
 | --- | --- |
 | `limit` | Number of newest tool calls to return; defaults to 100 and is capped at 200 |
 | `offset` | Tool calls skipped from the newest end |
+| `turn=first` | Restrict to the first stored user turn of an execution session, excluding later follow-up conversations |
 
 Tool trace responses include `total_calls`, `returned`, `has_more`, `limit`, and
-`offset`. Arguments, results, annotations, and errors are truncated before
-serialization so a single tool output cannot create an unbounded response.
+`offset`, plus `turn` and `pending_calls`. Each call exposes its provider `id`
+when available and `status` (`pending`, `completed`, or `failed`). A pending call
+has no recorded result; this does not prove it is still executing. Success and
+failure counters and `success_rate` count only calls with recorded results.
+Clients requesting `turn=first` should check the echoed `turn` field rather than
+assuming an older server supports the filter. If legacy compaction has removed
+the original turn, the filter returns `410` rather than exposing later work.
+Arguments, results, annotations,
+and errors are truncated before serialization so a single tool output cannot
+create an unbounded response. Persisted traces do not include live internal
+reasoning or timing that was not recorded.
 
 Create request body:
 

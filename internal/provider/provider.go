@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/yurika0211/luckyagent/internal/config"
-	"github.com/yurika0211/luckyagent/internal/gateway"
+	"github.com/yurika0211/luckyagent/internal/turn"
 )
 
 func normalizedReasoningEffort(value string) string {
@@ -39,9 +39,9 @@ type Message struct {
 	ContentParts     []ContentPart `json:"content_parts,omitempty"`
 	// Attachments are persisted for session history. Provider adapters do not
 	// include this field in their model wire payloads.
-	Attachments []gateway.Attachment `json:"attachments,omitempty"`
-	CreatedAt   *time.Time           `json:"created_at,omitempty"`
-	Usage       *TokenUsage          `json:"usage,omitempty"`
+	Attachments []turn.Attachment `json:"attachments,omitempty"`
+	CreatedAt   *time.Time        `json:"created_at,omitempty"`
+	Usage       *TokenUsage       `json:"usage,omitempty"`
 
 	ToolCallID string     `json:"tool_call_id,omitempty"` // function calling tool result
 	Name       string     `json:"name,omitempty"`         // function name for tool messages
@@ -97,6 +97,22 @@ type TokenUsage struct {
 	TotalTokens       int    `json:"total_tokens"`
 	CachedInputTokens int    `json:"cached_input_tokens,omitempty"`
 	Model             string `json:"model,omitempty"`
+}
+
+// ToTurnTokenUsage copies provider accounting into the neutral turn DTO at
+// the runtime boundary. Keeping the conversion here avoids making turn know
+// about provider-specific accumulation methods.
+func ToTurnTokenUsage(usage *TokenUsage) *turn.TokenUsage {
+	if usage == nil {
+		return nil
+	}
+	return &turn.TokenUsage{
+		InputTokens:       usage.InputTokens,
+		OutputTokens:      usage.OutputTokens,
+		TotalTokens:       usage.TotalTokens,
+		CachedInputTokens: usage.CachedInputTokens,
+		Model:             usage.Model,
+	}
 }
 
 // AddResponse folds one provider response into an aggregate turn usage.

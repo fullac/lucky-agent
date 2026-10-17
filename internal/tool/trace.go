@@ -8,8 +8,11 @@ import (
 	"unicode/utf8"
 )
 
-// TraceRecord is a user-safe summary of a completed tool call.
+// TraceRecord is a user-safe tool call summary. Pending session calls have no
+// result yet; Success is meaningful only for completed or failed calls.
 type TraceRecord struct {
+	ID         string `json:"id,omitempty"`
+	Status     string `json:"status,omitempty"` // pending | completed | failed
 	Name       string `json:"name"`
 	Arguments  string `json:"arguments,omitempty"`
 	Result     string `json:"result,omitempty"`
@@ -35,6 +38,10 @@ func NewTraceRecordWithTemplates(name, arguments, result string, duration time.D
 		DurationMS: duration.Milliseconds(),
 	}
 	record.Success, record.Error = traceResultStatus(record.Result)
+	record.Status = "completed"
+	if !record.Success {
+		record.Status = "failed"
+	}
 	record.Annotation = AnnotateToolCallWithTemplates(record.Name, record.Arguments, record.Result, templates)
 	return record
 }

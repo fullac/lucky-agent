@@ -1259,7 +1259,7 @@ func runMsgGatewayStart(cmd *cobra.Command, args []string) error {
 			AdminIDs:            append([]string(nil), cfg.MsgGateway.Telegram.AdminIDs...),
 			DisableAutoReaction: cfg.MsgGateway.Telegram.DisableAutoReaction,
 		})
-		handler := telegram.NewHandler(tgAdapter, a)
+		handler := telegram.NewHandlerWithRuntime(tgAdapter, telegram.NewRuntime(a))
 		handler.SetDataDir(filepath.Join(a.Config().HomeDir(), "data", "telegram"))
 		tgAdapter.SetHandler(func(ctx context.Context, msg *gateway.Message) error {
 			return handler.HandleMessage(ctx, msg)
@@ -1553,7 +1553,7 @@ func handlePlainGatewayLuckyCommand(ctx context.Context, platform string, runtim
 		if err != nil {
 			return gw.SendWithReply(ctx, msg.Chat.ID, msg.ID, "Lucky 提交失败："+err.Error())
 		}
-		return sendPlainGatewayAgentInput(ctx, platform, runtime, gw, msg, batch.UserTurnInput(), errorPrefix)
+		return sendPlainGatewayAgentInput(ctx, platform, runtime, gw, msg, agent.UserTurnInputFromTurn(batch.UserTurnInput()), errorPrefix)
 	case luckycollector.LuckyActionStatus:
 		status := lucky.Status(key)
 		if !status.Active {

@@ -221,7 +221,7 @@ weight = importance * recency_factor * access_boost
 `contextPlanner.BuildInput` 的 memory 注入顺序：
 
 1. `[Core Memory]`：long-tier 记忆，最多选少量核心条目。
-2. `[Working Memory - Retrieved Evidence]`：通过 `memory.Route(query)` 找到的相关 active memories。
+2. `[Working Memory - Retrieved Evidence]`：通过 `memory.Route(query)` 找到的相关 active memories。笔记仍整篇选中；只有 wikilink 写了 `#heading` 或 `#^block` 时，注入的是该标题或块。定位符缺失时回退整篇，并标明 section not found，不另造一节。
 3. `[Session History - Mid-term]`：中期会话摘要。
 4. `[Recent Context]`：short-term buffer 的溢出摘要。
 
@@ -235,6 +235,8 @@ context planner 还会过滤：
 
 - short-tier 中 `User:` / `Assistant:` 开头的原始对话记忆。
 - 不属于当前 gateway/user/group scope 的 scoped memory。
+
+块定位只发生在注入时。`^block-id` 是笔记内部的定位符，不是另一条记忆。图边仍然是笔记到笔记。没有定位符的 `[[note]]` 继续注入整篇。`recall` 的文本结果同样只展示被定位的段落；JSON 的 `content` 仍是整篇笔记，`context` 才是注入用的摘录。
 
 被注入上下文的记忆会通过 `RecordActivationFeedback(..., "context_selected", 0.15, ...)` 给可选 reranker 提供弱反馈。
 
