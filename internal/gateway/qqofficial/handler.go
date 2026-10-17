@@ -101,7 +101,7 @@ type Runtime interface {
 	ConnectMCPServer(string, string, string)
 	CronEngine() *cron.Engine
 	RAG() *rag.RAGManager
-	Memory() memory.Store
+	Memory() memory.Inspector
 	Remember(string, string) error
 	RememberLongTerm(string, string) error
 	Recall(string) []memory.Entry

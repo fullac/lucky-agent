@@ -1262,7 +1262,7 @@
               {
                 id: 'memory',
                 title: 'memory / rag · 记忆和检索',
-                description: 'memory 基于 Aestus 管理运行时 home/memory 中的 Markdown 记忆，rag 负责文档检索。',
+                description: 'memory 基于 Aestus 管理运行时 home/memory 中的 Markdown 记忆；自动摘要保留作用域与过期时间，会话摘要单独保存。rag 负责文档检索。',
                 fields: [
                   { field: 'memory.short_term_max_turns', example: '10', description: '短期会话记忆保留的最大轮数。' },
                   { field: 'memory.midterm_expire_days', example: '365', description: '中期摘要的过期天数。' },

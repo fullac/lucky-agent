@@ -1589,9 +1589,14 @@ func (s *Server) handleMemoryRecall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := s.agent.Recall(query)
+	results, err := s.agent.RecallMemory(r.Context(), memory.RecallRequest{Query: query, Options: memory.SearchOptions{IncludeGraph: true, GraphDepth: 1}})
+	if err != nil {
+		s.sendMemoryRecallError(w, err)
+		return
+	}
 	var entries []MemoryEntry
-	for _, e := range results {
+	for _, result := range results {
+		e := result.Entry
 		entries = append(entries, MemoryEntry{
 			ID:          e.ID,
 			Content:     e.Content,

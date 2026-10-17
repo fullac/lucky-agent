@@ -56,6 +56,11 @@ Important context behavior:
   shared write admission and context presentation.
 - `internal/memoryaestus`: sole Aestus SDK integration for the Markdown vault,
   recall, session buffers/summaries, maintenance and optional Tidal resources.
+  `Open` owns backend construction; `agent/memory_runtime.go` is the default
+  assembly point. `NewWithMemory` accepts an injected runtime. Consumers use
+  Inspector, ToolBackend, ContextReader and maintenance ports; legacy Store is
+  for adapter compatibility and fixture/benchmark seeding. Backend diagnostic
+  values live in `internal/memory/diagnostic`.
 - `internal/rag`: RAG indexing, SQLite persistence, retrieval, stream indexer.
 - `internal/tool`: built-in tools, skill loading, MCP/opencli/web/filesystem
   adapters, cron/autonomy services.
@@ -127,6 +132,12 @@ Do not treat session history, memory, and RAG as interchangeable:
 - Sessions carry chat continuity.
 - Memory stores durable facts, preferences, project rules, and decisions.
 - RAG stores indexed documents and final-answer artifacts when enabled.
+
+Durable short-tier compaction must preserve scope and expiry, keep recent facts,
+and never copy facts into the conversation summary store. It is performed by
+the SDK under one Store lock. Session buffers require an explicit session ID;
+there is no process-wide fallback. HTTP and gRPC recall use the cancellable
+Reader port, including the read-only recall trace endpoint.
 
 When debugging context contamination, inspect:
 

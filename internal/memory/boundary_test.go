@@ -43,6 +43,9 @@ func TestAestusImportsStayInsideAdapter(t *testing.T) {
 			if strings.HasPrefix(imported, "github.com/yurika0211/aestus") && !strings.HasPrefix(filepath.ToSlash(rel), "internal/memoryaestus/") {
 				t.Errorf("SDK import escaped adapter: %s imports %s", rel, imported)
 			}
+			if imported == "github.com/yurika0211/luckyagent/internal/memoryaestus" && strings.HasPrefix(filepath.ToSlash(rel), "internal/agent/") && filepath.ToSlash(rel) != "internal/agent/memory_runtime.go" {
+				t.Errorf("backend construction escaped assembly point: %s", rel)
+			}
 		}
 		return nil
 	})

@@ -3,6 +3,8 @@ package memory
 import (
 	"context"
 	"time"
+
+	"github.com/yurika0211/luckyagent/internal/memory/diagnostic"
 )
 
 // Reader and Writer are the host's primary memory use-case boundaries.
@@ -38,8 +40,70 @@ type RememberResult struct {
 	Superseded []string
 }
 
-// Store includes the existing inspection/maintenance API during the migration.
-// Individual consumers should request only the facet they actually use.
+// Inspector is the owner-facing read surface. It cannot mutate facts, configure
+// ranking, close the backend or run filesystem migrations.
+type Inspector interface {
+	Reader
+	Count() int
+	Stats() map[Tier]int
+	Get(string) (*Entry, error)
+	Recent(int) []Entry
+	GraphTopology(GraphTopologyOptions) GraphTopology
+	Source() SourceInfo
+	BuildSearchTrace(string, string, string, SearchOptions, []SearchResult, time.Duration) SearchTrace
+}
+
+type SourceInfo struct{ Kind, Location string }
+
+type Hygiene interface {
+	AuditHygiene(HygieneOptions) HygieneReport
+	QuarantineDirty(HygieneOptions) (HygieneReport, error)
+	DeleteDirty(HygieneOptions) (HygieneReport, error)
+	RestoreHygiene(HygieneOptions) (HygieneReport, error)
+}
+
+type ToolBackend interface {
+	Reader
+	WriteBackend
+	Hygiene
+	Recent(int) []Entry
+	Source() SourceInfo
+	BuildSearchTrace(string, string, string, SearchOptions, []SearchResult, time.Duration) SearchTrace
+}
+
+type Maintenance interface {
+	RecordTurn(string) MaintenanceEvent
+	ForgetSession(string)
+	Decay(float64) int
+	Expire() int
+	Promote(string) error
+	CompactShortTerm(context.Context, int, int) (int, error)
+}
+
+// RuntimeStore excludes legacy Save*, raw search and reranker configuration.
+// Consumers receive narrower facets; the application owns Close.
+type RuntimeStore interface {
+	Inspector
+	ToolBackend
+	ContextReader
+	Maintenance
+	TidalStats() (diagnostic.TidalStoreStats, bool, error)
+	Close() error
+}
+
+type Runtime struct {
+	Store     RuntimeStore
+	ShortTerm SessionShortTermStore
+	Summaries MidTermStore
+}
+
+type SummaryRequest struct {
+	SessionID, UserID, Title, Content string
+	Turns                             []ConversationTurn
+}
+
+// Store is the legacy adapter/fixture surface. Application consumers use
+// Inspector, ToolBackend or RuntimeStore instead.
 type Store interface {
 	Reader
 	Writer
@@ -117,6 +181,7 @@ type SessionShortTermStore interface {
 }
 
 type MidTermStore interface {
+	SaveSummary(context.Context, SummaryRequest) error
 	Count() int
 	Delete(sessionID string) error
 	ExpireOldSummaries(olderThan time.Duration) int

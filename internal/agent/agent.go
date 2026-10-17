@@ -28,7 +28,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/hook"
 	"github.com/yurika0211/luckyagent/internal/logger"
 	"github.com/yurika0211/luckyagent/internal/memory"
-	"github.com/yurika0211/luckyagent/internal/memoryaestus"
+	"github.com/yurika0211/luckyagent/internal/memory/diagnostic"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/middleware"
 	"github.com/yurika0211/luckyagent/internal/multimodal"
@@ -74,16 +74,6 @@ type providerRuntime struct {
 }
 
 /**
- * memoryRuntime 管理内存存储及其相关的短期和中期缓冲区。
- */
-type memoryRuntime struct {
-	store     memory.Store
-	shortTerm memory.SessionShortTermStore
-	mid       memory.MidTermStore
-	sessions  *session.Manager
-}
-
-/**
  * ragRuntime 管理 RAG 相关的管理器和持久化存储。
  */
 type ragRuntime struct {
@@ -126,31 +116,27 @@ type Agent struct {
 	catalog          *provider.ModelCatalog // 模型目录
 	modelDiscovery   *provider.ModelDiscovery
 	tokenStore       *provider.TokenStore // token 存储
-	memory           memory.Store
-	// shortTerm is retained only for source compatibility with older in-package
-	// tests/callers. New agents leave it nil; production conversation state is
-	// owned by shortTerms and keyed by session ID.
-	shortTerm     memory.ShortTermBuffer
-	shortTerms    memory.SessionShortTermStore
-	midTerm       memory.MidTermStore // 中期会话摘要存储
-	sessions      *session.Manager
-	tools         *tool.Registry
-	toolServices  *tool.Services
-	gateway       *tool.Gateway           // 统一工具网关
-	hitl          *HITLGate               // 本地工具审批和 ask_user 等待
-	hooks         *hook.Runner            // 工具执行前后的 hook 运行器
-	msgGateway    *gateway.GatewayManager // 消息平台网关
-	sessionEvents func(sessionID, content string)
-	mcpClient     *tool.MCPClient         // MCP 客户端
-	delegate      *tool.DelegateManager   // 子代理委派管理器
-	contextWin    *contextx.ContextWindow // 上下文窗口管理器
-	contextEst    *contextx.TokenEstimator
-	ragManager    *rag.RAGManager         // RAG 知识库管理器
-	ragPersist    *rag.Persistence        // RAG 持久化
-	streamIndexer *rag.StreamIndexer      // 流式索引器
-	embedderReg   *embedder.Registry      // 嵌入模型注册表
-	collabReg     *collab.Registry        // Agent 协作注册表
-	collabMgr     *collab.DelegateManager // 协作任务管理器
+	memory           memory.RuntimeStore
+	shortTerms       memory.SessionShortTermStore
+	midTerm          memory.MidTermStore // 中期会话摘要存储
+	sessions         *session.Manager
+	tools            *tool.Registry
+	toolServices     *tool.Services
+	gateway          *tool.Gateway           // 统一工具网关
+	hitl             *HITLGate               // 本地工具审批和 ask_user 等待
+	hooks            *hook.Runner            // 工具执行前后的 hook 运行器
+	msgGateway       *gateway.GatewayManager // 消息平台网关
+	sessionEvents    func(sessionID, content string)
+	mcpClient        *tool.MCPClient         // MCP 客户端
+	delegate         *tool.DelegateManager   // 子代理委派管理器
+	contextWin       *contextx.ContextWindow // 上下文窗口管理器
+	contextEst       *contextx.TokenEstimator
+	ragManager       *rag.RAGManager         // RAG 知识库管理器
+	ragPersist       *rag.Persistence        // RAG 持久化
+	streamIndexer    *rag.StreamIndexer      // 流式索引器
+	embedderReg      *embedder.Registry      // 嵌入模型注册表
+	collabReg        *collab.Registry        // Agent 协作注册表
+	collabMgr        *collab.DelegateManager // 协作任务管理器
 	// skillMu guards the published skill fields below. It is a plain data guard:
 	// never call into SkillRegistry or tool.Registry while holding it, or you
 	// introduce a lock order that nothing else in the process observes.
@@ -474,79 +460,6 @@ func buildConfiguredProvider(c *config.Config, registry *provider.Registry) (pro
 	return p, nil
 }
 
-/**
- * initMemoryRuntime 初始化内存运行时，包括创建内存存储和短/中期记忆缓冲区。
- */
-func initMemoryRuntime(cfg *config.Manager, c *config.Config) (memoryRuntime, error) {
-	mem, err := memoryaestus.NewStore(cfg.HomeDir() + "/memory")
-	if err != nil {
-		return memoryRuntime{}, fmt.Errorf("init memory: %w", err)
-	}
-	if c.Memory.Tidal.Enabled {
-		tidalStore, err := memoryaestus.OpenTidalStore(tidalMemoryStorePath(cfg.HomeDir(), c.Memory.Tidal.StorePath))
-		if err != nil {
-			_ = mem.Close()
-			return memoryRuntime{}, fmt.Errorf("init tidal memory store: %w", err)
-		}
-		tidalReranker, err := memoryaestus.NewPersistentTidalMemoryReranker(tidalRerankerConfig(c.Memory.Tidal), tidalStore)
-		if err != nil {
-			_ = tidalStore.Close()
-			_ = mem.Close()
-			return memoryRuntime{}, fmt.Errorf("init tidal memory reranker: %w", err)
-		}
-		mem.SetActivationReranker(tidalReranker)
-	}
-
-	shortTermMaxTurns := c.Memory.ShortTermMaxTurns
-	if shortTermMaxTurns <= 0 {
-		shortTermMaxTurns = 10
-	}
-	shortTerms := memoryaestus.NewSessionShortTermStore(shortTermMaxTurns)
-
-	midTermMaxSummaries := c.Memory.MidTermMaxSummaries
-	if midTermMaxSummaries <= 0 {
-		midTermMaxSummaries = 100
-	}
-	midTerm, err := memoryaestus.NewMidTermStore(filepath.Join(cfg.HomeDir(), "memory", "30_Sessions"), midTermMaxSummaries)
-	if err != nil {
-		_ = mem.Close()
-		return memoryRuntime{}, fmt.Errorf("init midterm store: %w", err)
-	}
-
-	sessions, err := session.NewManager(cfg.HomeDir() + "/sessions")
-	if err != nil {
-		_ = mem.Close()
-		return memoryRuntime{}, fmt.Errorf("init sessions: %w", err)
-	}
-
-	return memoryRuntime{
-		store:     mem,
-		shortTerm: shortTerms,
-		mid:       midTerm,
-		sessions:  sessions,
-	}, nil
-}
-
-func tidalRerankerConfig(cfg config.TidalMemoryConfig) memory.TidalRerankerConfig {
-	out := memoryaestus.DefaultTidalRerankerConfig()
-	out.Beta = cfg.Beta
-	out.MaxBoost = cfg.MaxBoost
-	out.LearningRate = cfg.LearningRate
-	out.MinSamples = cfg.MinSamples
-	return out
-}
-
-func tidalMemoryStorePath(homeDir, configured string) string {
-	configured = strings.TrimSpace(configured)
-	if configured == "" {
-		return filepath.Join(homeDir, "runtime", "tidal_memory.db")
-	}
-	if filepath.IsAbs(configured) {
-		return configured
-	}
-	return filepath.Join(homeDir, configured)
-}
-
 func initProactiveRuntime(homeDir string, cfg config.ProactiveConfig) (*proactive.Store, error) {
 	if !cfg.Enabled {
 		return nil, nil
@@ -688,7 +601,7 @@ func initRAGRuntime(cfg *config.Manager, c *config.Config) (ragRuntime, error) {
 /**
  * initSupportRuntime 初始化支持运行时，包括注册工具、设置搜索配置和初始化多媒体处理器。
  */
-func initSupportRuntime(c *config.Config, mem memory.Store, ragMgr *rag.RAGManager) supportRuntime {
+func initSupportRuntime(c *config.Config, mem memory.ToolBackend, ragMgr *rag.RAGManager) supportRuntime {
 	tools := tool.NewRegistry()
 	searchCfg := &tool.WebSearchConfig{
 		Provider:   c.WebSearch.Provider,
@@ -1233,7 +1146,15 @@ func resolveTTSConfig(c *config.Config) (ttsRuntimeConfig, bool) {
 }
 
 // New 创建 Agent
-func New(cfg *config.Manager) (*Agent, error) {
+func New(cfg *config.Manager) (*Agent, error) { return newAgent(cfg, nil) }
+
+// NewWithMemory accepts a complete memory runtime; Agent takes ownership of its
+// Store.Close. Session history remains a separate application resource.
+func NewWithMemory(cfg *config.Manager, runtime memory.Runtime) (*Agent, error) {
+	return newAgent(cfg, &runtime)
+}
+
+func newAgent(cfg *config.Manager, injected *memory.Runtime) (*Agent, error) {
 	applyWebSearchEnv(cfg)
 	applyOpenCLIEnv(cfg)
 	c := cfg.Get()
@@ -1249,15 +1170,25 @@ func New(cfg *config.Manager) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	memoryRT, err := initMemoryRuntime(cfg, c)
+	memoryRT, err := resolveMemoryRuntime(cfg, c, injected)
 	if err != nil {
 		return nil, err
+	}
+	memoryOwned := false
+	defer func() {
+		if !memoryOwned {
+			_ = memoryRT.Store.Close()
+		}
+	}()
+	sessionManager, err := session.NewManager(filepath.Join(cfg.HomeDir(), "sessions"))
+	if err != nil {
+		return nil, fmt.Errorf("init sessions: %w", err)
 	}
 	ragRT, err := initRAGRuntime(cfg, c)
 	if err != nil {
 		return nil, err
 	}
-	supportRT := initSupportRuntime(c, memoryRT.store, ragRT.manager)
+	supportRT := initSupportRuntime(c, memoryRT.Store, ragRT.manager)
 	proactiveStore, err := initProactiveRuntime(cfg.HomeDir(), c.Proactive)
 	if err != nil {
 		return nil, err
@@ -1320,10 +1251,10 @@ func New(cfg *config.Manager) (*Agent, error) {
 		registry:            providerRT.registry,
 		catalog:             providerRT.catalog,
 		tokenStore:          providerRT.tokenStore,
-		memory:              memoryRT.store,
-		shortTerms:          memoryRT.shortTerm,
-		midTerm:             memoryRT.mid,
-		sessions:            memoryRT.sessions,
+		memory:              memoryRT.Store,
+		shortTerms:          memoryRT.ShortTerm,
+		midTerm:             memoryRT.Summaries,
+		sessions:            sessionManager,
 		tools:               supportRT.tools,
 		toolServices:        supportRT.toolServices,
 		gateway:             supportRT.toolGateway,
@@ -1387,7 +1318,7 @@ func New(cfg *config.Manager) (*Agent, error) {
 		fmt.Printf("[autonomy] restored %d queued tasks\n", restored)
 	}
 	if err := supportRT.autonomyKit.Queue().SetSessionInitializer(func(task *autonomy.QueueTask) (string, error) {
-		sess := memoryRT.sessions.Ensure("autonomy-" + task.ID)
+		sess := sessionManager.Ensure("autonomy-" + task.ID)
 		sess.SetTitle(task.Title)
 		sess.SetAgentProfile("worker-task", "You are a LuckyAgent worker executing a queued task. Work on the assigned task, preserve evidence, and report blockers or unfinished work clearly.")
 		if err := sess.Save(); err != nil {
@@ -1441,7 +1372,7 @@ func New(cfg *config.Manager) (*Agent, error) {
 	// v0.38.0: 设置 delegate 的 Agent 执行器，让 delegate_task 真正走 Agent Loop
 	delegateCfg := supportRT.delegateMgr.Config()
 	supportRT.delegateMgr.SetSessionInitializer(func(task *tool.DelegateTask) error {
-		sess := memoryRT.sessions.Ensure(task.ExecutionSessionID)
+		sess := sessionManager.Ensure(task.ExecutionSessionID)
 		sess.SetTitle("delegate-task")
 		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
 		if task.Workspace != "" {
@@ -1450,7 +1381,7 @@ func New(cfg *config.Manager) (*Agent, error) {
 		return sess.Save()
 	})
 	loop := a.loopRunner()
-	sessions := memoryRT.sessions
+	sessions := sessionManager
 	delegateMgr := supportRT.delegateMgr
 	supportRT.delegateMgr.SetAgentExecutorWithOptions(func(ctx context.Context, description, contextStr string, options tool.AgentExecutorOptions) (string, error) {
 		sessionID := tool.DelegateExecutionSessionID(ctx)
@@ -1498,6 +1429,7 @@ func New(cfg *config.Manager) (*Agent, error) {
 			}
 		}
 	}
+	memoryOwned = true
 	return a, nil
 }
 
@@ -3748,47 +3680,16 @@ func (a *Agent) buildMemoryContextForSession(sess *session.Session, messages []p
 	return messages
 }
 
-// saveConversationMemory updates volatile conversation memory.
-//
-// Session history already owns the raw turn transcript. ShortTermBuffer keeps a
-// compressible overflow summary for that transcript, while memory.Store should
-// only receive reusable facts/constraints. Storing every raw User/Assistant
-// turn in memory.Store duplicates session history and can make later recall
-// treat ordinary conversation as hard Working Memory.
-func (a *Agent) saveConversationMemory(userInput, assistantResponse string) {
-	a.saveConversationMemoryFromSession(nil, TextUserTurnInput(userInput), assistantResponse)
-}
-
-func (a *Agent) saveConversationMemoryFromTurn(turnInput UserTurnInput, assistantResponse string) {
-	a.saveConversationMemoryFromSession(nil, turnInput, assistantResponse)
-}
-
-// shortTermBufferForSession resolves volatile conversation state by session.
-// The legacy field is only a compatibility fallback for older in-package
-// callers that construct Agent values directly; New always initializes
-// shortTerms and leaves shortTerm nil.
+// shortTermBufferForSession resolves only explicitly identified session state.
 func (a *Agent) shortTermBufferForSession(sess *session.Session, create bool) memory.ShortTermBuffer {
-	if a == nil {
+	if a == nil || a.shortTerms == nil || sess == nil || strings.TrimSpace(sess.ID) == "" {
 		return nil
 	}
-	sessionID := ""
-	if sess != nil {
-		sessionID = strings.TrimSpace(sess.ID)
+	if create {
+		return a.shortTerms.Buffer(sess.ID)
 	}
-	if a.shortTerms != nil && sessionID != "" {
-		if create {
-			return a.shortTerms.Buffer(sessionID)
-		}
-		buf, _ := a.shortTerms.Get(sessionID)
-		return buf
-	}
-	// Do not use a process-wide fallback for a real session when a production
-	// store exists. This prevents accidental cross-session contamination if a
-	// malformed/partial Agent is assembled.
-	if sessionID != "" && a.shortTerms != nil {
-		return nil
-	}
-	return a.shortTerm
+	buf, _ := a.shortTerms.Get(sess.ID)
+	return buf
 }
 
 // ForgetShortTermSession releases volatile state after a session is deleted
@@ -3812,8 +3713,8 @@ func (a *Agent) saveConversationMemoryFromSession(sess *session.Session, turnInp
 	turnInput = turnInput.Normalize()
 	userInput := turnInput.RoutingText
 	assistantResponse = utils.SanitizeToolProtocolOutput(assistantResponse)
-	// ShortTermBuffer is session-scoped. Sessionless legacy calls may still use
-	// the compatibility buffer, but normal chat/stream paths always pass sess.
+	// Volatile buffers require an explicit session; durable capture below uses
+	// the trusted turn scope independently of conversation buffering.
 	if short := a.shortTermBufferForSession(sess, true); short != nil {
 		short.Add("user", userInput)
 		short.Add("assistant", utils.TrimToRunes(assistantResponse, 300))
@@ -3911,48 +3812,14 @@ func inferImportance(input string) float64 {
 	return 0.2
 }
 
-// autoSummarize 自动摘要：将过多的短期记忆压缩为中期
-// v0.43.0: 同时生成 SessionSummary 存入 MidTermStore
+// autoSummarize requests scoped durable-note maintenance. It must not copy
+// durable facts into the independently queried conversation summary store.
 func (a *Agent) autoSummarize() {
-	shorts := a.memory.ByTier(memory.TierShort)
-	if len(shorts) <= 5 {
-		return // 短期记忆不多，不需要摘要
-	}
-
-	// 收集最早的短期记忆（保留最近 5 条）
-	var toSummarize []string
-	var ids []string
-	for i := 0; i < len(shorts)-5; i++ {
-		ids = append(ids, shorts[i].ID)
-		toSummarize = append(toSummarize, shorts[i].Content)
-	}
-
-	if len(ids) == 0 {
+	if a == nil || a.memory == nil {
 		return
 	}
-
-	// 简单拼接摘要（v0.4.0: 后续可接入 LLM 生成更智能摘要）
-	summary := strings.Join(toSummarize, " | ")
-	if len(summary) > 500 {
-		summary = utils.TrimToRunes(summary, 500)
-	}
-
-	a.memory.Summarize(ids, summary, "conversation")
-
-	// v0.43.0: 同时生成 SessionSummary 存入 MidTermStore
-	if a.midTerm != nil {
-		var turns []memory.ConversationTurn
-		for _, s := range shorts {
-			turns = append(turns, memory.ConversationTurn{Role: "user", Content: s.Content})
-		}
-		sessionSummary := memoryaestus.GenerateSessionSummary(
-			fmt.Sprintf("auto-%d", time.Now().UnixNano()),
-			"default",
-			turns,
-		)
-		if err := a.midTerm.SaveSessionSummary(sessionSummary); err != nil {
-			fmt.Printf("[agent] warning: failed to save session summary: %v\n", err)
-		}
+	if _, err := a.memory.CompactShortTerm(context.Background(), 5, 500); err != nil {
+		logger.Warn("memory compaction failed", "error", err)
 	}
 }
 
@@ -3979,7 +3846,16 @@ func (a *Agent) WriteMemory(ctx context.Context, request memory.RememberRequest)
 
 // Recall 搜索记忆
 func (a *Agent) Recall(query string) []memory.Entry {
-	return a.memory.Search(query)
+	results, err := a.RecallMemory(context.Background(), memory.RecallRequest{Query: query, Options: memory.SearchOptions{IncludeGraph: true, GraphDepth: 1}})
+	if err != nil {
+		logger.Warn("memory recall failed", "error", err)
+		return nil
+	}
+	entries := make([]memory.Entry, len(results))
+	for i, r := range results {
+		entries[i] = r.Entry
+	}
+	return entries
 }
 
 // RecallMidTerm 从中期记忆检索相关历史会话摘要
@@ -3995,19 +3871,12 @@ func (a *Agent) MemoryStats() map[memory.Tier]int {
 	return a.memory.Stats()
 }
 
-// TidalMemoryStats returns persisted tidal-memory telemetry when enabled.
-func (a *Agent) TidalMemoryStats() (memory.TidalStoreStats, bool, error) {
+// TidalMemoryStats returns optional backend diagnostics through an explicit port.
+func (a *Agent) TidalMemoryStats() (diagnostic.TidalStoreStats, bool, error) {
 	if a == nil || a.memory == nil {
-		return memory.TidalStoreStats{}, false, nil
+		return diagnostic.TidalStoreStats{}, false, nil
 	}
-	reranker, ok := a.memory.ActivationReranker().(interface {
-		StoreStats() (memory.TidalStoreStats, error)
-	})
-	if !ok || reranker == nil {
-		return memory.TidalStoreStats{}, false, nil
-	}
-	stats, err := reranker.StoreStats()
-	return stats, true, err
+	return a.memory.TidalStats()
 }
 
 // DecayMemory 执行记忆衰减
@@ -4589,7 +4458,7 @@ func (a *Agent) CronStore() *cron.Store {
 }
 
 // Memory 返回记忆存储
-func (a *Agent) Memory() memory.Store {
+func (a *Agent) Memory() memory.Inspector {
 	return a.memory
 }
 
@@ -4611,16 +4480,13 @@ func (a *Agent) MidTermStore() memory.MidTermStore {
 }
 
 // ShortTermSummary returns the session-scoped short-term summary used by the
-// context planner. The legacy single-buffer fallback remains for old callers.
+// context planner.
 func (a *Agent) ShortTermSummary(sess *session.Session) string {
 	if a == nil {
 		return ""
 	}
 	if a.shortTerms != nil && sess != nil {
 		return a.shortTerms.Summary(sess.ID)
-	}
-	if a.shortTerms == nil && a.shortTerm != nil {
-		return a.shortTerm.Summary()
 	}
 	return ""
 }

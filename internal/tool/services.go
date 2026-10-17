@@ -74,7 +74,7 @@ func (s *Services) ReloadMediaTools(r *Registry, defaultImageProvider string, me
 }
 
 // NewServices creates a tool service container.
-func NewServices(searchCfg *WebSearchConfig, opencliCfg *OpenCLIConfig, defaultImageProvider string, mediaProcessor *multimodal.Processor, imageGenerator multimodal.ImageGenerator, imageGenDefaults ImageGenerationDefaults, speechSynthesizer multimodal.SpeechSynthesizer, ttsDefaults TTSDefaults, mem memory.Store, ragMgr *rag.RAGManager, delegate *DelegateManager, policies ...FilesystemPolicy) *Services {
+func NewServices(searchCfg *WebSearchConfig, opencliCfg *OpenCLIConfig, defaultImageProvider string, mediaProcessor *multimodal.Processor, imageGenerator multimodal.ImageGenerator, imageGenDefaults ImageGenerationDefaults, speechSynthesizer multimodal.SpeechSynthesizer, ttsDefaults TTSDefaults, mem memory.ToolBackend, ragMgr *rag.RAGManager, delegate *DelegateManager, policies ...FilesystemPolicy) *Services {
 	policy := filesystemPolicyFromOptional(policies)
 	return &Services{
 		Builtin:   NewBuiltinToolService(searchCfg, opencliCfg, defaultImageProvider, mediaProcessor, imageGenerator, imageGenDefaults, speechSynthesizer, ttsDefaults, policy),

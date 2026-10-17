@@ -25,22 +25,9 @@ const (
 	maxHygieneLimit            = 200
 )
 
-// memoryToolStore is the consumer-owned surface needed by memory tools.
-type memoryToolStore interface {
-	memory.Reader
-	memory.WriteBackend
-	Dir() string
-	Recent(int) []memory.Entry
-	AuditHygiene(memory.HygieneOptions) memory.HygieneReport
-	QuarantineDirty(memory.HygieneOptions) (memory.HygieneReport, error)
-	DeleteDirty(memory.HygieneOptions) (memory.HygieneReport, error)
-	RestoreHygiene(memory.HygieneOptions) (memory.HygieneReport, error)
-	BuildSearchTrace(string, string, string, memory.SearchOptions, []memory.SearchResult, time.Duration) memory.SearchTrace
-}
-
 // MemoryToolService implements remember/recall handlers in the tool layer.
 type MemoryToolService struct {
-	store memoryToolStore
+	store memory.ToolBackend
 	ctx   context.Context
 }
 
@@ -65,7 +52,7 @@ func (s *MemoryToolService) requestContext() context.Context {
 }
 
 // NewMemoryToolService creates a tool-layer memory service.
-func NewMemoryToolService(store memoryToolStore) *MemoryToolService {
+func NewMemoryToolService(store memory.ToolBackend) *MemoryToolService {
 	return &MemoryToolService{store: store}
 }
 
@@ -655,15 +642,15 @@ func parseHygieneToolOptions(args map[string]any) (memory.HygieneOptions, string
 	}, action, boolArg(args["dry_run"]), nil
 }
 
-func memorySourceNotice(store interface{ Dir() string }) string {
+func memorySourceNotice(store interface{ Source() memory.SourceInfo }) string {
 	return fmt.Sprintf("记忆源：LuckyAgent Obsidian-compatible Markdown vault at %s。RAG SQLite 不是当前 durable memory 事实源。\n", memoryVaultPathForTool(store))
 }
 
-func memoryVaultPathForTool(store interface{ Dir() string }) string {
-	if store == nil || strings.TrimSpace(store.Dir()) == "" {
+func memoryVaultPathForTool(store interface{ Source() memory.SourceInfo }) string {
+	if store == nil || strings.TrimSpace(store.Source().Location) == "" {
 		return "~/.luckyagent/memory"
 	}
-	return store.Dir()
+	return store.Source().Location
 }
 
 func parseMemoryToolTier(raw string) memory.Tier {

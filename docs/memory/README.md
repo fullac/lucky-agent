@@ -30,14 +30,17 @@ RAG 与 memory 是两套系统。RAG 保存和检索 indexed documents；durable
 
 ## 运行时初始化
 
-`initMemoryRuntime` 在 agent 初始化时创建：
+`memoryaestus.Open` 集中创建后端资源，Agent 的 `memory_runtime.go` 只负责默认装配，也可通过 `NewWithMemory` 注入：
 
 - `memoryaestus.NewStore(cfg.HomeDir() + "/memory")`
 - `memoryaestus.NewSessionShortTermStore(memory.short_term_max_turns)`
 - `memoryaestus.NewMidTermStore(${home}/memory/30_Sessions, memory.midterm_max_summaries)`
-- `session.NewManager(${home}/sessions)`
 
-如果 `memory.tidal.enabled=true`，还会打开 `${home}/runtime/tidal_memory.db` 或配置的 `memory.tidal.store_path`，并把 `TidalMemoryReranker` 安装到 `memory.Store`。
+`session.NewManager(${home}/sessions)` 由应用单独创建，不属于记忆后端。
+
+如果 `memory.tidal.enabled=true`，还会打开 `${home}/runtime/tidal_memory.db` 或配置的 `memory.tidal.store_path`。运行时与 CLI 共用路径解析；Agent 通过统计端口读取 Tidal 诊断，无需操作重排器。
+
+自动事实摘要由 SDK 按作用域/类别/过期窗口分组，每组保留最新 5 条。状态和策略记录不参与，超出预算的原文不被截断删除。摘要保留 scope 与 TTL，只进入 durable vault，不再进入会话摘要库。
 
 ## Durable Memory Vault
 
@@ -170,9 +173,9 @@ weight = importance * recency_factor * access_boost
 
 普通召回入口：
 
-- `Agent.Recall(query)` -> `memory.Store.Search(query)`
-- `recall` 工具 -> `SearchWithOptions`
-- context planner -> `memory.Store.Route(query)`
+- HTTP、gRPC、`recall` 工具 -> `Reader.Recall(ctx, request)`；HTTP 取消/超时返回 408。
+- `Agent.Recall(query)` 为兼容包装，同样调用 Reader，错误会记录日志。
+- context planner -> `ContextReader.RouteWithOptions(query, options)`。
 
 激活评分由 `activation.go` 计算。直接匹配组件包括：
 

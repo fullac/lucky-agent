@@ -23,12 +23,22 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// memoryAPIStore is the owner administration surface actually used by gRPC.
+type memoryAPIStore interface {
+	memory.Reader
+	memory.WriteBackend
+	Get(string) (*memory.Entry, error)
+	Recent(int) []memory.Entry
+	Count() int
+	Delete(string) error
+}
+
 // Server implements LuckyAgentService gRPC server.
 type Server struct {
 	UnimplementedLuckyAgentServiceServer
 
 	agent          *agent.Agent
-	memoryStore    memory.Store
+	memoryStore    memoryAPIStore
 	ragManager     *rag.RAGManager
 	workflowEngine *workflow.WorkflowEngine
 
@@ -39,7 +49,7 @@ type Server struct {
 // NewServer creates a new gRPC server.
 func NewServer(
 	a *agent.Agent,
-	ms memory.Store,
+	ms memoryAPIStore,
 	rm *rag.RAGManager,
 	we *workflow.WorkflowEngine,
 ) *Server {

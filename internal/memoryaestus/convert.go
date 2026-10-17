@@ -1,10 +1,12 @@
 package memoryaestus
 
 import (
+	"time"
+
 	sdk "github.com/yurika0211/aestus/memory"
 	"github.com/yurika0211/aestus/memory/policy"
 	"github.com/yurika0211/luckyagent/internal/memory"
-	"time"
+	"github.com/yurika0211/luckyagent/internal/memory/diagnostic"
 )
 
 func fromSDKActivationComponents(v sdk.ActivationComponents) memory.ActivationComponents {
@@ -736,8 +738,8 @@ func toSDKTidalFeedback(v memory.TidalFeedback) sdk.TidalFeedback {
 	}
 }
 
-func fromSDKTidalKernelSnapshot(v sdk.TidalKernelSnapshot) memory.TidalKernelSnapshot {
-	return memory.TidalKernelSnapshot{
+func fromSDKTidalKernelSnapshot(v sdk.TidalKernelSnapshot) diagnostic.TidalKernelSnapshot {
+	return diagnostic.TidalKernelSnapshot{
 		Key:      v.Key,
 		Feature:  v.Feature,
 		BinEdges: mapSlice(v.BinEdges, func(v time.Duration) time.Duration { return v }),
@@ -746,7 +748,7 @@ func fromSDKTidalKernelSnapshot(v sdk.TidalKernelSnapshot) memory.TidalKernelSna
 	}
 }
 
-func toSDKTidalKernelSnapshot(v memory.TidalKernelSnapshot) sdk.TidalKernelSnapshot {
+func toSDKTidalKernelSnapshot(v diagnostic.TidalKernelSnapshot) sdk.TidalKernelSnapshot {
 	return sdk.TidalKernelSnapshot{
 		Key:      v.Key,
 		Feature:  v.Feature,
@@ -756,8 +758,8 @@ func toSDKTidalKernelSnapshot(v memory.TidalKernelSnapshot) sdk.TidalKernelSnaps
 	}
 }
 
-func fromSDKTidalRerankerConfig(v sdk.TidalRerankerConfig) memory.TidalRerankerConfig {
-	return memory.TidalRerankerConfig{
+func fromSDKTidalRerankerConfig(v sdk.TidalRerankerConfig) diagnostic.TidalRerankerConfig {
+	return diagnostic.TidalRerankerConfig{
 		Beta:         v.Beta,
 		MaxBoost:     v.MaxBoost,
 		LearningRate: v.LearningRate,
@@ -766,7 +768,7 @@ func fromSDKTidalRerankerConfig(v sdk.TidalRerankerConfig) memory.TidalRerankerC
 	}
 }
 
-func toSDKTidalRerankerConfig(v memory.TidalRerankerConfig) sdk.TidalRerankerConfig {
+func toSDKTidalRerankerConfig(v diagnostic.TidalRerankerConfig) sdk.TidalRerankerConfig {
 	return sdk.TidalRerankerConfig{
 		Beta:         v.Beta,
 		MaxBoost:     v.MaxBoost,
@@ -776,8 +778,8 @@ func toSDKTidalRerankerConfig(v memory.TidalRerankerConfig) sdk.TidalRerankerCon
 	}
 }
 
-func fromSDKTidalStoreStats(v sdk.TidalStoreStats) memory.TidalStoreStats {
-	return memory.TidalStoreStats{
+func fromSDKTidalStoreStats(v sdk.TidalStoreStats) diagnostic.TidalStoreStats {
+	return diagnostic.TidalStoreStats{
 		QueryEvents:    v.QueryEvents,
 		RecallEvents:   v.RecallEvents,
 		FeedbackEvents: v.FeedbackEvents,

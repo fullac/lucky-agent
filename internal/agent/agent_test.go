@@ -431,14 +431,14 @@ func testAgentOutdoorRoutePolicy() memory.RoutePolicy {
 
 func TestContextPlannerInjectsTypedMemoryPolicy(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	if err := a.memory.SaveWithOptions("My [[Daughter]] has [[Pollen Allergy]].", "health", memory.TierLong, 0.98, memory.SaveOptions{
+	if err := fixtureMemory(a).SaveWithOptions("My [[Daughter]] has [[Pollen Allergy]].", "health", memory.TierLong, 0.98, memory.SaveOptions{
 		Tags:       []string{"health"},
 		StateKey:   "family.daughter.pollen_allergy",
 		StateValue: "active",
 	}); err != nil {
 		t.Fatalf("save allergy: %v", err)
 	}
-	if err := a.memory.SaveWithOptions("When [[Outdoor Plan]] involves [[Daughter]] and [[Pollen Allergy]], check [[Weather Forecast]] and [[Air Quality]].", "rule", memory.TierLong, 0.92, memory.SaveOptions{
+	if err := fixtureMemory(a).SaveWithOptions("When [[Outdoor Plan]] involves [[Daughter]] and [[Pollen Allergy]], check [[Weather Forecast]] and [[Air Quality]].", "rule", memory.TierLong, 0.92, memory.SaveOptions{
 		Tags:          []string{"tool-routing"},
 		Aliases:       []string{"女儿出门"},
 		RoutePolicies: []memory.RoutePolicy{testAgentOutdoorRoutePolicy()},
@@ -746,12 +746,13 @@ func TestSaveConversationMemoryDoesNotPersistTruncationEllipsis(t *testing.T) {
 
 func TestSaveConversationMemoryDoesNotStoreRawConversationInMemoryStore(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	a.shortTerm = memoryaestus.NewShortTermBuffer(10)
+	a.shortTerms = memoryaestus.NewSessionShortTermStore(10)
+	sess := session.NewSession("buffer-test", t.TempDir())
 
-	a.saveConversationMemory("hello", "hi there")
+	a.saveConversationMemoryFromSession(sess, TextUserTurnInput("hello"), "hi there")
 
-	if a.shortTerm.MessageCount() != 2 {
-		t.Errorf("expected 2 messages in short term buffer, got %d", a.shortTerm.MessageCount())
+	if a.shortTermBufferForSession(sess, false).MessageCount() != 2 {
+		t.Errorf("expected 2 messages in short term buffer, got %d", a.shortTermBufferForSession(sess, false).MessageCount())
 	}
 	for _, e := range a.memory.Recent(10) {
 		if strings.HasPrefix(e.Content, "User:") || strings.HasPrefix(e.Content, "Assistant:") || e.Category == "conversation" {
@@ -762,12 +763,13 @@ func TestSaveConversationMemoryDoesNotStoreRawConversationInMemoryStore(t *testi
 
 func TestSaveConversationMemory_ShortTermBuffer(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	a.shortTerm = memoryaestus.NewShortTermBuffer(10)
+	a.shortTerms = memoryaestus.NewSessionShortTermStore(10)
+	sess := session.NewSession("buffer-test", t.TempDir())
 
-	a.saveConversationMemory("hello", "hi there")
+	a.saveConversationMemoryFromSession(sess, TextUserTurnInput("hello"), "hi there")
 
-	if a.shortTerm.MessageCount() != 2 {
-		t.Errorf("expected 2 messages in short term buffer, got %d", a.shortTerm.MessageCount())
+	if a.shortTermBufferForSession(sess, false).MessageCount() != 2 {
+		t.Errorf("expected 2 messages in short term buffer, got %d", a.shortTermBufferForSession(sess, false).MessageCount())
 	}
 }
 
@@ -810,18 +812,18 @@ func TestShortTermContextIsIsolatedPerSession(t *testing.T) {
 func TestContextPlannerInjectsLinkedBlockNotWholeNote(t *testing.T) {
 	a := newTestAgentWithMemory(t)
 	target := "## 失败原因\n凭据过期\n^block-9\n\n## 无关配置\n不要把这一节注入"
-	if err := a.memory.SaveWithOptions(target, "fact", memory.TierLong, 0.9, memory.SaveOptions{}); err != nil {
+	if err := fixtureMemory(a).SaveWithOptions(target, "fact", memory.TierLong, 0.9, memory.SaveOptions{}); err != nil {
 		t.Fatalf("save target: %v", err)
 	}
 	var targetID string
-	for _, entry := range a.memory.Search("凭据过期") {
+	for _, entry := range fixtureMemory(a).Search("凭据过期") {
 		targetID = entry.ID
 		break
 	}
 	if targetID == "" {
 		t.Fatal("target id missing")
 	}
-	if err := a.memory.SaveWithOptions("排障指向 [["+targetID+"#^block-9]]", "fact", memory.TierLong, 0.8, memory.SaveOptions{}); err != nil {
+	if err := fixtureMemory(a).SaveWithOptions("排障指向 [["+targetID+"#^block-9]]", "fact", memory.TierLong, 0.8, memory.SaveOptions{}); err != nil {
 		t.Fatalf("save source: %v", err)
 	}
 
@@ -837,9 +839,9 @@ func TestContextPlannerInjectsLinkedBlockNotWholeNote(t *testing.T) {
 
 func TestContextPlannerFiltersRawConversationShortMemory(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	a.memory.SaveWithTier("User: hello about deploy", "conversation", memory.TierShort, 0.9)
-	a.memory.SaveWithTier("Assistant: deploy answer", "conversation", memory.TierShort, 0.9)
-	a.memory.SaveWithTier("Project deploy constraint: run tests before release", "project", memory.TierShort, 0.9)
+	fixtureMemory(a).SaveWithTier("User: hello about deploy", "conversation", memory.TierShort, 0.9)
+	fixtureMemory(a).SaveWithTier("Assistant: deploy answer", "conversation", memory.TierShort, 0.9)
+	fixtureMemory(a).SaveWithTier("Project deploy constraint: run tests before release", "project", memory.TierShort, 0.9)
 
 	planner := newContextPlanner(a, defaultContextBuildOptions())
 	msg := planner.buildRelevantMemoryMessage("deploy", TurnScope{})
@@ -885,10 +887,10 @@ func TestContextPlannerFiltersOtherUserScopedMemory(t *testing.T) {
 	a := newTestAgentWithMemory(t)
 	scopeA := TurnScope{Platform: "qqofficial", ChatID: "group:100", ChatType: "group", SenderID: "user-a"}
 	scopeB := TurnScope{Platform: "qqofficial", ChatID: "group:100", ChatType: "group", SenderID: "user-b"}
-	if err := a.memory.SaveWithOptions("Project deploy constraint for user A", "project", memory.TierLong, 0.95, memory.SaveOptions{Tags: scopeA.MemoryTags()}); err != nil {
+	if err := fixtureMemory(a).SaveWithOptions("Project deploy constraint for user A", "project", memory.TierLong, 0.95, memory.SaveOptions{Tags: scopeA.MemoryTags()}); err != nil {
 		t.Fatalf("save user A memory: %v", err)
 	}
-	if err := a.memory.SaveWithOptions("Project deploy constraint for user B", "project", memory.TierLong, 0.95, memory.SaveOptions{Tags: scopeB.MemoryTags()}); err != nil {
+	if err := fixtureMemory(a).SaveWithOptions("Project deploy constraint for user B", "project", memory.TierLong, 0.95, memory.SaveOptions{Tags: scopeB.MemoryTags()}); err != nil {
 		t.Fatalf("save user B memory: %v", err)
 	}
 
@@ -928,13 +930,13 @@ func TestContextMemoryHygieneHookQuarantinesDirtyMemoryBeforeRecall(t *testing.T
 
 	a := newTestAgentWithMemory(t)
 	a.cfg = cfg
-	a.memory.SaveWithTier("User: stale deploy instruction", "conversation", memory.TierShort, 0.9)
-	a.memory.SaveWithTier("Project deploy constraint: run tests before release", "project", memory.TierShort, 0.9)
+	fixtureMemory(a).SaveWithTier("User: stale deploy instruction", "conversation", memory.TierShort, 0.9)
+	fixtureMemory(a).SaveWithTier("Project deploy constraint: run tests before release", "project", memory.TierShort, 0.9)
 
 	planner := newContextPlanner(a, defaultContextBuildOptions())
 	_ = planner.BuildInput(context.Background(), nil, TextUserTurnInput("deploy"))
 
-	for _, e := range a.memory.Search("deploy") {
+	for _, e := range fixtureMemory(a).Search("deploy") {
 		if strings.Contains(e.Content, "User: stale deploy") {
 			t.Fatalf("dirty raw conversation should be quarantined before recall: %#v", e)
 		}
@@ -945,7 +947,7 @@ func TestPersistCompressedSummaryDoesNotWriteDurableMemory(t *testing.T) {
 	a := newTestAgentWithMemory(t)
 	planner := newContextPlanner(a, defaultContextBuildOptions())
 
-	planner.persistCompressedSummary(nil, nil, "[Conversation Summary]\nTool evidence: checked config")
+	planner.persistCompressedSummary(context.Background(), nil, nil, "[Conversation Summary]\nTool evidence: checked config")
 
 	for _, e := range a.memory.Recent(10) {
 		if e.Category == "context_compression" || strings.Contains(e.Content, "Tool evidence: checked config") {
@@ -960,13 +962,13 @@ func TestAutoSummarize_FewMemories(t *testing.T) {
 	a := newTestAgentWithMemory(t)
 
 	// Only 3 short-term memories — should not trigger summarize
-	a.memory.SaveWithTier("m1", "test", memory.TierShort, 0.3)
-	a.memory.SaveWithTier("m2", "test", memory.TierShort, 0.3)
-	a.memory.SaveWithTier("m3", "test", memory.TierShort, 0.3)
+	fixtureMemory(a).SaveWithTier("m1", "test", memory.TierShort, 0.3)
+	fixtureMemory(a).SaveWithTier("m2", "test", memory.TierShort, 0.3)
+	fixtureMemory(a).SaveWithTier("m3", "test", memory.TierShort, 0.3)
 
-	before := len(a.memory.ByTier(memory.TierShort))
+	before := len(fixtureMemory(a).ByTier(memory.TierShort))
 	a.autoSummarize()
-	after := len(a.memory.ByTier(memory.TierShort))
+	after := len(fixtureMemory(a).ByTier(memory.TierShort))
 
 	// Should not change — too few memories
 	if after != before {
@@ -979,13 +981,13 @@ func TestAutoSummarize_ManyMemories(t *testing.T) {
 
 	// Add 8 short-term memories — should trigger summarize (keep 5)
 	for i := 0; i < 8; i++ {
-		a.memory.SaveWithTier("memory item "+strings.Repeat("x", 20), "test", memory.TierShort, 0.3)
+		fixtureMemory(a).SaveWithTier("memory item "+strings.Repeat("x", 20), "test", memory.TierShort, 0.3)
 	}
 
 	a.autoSummarize()
 
 	// After summarize, short-term should be reduced
-	shorts := a.memory.ByTier(memory.TierShort)
+	shorts := fixtureMemory(a).ByTier(memory.TierShort)
 	if len(shorts) > 6 { // allow some tolerance
 		t.Errorf("expected short-term memories to be reduced, got %d", len(shorts))
 	}
@@ -995,8 +997,8 @@ func TestAutoSummarize_ManyMemories(t *testing.T) {
 
 func TestMemoryStats(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	a.memory.SaveWithTier("short", "test", memory.TierShort, 0.3)
-	a.memory.SaveLongTerm("long", "test")
+	fixtureMemory(a).SaveWithTier("short", "test", memory.TierShort, 0.3)
+	fixtureMemory(a).SaveLongTerm("long", "test")
 
 	stats := a.MemoryStats()
 	if stats[memory.TierShort] < 1 {
@@ -1009,7 +1011,7 @@ func TestMemoryStats(t *testing.T) {
 
 func TestDecayMemory(t *testing.T) {
 	a := newTestAgentWithMemory(t)
-	a.memory.SaveWithTier("will decay", "test", memory.TierShort, 0.01)
+	fixtureMemory(a).SaveWithTier("will decay", "test", memory.TierShort, 0.01)
 
 	decayed := a.DecayMemory(0.5)
 	// Low importance memory should decay
@@ -1465,7 +1467,7 @@ func TestChatWithSessionStreamPersistsToolContext(t *testing.T) {
 				provider:   &streamToolThenFinalProvider{},
 				sessions:   sessMgr,
 				memory:     memStore,
-				shortTerm:  memoryaestus.NewShortTermBuffer(8),
+				shortTerms: memoryaestus.NewSessionShortTermStore(8),
 				tools:      registry,
 				gateway:    tool.NewGateway(registry),
 				cfg:        cfg,
@@ -1552,7 +1554,7 @@ func TestChatWithSessionStreamTimeoutProducesFinalAnswer(t *testing.T) {
 				provider:   &timeoutProvider{},
 				sessions:   sessMgr,
 				memory:     memStore,
-				shortTerm:  memoryaestus.NewShortTermBuffer(8),
+				shortTerms: memoryaestus.NewSessionShortTermStore(8),
 				tools:      tool.NewRegistry(),
 				gateway:    tool.NewGateway(tool.NewRegistry()),
 				cfg:        cfg,
@@ -1613,7 +1615,7 @@ func TestChatWithSessionStreamRejectsProviderStreamWithoutTerminal(t *testing.T)
 		provider:   &unterminatedStreamProvider{},
 		sessions:   sessMgr,
 		memory:     memStore,
-		shortTerm:  memoryaestus.NewShortTermBuffer(8),
+		shortTerms: memoryaestus.NewSessionShortTermStore(8),
 		tools:      tool.NewRegistry(),
 		gateway:    tool.NewGateway(tool.NewRegistry()),
 		cfg:        cfg,
@@ -1666,7 +1668,7 @@ func TestChatWithSessionStreamSynthesizesAfterProviderInterruption(t *testing.T)
 		provider:   &recoverableUnterminatedStreamProvider{messages: &synthesisMessages},
 		sessions:   sessMgr,
 		memory:     memStore,
-		shortTerm:  memoryaestus.NewShortTermBuffer(8),
+		shortTerms: memoryaestus.NewSessionShortTermStore(8),
 		tools:      tool.NewRegistry(),
 		gateway:    tool.NewGateway(tool.NewRegistry()),
 		cfg:        cfg,
@@ -4382,4 +4384,16 @@ func TestSkillsSnapshotUnderRace(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// fixtureMemory exposes legacy seed helpers only to tests, never runtime consumers.
+func fixtureMemory(a *Agent) *memoryaestus.Store { return a.memory.(*memoryaestus.Store) }
+
+// Sessionless capture helpers belong to tests; production supplies a session.
+func (a *Agent) saveConversationMemory(userInput, assistantResponse string) {
+	a.saveConversationMemoryFromSession(nil, TextUserTurnInput(userInput), assistantResponse)
+}
+
+func (a *Agent) saveConversationMemoryFromTurn(turnInput UserTurnInput, assistantResponse string) {
+	a.saveConversationMemoryFromSession(nil, turnInput, assistantResponse)
 }

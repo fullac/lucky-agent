@@ -5,6 +5,7 @@ import (
 
 	sdk "github.com/yurika0211/aestus/memory"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/memory/diagnostic"
 )
 
 type TidalStore struct{ inner *sdk.TidalStore }
@@ -18,27 +19,42 @@ func OpenTidalStore(path string) (*TidalStore, error) {
 }
 
 func (s *TidalStore) Close() error { return s.inner.Close() }
-func (s *TidalStore) Stats() (memory.TidalStoreStats, error) {
+func (s *TidalStore) Stats() (diagnostic.TidalStoreStats, error) {
 	stats, err := s.inner.Stats()
 	return fromSDKTidalStoreStats(stats), err
 }
 
-func (s *TidalStore) LoadKernels() ([]memory.TidalKernelSnapshot, error) {
+func (s *TidalStore) LoadKernels() ([]diagnostic.TidalKernelSnapshot, error) {
 	kernels, err := s.inner.LoadKernels()
 	return mapSlice(kernels, fromSDKTidalKernelSnapshot), err
 }
 
 type TidalMemoryReranker struct{ inner *sdk.TidalReranker }
 
-func DefaultTidalRerankerConfig() memory.TidalRerankerConfig {
+func (s *Store) TidalStats() (diagnostic.TidalStoreStats, bool, error) {
+	bridge, ok := s.inner.ActivationReranker().(sdkReranker)
+	if !ok {
+		return diagnostic.TidalStoreStats{}, false, nil
+	}
+	reporter, ok := bridge.host.(interface {
+		StoreStats() (diagnostic.TidalStoreStats, error)
+	})
+	if !ok {
+		return diagnostic.TidalStoreStats{}, false, nil
+	}
+	stats, err := reporter.StoreStats()
+	return stats, true, err
+}
+
+func DefaultTidalRerankerConfig() diagnostic.TidalRerankerConfig {
 	return fromSDKTidalRerankerConfig(sdk.DefaultTidalRerankerConfig())
 }
 
-func NewTidalMemoryReranker(config memory.TidalRerankerConfig) *TidalMemoryReranker {
+func NewTidalMemoryReranker(config diagnostic.TidalRerankerConfig) *TidalMemoryReranker {
 	return &TidalMemoryReranker{inner: sdk.NewTidalMemoryReranker(toSDKTidalRerankerConfig(config))}
 }
 
-func NewPersistentTidalMemoryReranker(config memory.TidalRerankerConfig, store *TidalStore) (*TidalMemoryReranker, error) {
+func NewPersistentTidalMemoryReranker(config diagnostic.TidalRerankerConfig, store *TidalStore) (*TidalMemoryReranker, error) {
 	var innerStore *sdk.TidalStore
 	if store != nil {
 		innerStore = store.inner
@@ -62,13 +78,13 @@ func (r *TidalMemoryReranker) ObserveFeedback(feedback memory.TidalFeedback) {
 func (r *TidalMemoryReranker) RecordMemoryActivation(query string, scores []memory.ActivationScore, now time.Time) {
 	r.inner.RecordMemoryActivation(query, mapSlice(scores, toSDKActivationScore), now)
 }
-func (r *TidalMemoryReranker) KernelSnapshots() []memory.TidalKernelSnapshot {
+func (r *TidalMemoryReranker) KernelSnapshots() []diagnostic.TidalKernelSnapshot {
 	return mapSlice(r.inner.KernelSnapshots(), fromSDKTidalKernelSnapshot)
 }
-func (r *TidalMemoryReranker) ApplyKernelSnapshots(snapshots []memory.TidalKernelSnapshot) {
+func (r *TidalMemoryReranker) ApplyKernelSnapshots(snapshots []diagnostic.TidalKernelSnapshot) {
 	r.inner.ApplyKernelSnapshots(mapSlice(snapshots, toSDKTidalKernelSnapshot))
 }
-func (r *TidalMemoryReranker) StoreStats() (memory.TidalStoreStats, error) {
+func (r *TidalMemoryReranker) StoreStats() (diagnostic.TidalStoreStats, error) {
 	stats, err := r.inner.StoreStats()
 	return fromSDKTidalStoreStats(stats), err
 }

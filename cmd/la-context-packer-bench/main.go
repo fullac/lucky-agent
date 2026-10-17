@@ -311,7 +311,7 @@ func loadBenchmarkDataset(cfg benchConfig) (*benchDataset, func(), error) {
 		HomeDir: home,
 		Agent:   a,
 	}
-	if err := seedBenchmarkMemory(a.Memory()); err != nil {
+	if err := seedBenchmarkMemory(a.Memory().(memory.Store)); err != nil {
 		_ = a.Close()
 		cleanup()
 		return nil, nil, err
@@ -325,7 +325,7 @@ func loadBenchmarkDataset(cfg benchConfig) (*benchDataset, func(), error) {
 		ds.Cases = buildCases(a.Sessions())
 	}
 	if strings.TrimSpace(cfg.TracePath) != "" {
-		traceCases, err := loadTraceCases(cfg.TracePath, a.Sessions(), a.Memory())
+		traceCases, err := loadTraceCases(cfg.TracePath, a.Sessions(), a.Memory().(memory.Store))
 		if err != nil {
 			_ = a.Close()
 			cleanup()

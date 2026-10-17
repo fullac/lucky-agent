@@ -3,15 +3,26 @@ package memoryaestus
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	sdk "github.com/yurika0211/aestus/memory"
 	"github.com/yurika0211/luckyagent/internal/memory"
+	"github.com/yurika0211/luckyagent/internal/utils"
 )
 
 type Store struct{ inner *sdk.Store }
 
 var _ memory.Store = (*Store)(nil)
+var _ memory.RuntimeStore = (*Store)(nil)
+
+func (s *Store) Source() memory.SourceInfo {
+	return memory.SourceInfo{Kind: "markdown", Location: s.inner.Dir()}
+}
+
+func (s *Store) CompactShortTerm(ctx context.Context, keepRecent, maxRunes int) (int, error) {
+	return s.inner.CompactShortTerm(ctx, sdk.CompactionOptions{KeepRecent: keepRecent, MaxSummaryRunes: maxRunes})
+}
 
 func NewStore(dir string) (*Store, error) {
 	inner, err := sdk.NewStore(dir)
@@ -368,6 +379,21 @@ func wrapMidTermStore(v *sdk.MidTermStore) memory.MidTermStore {
 func (s *MidTermStore) Count() int {
 	r0 := s.inner.Count()
 	return r0
+}
+
+func (s *MidTermStore) SaveSummary(ctx context.Context, r memory.SummaryRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	summary := GenerateSessionSummary(r.SessionID, r.UserID, r.Turns)
+	if content := strings.TrimSpace(r.Content); content != "" {
+		summary.RawSummary = content
+	}
+	if title := strings.TrimSpace(r.Title); title != "" {
+		summary.Topics = append([]string{title}, summary.Topics...)
+	}
+	summary.Topics = utils.DedupStringsLimit(summary.Topics, 6)
+	return s.SaveSessionSummary(summary)
 }
 
 func (s *MidTermStore) Delete(sessionID string) error {

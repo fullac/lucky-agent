@@ -12,7 +12,6 @@ import (
 	"github.com/yurika0211/luckyagent/internal/contextx"
 	"github.com/yurika0211/luckyagent/internal/logger"
 	"github.com/yurika0211/luckyagent/internal/memory"
-	"github.com/yurika0211/luckyagent/internal/memoryaestus"
 	"github.com/yurika0211/luckyagent/internal/provider"
 	"github.com/yurika0211/luckyagent/internal/rag"
 	"github.com/yurika0211/luckyagent/internal/session"
@@ -1599,11 +1598,11 @@ func (p *contextPlanner) tryLLMConversationSummary(ctx context.Context, sess *se
 		return ""
 	}
 
-	p.persistCompressedSummary(sess, messages, content)
+	p.persistCompressedSummary(ctx, sess, messages, content)
 	return content
 }
 
-func (p *contextPlanner) persistCompressedSummary(sess *session.Session, messages []provider.Message, summary string) {
+func (p *contextPlanner) persistCompressedSummary(ctx context.Context, sess *session.Session, messages []provider.Message, summary string) {
 	if p == nil || p.agent == nil || strings.TrimSpace(summary) == "" {
 		return
 	}
@@ -1631,16 +1630,12 @@ func (p *contextPlanner) persistCompressedSummary(sess *session.Session, message
 			Content: msg.Content,
 		})
 	}
-	sessionSummary := memoryaestus.GenerateSessionSummary(sessionID, "context-compression", turns)
-	if sessionSummary == nil {
-		return
+	if err := p.agent.MidTermStore().SaveSummary(ctx, memory.SummaryRequest{
+		SessionID: sessionID, UserID: "context-compression", Title: title, Content: summary, Turns: turns,
+	}); err != nil {
+		logger.Warn("session summary persistence failed", "error", err)
 	}
-	sessionSummary.RawSummary = strings.TrimSpace(summary)
-	if title != "" {
-		sessionSummary.Topics = append([]string{title}, sessionSummary.Topics...)
-	}
-	sessionSummary.Topics = utils.DedupStringsLimit(sessionSummary.Topics, 6)
-	_ = p.agent.MidTermStore().SaveSessionSummary(sessionSummary)
+
 }
 
 /*
