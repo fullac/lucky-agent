@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/yurika0211/luckyagent/internal/mcpclient"
 )
 
 // Config 代表 LuckyAgent 的运行时配置
@@ -44,6 +46,8 @@ type Config struct {
 
 	// Grok Build agent runtime configuration.
 	Grok GrokConfig `json:"grok,omitempty"`
+
+	MCP mcpclient.Config `json:"mcp,omitempty"`
 
 	// Embedding 配置（供 RAG / 记忆向量化使用）
 	Embedding EmbeddingConfig `json:"embedding,omitempty"`
@@ -1912,6 +1916,7 @@ func cloneConfig(in *Config) *Config {
 		return nil
 	}
 	cp := *in
+	cp.MCP = in.MCP.Clone()
 	if in.Extra != nil {
 		cp.Extra = make(map[string]string, len(in.Extra))
 		for k, v := range in.Extra {
@@ -2135,6 +2140,17 @@ func (m *Manager) SetConfig(cfg *Config) {
 func (m *Manager) Set(key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if key == "mcp.servers" {
+		var next mcpclient.Config
+		if err := json.Unmarshal([]byte(value), &next.Servers); err != nil {
+			return err
+		}
+		if err := next.Validate(); err != nil {
+			return err
+		}
+		m.config.MCP = next
+		return nil
+	}
 	if handled, err := m.config.setModelKey(key, value); handled {
 		return err
 	}

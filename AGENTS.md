@@ -55,6 +55,9 @@ Important context behavior:
 - `internal/memory`: Obsidian-compatible Markdown memory vault, activation,
   temporal resolution, hygiene.
 - `internal/rag`: RAG indexing, SQLite persistence, retrieval, stream indexer.
+- `internal/mcpclient`: runtime-owned MCP manager, stdio/Streamable HTTP,
+  versioned tool catalogs, calls and credential resolver port. Independent of
+  agent/tool packages; the official MCP Go SDK stays behind this boundary.
 - `internal/tool`: built-in tools, skill loading, MCP/opencli/web/filesystem
   adapters, cron/autonomy services.
 - `internal/server`: HTTP API, SSE chat, WebSocket, health, context, RAG,
@@ -83,6 +86,8 @@ Common routes include:
   assembled composition and local token length. `POST /api/v1/context/fit`
   trims caller-supplied messages.
 - `POST /api/v1/config/reload` to safely reload configuration for later requests.
+- `GET|POST /api/v1/mcp/servers` for connection status and configured-server
+  connect/refresh/disconnect actions. See `docs/mcp.md` for configuration.
 - `/api/v1/health/live`, `/ready`, `/detail`, and `/api/v1/metrics`.
 - `/api/v1/ws` and `/api/v1/ws/stats`.
 

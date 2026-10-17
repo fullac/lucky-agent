@@ -17,6 +17,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/contextx"
 	"github.com/yurika0211/luckyagent/internal/cron"
 	msggateway "github.com/yurika0211/luckyagent/internal/gateway"
+	"github.com/yurika0211/luckyagent/internal/mcpclient"
 	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/metrics"
 	"github.com/yurika0211/luckyagent/internal/multimodal"
@@ -1076,7 +1077,7 @@ func TestAgent_Getters(t *testing.T) {
 		tmplMgr:   soul.NewTemplateManager(),
 		catalog:   provider.NewModelCatalog(),
 		tools:     tool.NewRegistry(),
-		mcpClient: tool.NewMCPClient(),
+		mcpClient: mcpclient.NewManager(mcpclient.Config{}, nil),
 		delegate:  tool.NewDelegateManager(tool.DefaultDelegateConfig()),
 		gateway:   tool.NewGateway(tool.NewRegistry()),
 		skills:    []*tool.SkillInfo{},
@@ -3092,8 +3093,9 @@ func TestAgentConnectMCPServer(t *testing.T) {
 	}
 	defer a.Close()
 
-	// ConnectMCPServer should not panic
-	a.ConnectMCPServer("test", "http://localhost:8080", "test-key")
+	if err := a.ConnectMCPServer("test", "http://127.0.0.1:1", "test-key"); err == nil {
+		t.Fatal("expected connection failure")
+	}
 }
 
 func TestApplyWebSearchEnvUsesExaKey(t *testing.T) {

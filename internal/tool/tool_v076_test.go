@@ -337,7 +337,7 @@ func TestGateway_ExecuteWithShellContextResult(t *testing.T) {
 
 	// 验证错误情况下的结果结构
 	result, err := gw.ExecuteWithShellContext("fake_tool", nil, "", nil)
-	
+
 	// 应该返回错误
 	if err == nil {
 		t.Error("Expected error")
@@ -422,160 +422,6 @@ func TestDelegateManager_HandleDelegateParallelWithTasks(t *testing.T) {
 
 	result, err := dm.handleDelegateParallel(args)
 	t.Logf("handleDelegateParallel with tasks: %s, err: %v", result, err)
-}
-
-// TestMCPClient_NewMCPClient 测试创建 MCP 客户端
-func TestMCPClient_NewMCPClient(t *testing.T) {
-	tmpDir := t.TempDir()
-	_, err := config.NewManagerWithDir(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create config manager: %v", err)
-	}
-
-	client := NewMCPClient()
-
-	if client == nil {
-		t.Fatal("NewMCPClient should not return nil")
-	}
-
-	if client.servers == nil {
-		t.Error("servers map should be initialized")
-	}
-
-	if client.client == nil {
-		t.Error("http client should be initialized")
-	}
-}
-
-// TestMCPClient_AddServer 测试添加服务器
-func TestMCPClient_AddServer(t *testing.T) {
-	tmpDir := t.TempDir()
-	_, err := config.NewManagerWithDir(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create config manager: %v", err)
-	}
-
-	client := NewMCPClient()
-
-	cfg := MCPServerConfig{
-		Name: "test-server",
-		URL:  "http://localhost:8080",
-	}
-
-	client.AddServer(cfg)
-
-	// 验证服务器已添加
-	client.mu.RLock()
-	_, exists := client.servers["test-server"]
-	client.mu.RUnlock()
-
-	if !exists {
-		t.Error("Server should be added")
-	}
-}
-
-// TestMCPClient_RemoveServer 测试移除服务器
-func TestMCPClient_RemoveServer(t *testing.T) {
-	tmpDir := t.TempDir()
-	_, err := config.NewManagerWithDir(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create config manager: %v", err)
-	}
-
-	client := NewMCPClient()
-
-	// 先添加
-	cfg := MCPServerConfig{
-		Name: "to-remove",
-		URL:  "http://localhost:8080",
-	}
-	client.AddServer(cfg)
-
-	// 再移除
-	client.RemoveServer("to-remove")
-
-	// 验证已移除
-	client.mu.RLock()
-	_, exists := client.servers["to-remove"]
-	client.mu.RUnlock()
-
-	if exists {
-		t.Error("Server should be removed")
-	}
-}
-
-// TestMCPClient_ListServers 测试列出服务器
-func TestMCPClient_ListServers(t *testing.T) {
-	tmpDir := t.TempDir()
-	_, err := config.NewManagerWithDir(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create config manager: %v", err)
-	}
-
-	client := NewMCPClient()
-
-	// 添加两个服务器
-	client.AddServer(MCPServerConfig{Name: "server1", URL: "http://localhost:8081"})
-	client.AddServer(MCPServerConfig{Name: "server2", URL: "http://localhost:8082"})
-
-	servers := client.ListServers()
-
-	if len(servers) != 2 {
-		t.Errorf("Expected 2 servers, got %d", len(servers))
-	}
-
-	t.Logf("Listed %d servers", len(servers))
-}
-
-// TestMCPClient_RemoveNonexistent 测试移除不存在的服务器
-func TestMCPClient_RemoveNonexistent(t *testing.T) {
-	tmpDir := t.TempDir()
-	_, err := config.NewManagerWithDir(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create config manager: %v", err)
-	}
-
-	client := NewMCPClient()
-
-	// 移除不存在的服务器不应 panic
-	client.RemoveServer("nonexistent")
-	t.Log("RemoveServer on nonexistent server completed without panic")
-}
-
-// TestMCPClient_MultipleOperations 测试多个操作
-func TestMCPClient_MultipleOperations(t *testing.T) {
-	tmpDir := t.TempDir()
-	_, err := config.NewManagerWithDir(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create config manager: %v", err)
-	}
-
-	client := NewMCPClient()
-
-	// 添加多个服务器
-	for i := 0; i < 5; i++ {
-		client.AddServer(MCPServerConfig{
-			Name: fmt.Sprintf("server-%d", i),
-			URL:  fmt.Sprintf("http://localhost:%d", 8080+i),
-		})
-	}
-
-	// 列出现在应该有 5 个
-	servers := client.ListServers()
-	if len(servers) != 5 {
-		t.Errorf("Expected 5 servers, got %d", len(servers))
-	}
-
-	// 移除一个
-	client.RemoveServer("server-2")
-
-	// 再列出应该有 4 个
-	servers = client.ListServers()
-	if len(servers) != 4 {
-		t.Errorf("Expected 4 servers after removal, got %d", len(servers))
-	}
-
-	t.Logf("Final server count: %d", len(servers))
 }
 
 // TestGateway_Getters 测试 Gateway 的 Getter 方法
@@ -708,7 +554,7 @@ func TestSearchWithBraveEntries_NoAPIKey(t *testing.T) {
 	}
 
 	_, err := searchWithBraveEntries(cfg, "test query", 5)
-	
+
 	// 应该返回 "no API key" 错误
 	if err == nil {
 		t.Fatal("Expected error when no API key")
@@ -731,7 +577,7 @@ func TestSearchWithBraveEntries_WithAPIKey(t *testing.T) {
 	// 由于实际会调用 curl，这里主要测试配置逻辑
 	// 实际测试会因网络或 API key 无效而失败，这是预期的
 	_, err := searchWithBraveEntries(cfg, "test query", 5)
-	
+
 	// 可能失败 (API key 无效或网络问题)，但函数应该能执行
 	t.Logf("searchWithBraveEntries with mock key: %v", err)
 }

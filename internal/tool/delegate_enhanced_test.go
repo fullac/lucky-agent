@@ -104,6 +104,12 @@ func TestDelegateToSkill(t *testing.T) {
 
 func TestDelegateToMCP(t *testing.T) {
 	dm := NewDelegateManager(DefaultDelegateConfig())
+	dm.SetMCPExecutor(func(ctx context.Context, server, name string, args map[string]any) (string, error) {
+		if server != "test-server" || name != "search" || args["query"] != "test" {
+			t.Error("MCP delegation lost arguments")
+		}
+		return "executed", nil
+	})
 
 	task, err := dm.DelegateToMCP(context.Background(), "test-server", "search", map[string]any{"query": "test"}, PriorityHigh)
 	if err != nil {
@@ -125,6 +131,9 @@ func TestDelegateToMCP(t *testing.T) {
 	}
 	if completedTask.Status != StatusCompleted {
 		t.Errorf("expected completed, got %s", completedTask.Status)
+	}
+	if completedTask.Result != "executed" {
+		t.Errorf("expected real executor result, got %q", completedTask.Result)
 	}
 }
 

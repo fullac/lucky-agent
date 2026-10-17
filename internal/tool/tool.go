@@ -45,9 +45,11 @@ const (
 
 // Tool 代表一个可调用的工具
 type Tool struct {
-	Name            string
-	Description     string
-	Parameters      map[string]Param
+	Name        string
+	Description string
+	Parameters  map[string]Param
+	// InputSchema preserves a provider's complete JSON Schema, including $defs.
+	InputSchema     map[string]any
 	Handler         func(args map[string]any) (string, error)
 	DetailedHandler func(args map[string]any) (ToolCallResult, error)
 	// ContextDetailedHandler is used by tools that need request/session metadata
@@ -59,9 +61,9 @@ type Tool struct {
 	// A tool that mixes read and write actions uses this so a read does not
 	// inherit the approval required by a write.
 	PermissionFor func(args map[string]any) PermissionLevel
-	Category               Category        // 工具分类
-	Source                 string          // 来源（skill名/mcp server名/builtin）
-	Enabled                bool            // 是否启用
+	Category      Category // 工具分类
+	Source        string   // 来源（skill名/mcp server名/builtin）
+	Enabled       bool     // 是否启用
 	// ShellAware 标记该工具需要 shell 上下文注入（cwd + env）
 	ShellAware bool
 	// ParallelSafe 标记该工具可安全并发执行（无状态、无副作用冲突）
@@ -172,6 +174,9 @@ func (t *Tool) ToOpenAIFormat() map[string]any {
 	} else {
 		params["required"] = []string{}
 	}
+	if t.InputSchema != nil {
+		params = t.InputSchema
+	}
 
 	return map[string]any{
 		"type": "function",
@@ -247,6 +252,42 @@ func (r *Registry) Register(tool *Tool) {
 	defer r.mu.Unlock()
 	tool.Enabled = true
 	r.tools[tool.Name] = tool
+}
+
+// ReplaceCategory publishes a complete external catalog atomically. A name
+// collision with another category leaves the previous catalog untouched.
+func (r *Registry) ReplaceCategory(category Category, tools []*Tool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next := make(map[string]*Tool, len(tools))
+	for _, t := range tools {
+		if t == nil || t.Name == "" || t.Category != category {
+			return fmt.Errorf("invalid %s tool catalog", category)
+		}
+		if _, exists := next[t.Name]; exists {
+			return fmt.Errorf("duplicate tool %q", t.Name)
+		}
+		if old := r.tools[t.Name]; old != nil && old.Category != category {
+			return fmt.Errorf("tool name %q already registered", t.Name)
+		}
+		t.Enabled = true
+		if old := r.tools[t.Name]; old != nil {
+			t.Enabled = old.Enabled
+		}
+		next[t.Name] = t
+	}
+	for name, t := range r.tools {
+		if t.Category == category {
+			delete(r.tools, name)
+			if next[name] == nil {
+				delete(r.permConf, name)
+			}
+		}
+	}
+	for name, t := range next {
+		r.tools[name] = t
+	}
+	return nil
 }
 
 // Unregister 注销工具
@@ -332,27 +373,8 @@ func (r *Registry) ListModelVisible() []*Tool {
 
 // Call 调用工具
 func (r *Registry) Call(name string, args map[string]any) (string, error) {
-	r.mu.RLock()
-	t, name, ok := r.lookupToolLocked(name)
-	r.mu.RUnlock()
-
-	if !ok {
-		return "", ErrToolNotFound{name: name}
-	}
-	if !t.Enabled {
-		return "", ErrToolDisabled{name: name}
-	}
-
-	// 检查权限覆盖
-	perm := t.Permission
-	if override, has := r.permConf[name]; has {
-		perm = override
-	}
-	if perm == PermDeny {
-		return "", ErrToolDenied{name: name}
-	}
-
-	return t.Handler(args)
+	result, err := r.CallDetailedWithContext(name, args, ExecutionContext{Context: context.Background()})
+	return result.Output, err
 }
 
 // CallWithContext dispatches a context-aware handler and returns its text
@@ -369,23 +391,9 @@ func (r *Registry) CallDetailed(name string, args map[string]any) (ToolCallResul
 // CallDetailedWithContext dispatches a tool while preserving request-local
 // context. Context-aware handlers take precedence over legacy handlers.
 func (r *Registry) CallDetailedWithContext(name string, args map[string]any, exec ExecutionContext) (ToolCallResult, error) {
-	r.mu.RLock()
-	t, name, ok := r.lookupToolLocked(name)
-	r.mu.RUnlock()
-
-	if !ok {
-		return ToolCallResult{}, ErrToolNotFound{name: name}
-	}
-	if !t.Enabled {
-		return ToolCallResult{}, ErrToolDisabled{name: name}
-	}
-
-	perm := t.Permission
-	if override, has := r.permConf[name]; has {
-		perm = override
-	}
-	if perm == PermDeny {
-		return ToolCallResult{}, ErrToolDenied{name: name}
+	t, err := r.executableTool(name)
+	if err != nil {
+		return ToolCallResult{}, err
 	}
 	if exec.Context == nil {
 		exec.Context = context.Background()
@@ -412,36 +420,8 @@ type ShellContext struct {
 // CallWithShellContext 执行工具并注入 shell 上下文
 // 对于 ShellAware 的工具，自动在 args 中注入 _cwd 和 _env
 func (r *Registry) CallWithShellContext(name string, args map[string]any, sc *ShellContext) (string, error) {
-	r.mu.RLock()
-	t, name, ok := r.lookupToolLocked(name)
-	r.mu.RUnlock()
-
-	if !ok {
-		return "", ErrToolNotFound{name: name}
-	}
-	if !t.Enabled {
-		return "", ErrToolDisabled{name: name}
-	}
-
-	// 检查权限覆盖
-	perm := t.Permission
-	if override, has := r.permConf[name]; has {
-		perm = override
-	}
-	if perm == PermDeny {
-		return "", ErrToolDenied{name: name}
-	}
-
-	// 注入 shell 上下文
-	if t.ShellAware && sc != nil {
-		if args == nil {
-			args = make(map[string]any)
-		}
-		args["_cwd"] = sc.Cwd
-		args["_env"] = sc.Env
-	}
-
-	return t.Handler(args)
+	result, err := r.CallDetailedWithShellExecutionContext(name, args, sc, ExecutionContext{Context: context.Background()})
+	return result.Output, err
 }
 
 func (r *Registry) CallDetailedWithShellContext(name string, args map[string]any, sc *ShellContext) (ToolCallResult, error) {
@@ -451,25 +431,10 @@ func (r *Registry) CallDetailedWithShellContext(name string, args map[string]any
 // CallDetailedWithShellExecutionContext combines shell injection and
 // request-local context for context-aware tools.
 func (r *Registry) CallDetailedWithShellExecutionContext(name string, args map[string]any, sc *ShellContext, exec ExecutionContext) (ToolCallResult, error) {
-	r.mu.RLock()
-	t, name, ok := r.lookupToolLocked(name)
-	r.mu.RUnlock()
-
-	if !ok {
-		return ToolCallResult{}, ErrToolNotFound{name: name}
+	t, err := r.executableTool(name)
+	if err != nil {
+		return ToolCallResult{}, err
 	}
-	if !t.Enabled {
-		return ToolCallResult{}, ErrToolDisabled{name: name}
-	}
-
-	perm := t.Permission
-	if override, has := r.permConf[name]; has {
-		perm = override
-	}
-	if perm == PermDeny {
-		return ToolCallResult{}, ErrToolDenied{name: name}
-	}
-
 	if t.ShellAware && sc != nil {
 		if args == nil {
 			args = make(map[string]any)
@@ -491,6 +456,28 @@ func (r *Registry) CallDetailedWithShellExecutionContext(name string, args map[s
 	}
 	out, err := t.Handler(args)
 	return ToolCallResult{Output: out}, err
+}
+
+// executableTool snapshots execution policy while holding the registry lock.
+// Handlers run after release so an external catalog can refresh concurrently.
+func (r *Registry) executableTool(name string) (*Tool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, canonical, ok := r.lookupToolLocked(name)
+	if !ok {
+		return nil, ErrToolNotFound{name: name}
+	}
+	if !t.Enabled {
+		return nil, ErrToolDisabled{name: canonical}
+	}
+	perm := t.Permission
+	if override, has := r.permConf[canonical]; has {
+		perm = override
+	}
+	if perm == PermDeny {
+		return nil, ErrToolDenied{name: canonical}
+	}
+	return t, nil
 }
 
 func (r *Registry) lookupToolLocked(name string) (*Tool, string, bool) {

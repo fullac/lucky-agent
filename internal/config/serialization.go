@@ -9,6 +9,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*plain)(c)); err != nil {
 		return err
 	}
+	if err := c.MCP.Validate(); err != nil {
+		return err
+	}
 	var source struct {
 		LLM struct {
 			Model  *string `json:"model"`
@@ -28,6 +31,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 // readable and serve existing in-process consumers, but are never persisted
 // alongside their replacements or exposed as duplicate controls in the API.
 func (c Config) MarshalJSON() ([]byte, error) {
+	if err := c.MCP.Validate(); err != nil {
+		return nil, err
+	}
 	if err := validateModelConfig(&c); err != nil {
 		return nil, err
 	}

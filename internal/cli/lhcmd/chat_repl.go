@@ -14,6 +14,7 @@ import (
 	"github.com/yurika0211/luckyagent/internal/config"
 	"github.com/yurika0211/luckyagent/internal/contextx"
 	"github.com/yurika0211/luckyagent/internal/cron"
+	"github.com/yurika0211/luckyagent/internal/mcpclient"
 	"github.com/yurika0211/luckyagent/internal/memory"
 	"github.com/yurika0211/luckyagent/internal/server"
 	"github.com/yurika0211/luckyagent/internal/session"
@@ -153,6 +154,7 @@ func startREPL(mgr *config.Manager) error {
 // handleCommand 处理 REPL 命令
 type replCommandContext struct {
 	agent          *agent.Agent
+	mcpAdmin       mcpclient.Admin
 	loopCfg        *agent.LoopConfig
 	cronEngine     *cron.Engine
 	cronStore      *cron.Store
@@ -176,7 +178,7 @@ func buildREPLCommandRegistry() map[string]replCommandFunc {
 		fmt.Println("  /soul              显示当前 SOUL")
 		fmt.Println("  /tools             列出可用工具 (含权限)")
 		fmt.Println("  /skills [dir]      加载 Skill 插件")
-		fmt.Println("  /mcp <name> <url>  连接 MCP Server")
+		fmt.Println("  /mcp status|connect|refresh|disconnect  管理 MCP 服务")
 		fmt.Println("  /approve <tool>    设置工具自动批准")
 		fmt.Println("  /deny <tool>       禁止工具使用")
 		fmt.Println("  /remember [x]      保存中期记忆")
@@ -462,16 +464,11 @@ func buildREPLCommandRegistry() map[string]replCommandFunc {
 			return true, false
 		},
 		"/mcp": func(ctx replCommandContext, arg string) (bool, bool) {
-			parts := strings.Fields(arg)
-			if len(parts) < 2 {
-				fmt.Println("用法: /mcp <name> <url> [api_key]")
+			message, err := mcpclient.RunCommand(context.Background(), ctx.mcpAdmin, arg)
+			if err != nil {
+				fmt.Printf("❌ %v\n", err)
 			} else {
-				apiKey := ""
-				if len(parts) > 2 {
-					apiKey = parts[2]
-				}
-				ctx.agent.ConnectMCPServer(parts[0], parts[1], apiKey)
-				fmt.Printf("✅ 已连接 MCP Server: %s (%s)\n", parts[0], parts[1])
+				fmt.Println(message)
 			}
 			return true, false
 		},
@@ -540,6 +537,7 @@ func handleCommand(input string, a *agent.Agent, loopCfg *agent.LoopConfig, cron
 
 	ctx := replCommandContext{
 		agent:          a,
+		mcpAdmin:       a.MCPAdmin(),
 		loopCfg:        loopCfg,
 		cronEngine:     cronEngine,
 		cronStore:      cronStore,
@@ -721,13 +719,13 @@ func currentSessionID(currentSession **session.Session) string {
 	return strings.TrimSpace((*currentSession).ID)
 }
 
-	func callCronMutationTool(a *agent.Agent, action, id string) error {
-		if a == nil || a.Tools() == nil {
-			return fmt.Errorf("agent cron service is not initialized")
-		}
-		_, err := a.Tools().Call("cron", map[string]any{"action": action, "id": id})
-		return err
+func callCronMutationTool(a *agent.Agent, action, id string) error {
+	if a == nil || a.Tools() == nil {
+		return fmt.Errorf("agent cron service is not initialized")
 	}
+	_, err := a.Tools().Call("cron", map[string]any{"action": action, "id": id})
+	return err
+}
 
 func saveCronStore(store *cron.Store, engine *cron.Engine) error {
 	if store == nil {

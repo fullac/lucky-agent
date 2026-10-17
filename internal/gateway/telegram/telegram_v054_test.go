@@ -3486,8 +3486,6 @@ func (m *mockAgentProvider) RAG() *rag.RAGManager {
 	return m.ragVal
 }
 
-func (m *mockAgentProvider) ConnectMCPServer(name, url, apiKey string) {}
-
 func (m *mockAgentProvider) ContextWindowConfig() contextWindowSnapshot {
 	return contextWindowSnapshot{
 		MaxTokens:            4096,
