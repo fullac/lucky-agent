@@ -118,6 +118,10 @@ github.com/yurika0211/aestus v0.0.0-20261017090734-cc0d63209532 h1:dfLSr9+YLIdSH
 github.com/yurika0211/aestus v0.0.0-20261017090734-cc0d63209532/go.mod h1:xG8WJ/alq0XpbVK6A+uRCHpsV8uO9E5eYuwuAlnYYTo=
 github.com/yurika0211/aestus v0.0.0-20261017093339-9361afb4f42d h1:7A1lmBlqXFyGeybLw+MDNjE2OiwaeZ1gbWEZHzl9BBY=
 github.com/yurika0211/aestus v0.0.0-20261017093339-9361afb4f42d/go.mod h1:xG8WJ/alq0XpbVK6A+uRCHpsV8uO9E5eYuwuAlnYYTo=
+github.com/yurika0211/luckyagent-api v0.1.0 h1:apI0TNhI7jywRBstQYiJ1LD1Q61Z7mPpjs9pV5TMv+o=
+github.com/yurika0211/luckyagent-api v0.1.0/go.mod h1:KoNEyerqA9nUPFwBbmpzHI+zmruNEr1p0m6A608AXSE=
+github.com/yurika0211/luckyagent-gateway v0.1.0 h1:x4Q6wKWkD5rnLb6G4zDyNGrFnUmeT4/nbe5HkI56JYI=
+github.com/yurika0211/luckyagent-gateway v0.1.0/go.mod h1:EpstB7jqMpExz/ya/DEcXdsvw1ZOSOU2n6dW3Ln6j8w=
 go.mongodb.org/mongo-driver/v2 v2.5.0 h1:yXUhImUjjAInNcpTcAlPHiT7bIXhshCTL3jVBkF3xaE=
 go.mongodb.org/mongo-driver/v2 v2.5.0/go.mod h1:yOI9kBsufol30iFsl1slpdq1I0eHPzybRWdyYUs8K/0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
