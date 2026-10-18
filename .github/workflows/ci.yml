@@ -33,16 +33,16 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p test_agent_graph_parity.py
           if [[ "$EVENT_REF" == refs/tags/* ]]; then
-            python3 scripts/verify-agent-graph.py --output .ci-agent-graph.json
+            python3 scripts/verify-agent-graph.py --output ci-agent-graph.json
           else
-            python3 scripts/verify-agent-graph.py --report-only --output .ci-agent-graph.json
+            python3 scripts/verify-agent-graph.py --report-only --output ci-agent-graph.json
           fi
       - name: Retain selected Agent graph evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: agent-graph-parity
-          path: .ci-agent-graph.json
+          path: ci-agent-graph.json
           if-no-files-found: error
       - name: Agent request and completion contracts
         run: python3 scripts/run-agent-contracts.py leaf
