@@ -1398,6 +1398,9 @@ func truncateToolResultForContext(out string, limit int) string {
 extractRequiredToolNames 从用户输入中提取被显式点名要求使用的工具名。
 */
 func (a *Agent) extractRequiredToolNames(input string) []string {
+	if a == nil || a.tools == nil {
+		return nil
+	}
 	type hit struct {
 		name string
 		pos  int
@@ -1983,7 +1986,7 @@ func (a *Agent) ParallelSummarize(messages []provider.Message) ([]provider.Messa
 			{Role: "user", Content: prompt},
 		}
 
-		resp, err := turnProvider.provider.Chat(ctx, messages)
+		resp, err := a.chatLoopIteration(ctx, messages, provider.CallOptions{}, true, turnProvider)
 		if err != nil {
 			resultCh <- summarizeResult{summary: "", err: err}
 			return
@@ -1999,7 +2002,7 @@ func (a *Agent) ParallelSummarize(messages []provider.Message) ([]provider.Messa
 			{Role: "user", Content: prompt},
 		}
 
-		resp, err := turnProvider.provider.Chat(ctx, messages)
+		resp, err := a.chatLoopIteration(ctx, messages, provider.CallOptions{}, true, turnProvider)
 		if err != nil {
 			resultCh <- summarizeResult{summary: "", err: err}
 			return

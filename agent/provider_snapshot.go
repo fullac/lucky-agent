@@ -15,6 +15,8 @@ import (
 // depend on scheduling.  A snapshot keeps the provider and the metadata that
 // describes it together for the whole turn.
 type providerSnapshot struct {
+	budget        *modelRequestBudget
+	requiredTools []string
 	primaryVision *bool
 	provider      provider.Provider
 	model         string
@@ -37,7 +39,11 @@ func (s providerSnapshot) name() string {
 // returned value must be passed down the loop/stream call chain and treated as
 // immutable.
 func (a *Agent) providerSnapshotForTurn(userInput string) (snapshot providerSnapshot) {
+	budget := a.requestBudget()
+	required := a.extractRequiredToolNames(userInput)
 	defer func() {
+		snapshot.budget = budget
+		snapshot.requiredTools = required
 		if a != nil {
 			primary := newContextPlannerWithProvider(a, defaultContextBuildOptions(), snapshot).supportsImageContentParts()
 			snapshot.primaryVision = &primary
@@ -112,6 +118,7 @@ func (a *Agent) baseProviderSnapshot() providerSnapshot {
 		apiBase:  a.activeAPIBase,
 	}
 	a.providerMu.RUnlock()
+	snapshot.budget = a.requestBudget()
 	return snapshot
 }
 

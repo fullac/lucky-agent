@@ -412,10 +412,10 @@ func (a *Agent) ProgressFeedbackWithPrompt(ctx context.Context, userInput string
 	}
 	userPrompt.WriteString("\nWrite a single progress update for the user that clearly continues from the previous updates and focuses on what changed.")
 
-	resp, err := turnProvider.provider.Chat(ctx, []provider.Message{
+	resp, err := a.chatLoopIteration(ctx, []provider.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt.String()},
-	})
+	}, provider.CallOptions{}, true, turnProvider)
 	if err != nil {
 		return "", err
 	}
@@ -609,7 +609,7 @@ func (a *Agent) chatStreamSimpleInputWithProvider(ctx context.Context, sess *ses
 	messages := a.buildContextMessagesForInputWithProvider(ctx, sess, input, defaultContextBuildOptions(), turnProvider)
 
 	// 调用 Provider
-	ch, err := turnProvider.provider.ChatStream(ctx, messages)
+	ch, err := a.streamLoopIteration(ctx, messages, provider.CallOptions{}, true, turnProvider)
 	if err != nil {
 		return "", fmt.Errorf("chat: %w", err)
 	}
@@ -2521,6 +2521,9 @@ func (a *Agent) buildMemoryContext(messages []provider.Message) []provider.Messa
 // need to include volatile short-term summaries. Persistent memory remains
 // process-wide by design; only the short-term window is keyed by sess.ID.
 func (a *Agent) buildMemoryContextForSession(sess *session.Session, messages []provider.Message) []provider.Message {
+	if a.memory == nil {
+		return messages
+	}
 	var memCtx strings.Builder
 
 	// 长期记忆：全部注入（核心身份/偏好）
@@ -2619,7 +2622,7 @@ func (a *Agent) saveConversationMemoryFromSession(sess *session.Session, turnInp
 	}
 
 	userCategory := inferCategory(userInput)
-	if shouldPersistUserTurnMemory(userCategory, userInput) {
+	if a.memory != nil && shouldPersistUserTurnMemory(userCategory, userInput) {
 		userImportance := inferImportance(userInput)
 		content := utils.TrimToRunes(userInput, 180)
 		tags := turnInput.Scope.MemoryTags()
@@ -2766,6 +2769,9 @@ func (a *Agent) RecallMidTerm(query string, topK int) []memory.SessionSummary {
 
 // MemoryStats 返回记忆统计
 func (a *Agent) MemoryStats() map[memory.Tier]int {
+	if a.memory == nil {
+		return nil
+	}
 	return a.memory.Stats()
 }
 
@@ -2779,11 +2785,17 @@ func (a *Agent) TidalMemoryStats() (diagnostic.TidalStoreStats, bool, error) {
 
 // DecayMemory 执行记忆衰减
 func (a *Agent) DecayMemory(threshold float64) int {
+	if a.memory == nil {
+		return 0
+	}
 	return a.memory.Decay(threshold)
 }
 
 // PromoteMemory 提升记忆层级
 func (a *Agent) PromoteMemory(id string) error {
+	if a.memory == nil {
+		return fmt.Errorf("memory is not configured")
+	}
 	return a.memory.Promote(id)
 }
 

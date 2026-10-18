@@ -1594,10 +1594,14 @@ func (p *contextPlanner) tryLLMConversationSummary(ctx context.Context, sess *se
 
 	sumCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	resp, err := p.turnProvider.provider.Chat(sumCtx, []provider.Message{
+	messagesToSummarize := []provider.Message{
 		{Role: "system", Content: "You compress prior conversation into a compact working-memory summary for an autonomous coding assistant."},
 		{Role: "user", Content: prompt},
-	})
+	}
+	if err := p.turnProvider.budget.check(messagesToSummarize, provider.CallOptions{}); err != nil {
+		return ""
+	}
+	resp, err := p.turnProvider.provider.Chat(sumCtx, messagesToSummarize)
 	if err != nil || resp == nil {
 		return ""
 	}

@@ -77,6 +77,7 @@ func (a *Agent) resolveCompactProvider(turnProvider providerSnapshot) providerSn
 		apiBase = turnProvider.apiBase
 	}
 	return providerSnapshot{
+		budget:   turnProvider.budget,
 		provider: wrapProviderWithMiddleware(p, cfg),
 		model:    model,
 		apiBase:  apiBase,
@@ -103,7 +104,7 @@ func (a *Agent) generateMapReduceCompactSummary(ctx context.Context, messages []
 		Estimator: est, Text: compactTextOptions(), Logger: logger.GetLogger(),
 		OnProgress: func(progress compactlib.Progress) { emitCompactProgress(opts, progress) },
 		Chat: func(ctx context.Context, request compactlib.ChatRequest) (string, error) {
-			response, err := snap.provider.Chat(ctx, []provider.Message{{Role: "system", Content: request.SystemPrompt}, {Role: "user", Content: request.UserPrompt}})
+			response, err := a.chatLoopIteration(ctx, []provider.Message{{Role: "system", Content: request.SystemPrompt}, {Role: "user", Content: request.UserPrompt}}, provider.CallOptions{}, true, snap)
 			if err != nil {
 				return "", err
 			}

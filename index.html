@@ -1323,7 +1323,7 @@
                 description: '控制历史消息、自动压缩、工具循环和调试行为。长任务保留有界归档摘要及完整工具轮次，可用 context_history_read 读回当前会话证据；执行账本与独立验收区分计划和实际进展。',
                 fields: [
                   { field: 'context.max_history_turns', example: '50', description: '最多带入的历史对话轮数。' },
-                  { field: 'context.max_context_tokens', example: '8000', description: '统一上下文上限，供规划、自动压缩、持久任务继续执行及验收使用；扣除 reserved_ratio 后才是输入预算。文本计数是估算，不含完整工具 schema/图片费用。' },
+                  { field: 'context.max_context_tokens', example: '8000', description: '统一上下文上限；扣除 reserved_ratio 后为输入预算。普通/结构化文本与工具 schema 共同计入；工具多时按任务选择定义，必需工具放不下会提前报错。图片使用估算余量。' },
                   { field: 'context_budget.reserved_ratio', example: '0.25', description: '从统一上下文上限为回复预留的比例。默认 8000 预留 2000，可用输入约 6000 token。' },
                   { field: 'context.compression_threshold', example: '0.8', description: '历史上下文达到预算比例后触发压缩判断。' },
                   { field: 'context.auto_compact', example: 'true', description: '是否自动压缩过长的对话上下文。' },
@@ -1342,7 +1342,7 @@
                   { field: 'context.memory_hygiene_max_findings', example: '25', description: '单次最多处理的问题数。' },
                   { field: 'agent.max_iterations', example: '10', description: '每段执行的最大循环步数。前台保障开启时在当前请求内从检查点续跑，模型调用、工具批次和验收均计入步数。' },
                   { field: 'agent.timeout_seconds', example: '60', description: '单次模型调用的超时时间，不是整个前台任务的期限。' },
-                  { field: 'agent.foreground.enabled', example: 'true', description: '普通前台对话默认保存检查点、按段续跑并验收工具任务；取消或断线即停止，不会转入后台。' },
+                  { field: 'agent.foreground.enabled', example: 'true', description: '前台对话保存检查点并验收工具任务；早期未解决失败持续参与验收，每条验收条件需要具体证据。取消或断线即停止。' },
                   { field: 'agent.foreground.max_slices', example: '48', description: '一次前台执行预算允许的片段总数，包含失败重试；用尽后报告未完成并保留恢复记录。' },
                   { field: 'agent.foreground.max_total_seconds', example: '3600', description: '前台执行总墙钟期限，包含模型、工具、验收和重试等待；显式恢复授予新的有界预算。' },
                   { field: 'agent.foreground.max_retries', example: '3', description: '模型或验收失败的额外重试次数，0 表示不重试；按 1 秒起步指数退避，最多 30 秒。工具结果不明时先阻塞核对。' },

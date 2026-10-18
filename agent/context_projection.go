@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/yurika0211/luckyagent-runtime/bootstrap"
-	"github.com/yurika0211/luckyagent-runtime/contextx"
 	"github.com/yurika0211/luckyagent-runtime/provider"
 	"github.com/yurika0211/luckyagent-runtime/session"
 )
@@ -142,20 +141,5 @@ func (a *Agent) projectToolEvidence(messages []provider.Message) []provider.Mess
 }
 
 func (a *Agent) ensureContextFits(messages []provider.Message) error {
-	if a == nil || (a.contextWin == nil && a.cfg == nil) {
-		return nil
-	}
-	for _, msg := range messages {
-		if len(msg.ContentParts) > 0 {
-			return nil
-		}
-	}
-	est := a.contextEst
-	if est == nil {
-		est = contextx.NewTokenEstimator(a.contextInputLimit())
-	}
-	if used := estimateProviderMessages(est, messages) + 4; used > a.contextInputLimit() {
-		return fmt.Errorf("current task and pinned instructions need about %d tokens; context input budget is %d (context.max_context_tokens after reply reserve)", used, a.contextInputLimit())
-	}
-	return nil
+	return a.ensureRequestFits(messages, provider.CallOptions{})
 }

@@ -37,6 +37,9 @@ published commit versions; never commit machine-specific replacements.
 
 `agent.NewWithDependencies(Options, *Dependencies)` binds prepared runtime
 components without backend construction, network startup or file writes.
+Only config, provider, sessions and the tool registry are required; memory and
+scheduler/child-task engines are optional. Request budget and completion proof
+policies live in separate services; preserve their sync/stream/recovery contracts.
 `Options.TakeOwnership` transfers cleanup only on successful construction.
 `StartupHooks` is inert until an application activates it. Default applications
 use `luckyagent-app/bootstrap.New`; legacy core New/NewWithMemory remain
@@ -100,6 +103,9 @@ both. The committed portable go.work selects the root and ./agent, so normal
 builds and Docker use the checked-out Agent source. Optional go.local.work files
 may select external app/runtime checkouts with an explicit GOWORK path; keep
 machine-specific paths out of go.work. Validate published pins with GOWORK=off.
+`scripts/verify-agent-graph.py` audits selected production-source parity;
+tag CI and Release require equality. `scripts/run-agent-contracts.py` checks
+that the selected graph contains and passes all named contracts.
 
 5. For an authorized merge, inspect checks on the current PR head and preserve
    concurrent mainline changes. Report missing/skipped checks explicitly.

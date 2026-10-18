@@ -36,6 +36,25 @@ Resources remain caller-owned unless `TakeOwnership` is true; ownership transfer
 only on successful construction. Closing an owned instance closes the prepared
 resource bundle once. Closing a borrowed instance leaves that bundle open.
 
+The minimum injected resources are configuration, a provider, a session manager,
+and a tool registry. Memory stores/summaries, RAG, tool services, delegate,
+autonomy, cron, MCP and media backends are optional. Missing optional engines are
+not constructed or registered. The core supplies in-memory context accounting,
+a tool gateway and metrics when these are absent. This reduces runtime setup;
+the existing Go module dependency graph still includes the full adapters.
+
+```go
+deps := &agent.Dependencies{Config: manager, Sessions: sessions}
+deps.Provider.Provider = model
+deps.Support.Tools = tools
+instance, err := agent.NewWithDependencies(agent.Options{}, deps)
+```
+
+Request budgeting and completion review have independent, storage-free service
+boundaries. Each turn captures its provider, input budget and explicitly required
+tools; subsequent requests in that turn keep that selection. Optional scheduler
+and child-task binding lives separately from core dependency validation.
+
 `New` and `NewWithMemory` remain compatibility convenience constructors for
 the default application lifecycle. New embeddings should use explicit
 dependencies; full applications can use `luckyagent-app/bootstrap.New`.

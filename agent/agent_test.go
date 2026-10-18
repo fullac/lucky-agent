@@ -2045,7 +2045,7 @@ func TestMaybeAutoCompactSessionWritesBoundary(t *testing.T) {
 		t.Fatalf("NewManagerWithDir: %v", err)
 	}
 	_ = cfg.Set("context.auto_compact", "true")
-	_ = cfg.Set("context.max_context_tokens", "50")
+	_ = cfg.Set("context.max_context_tokens", "2000")
 	_ = cfg.Set("context.auto_compact_threshold", "0.1")
 	_ = cfg.Set("context.auto_compact_min_messages", "2")
 	_ = cfg.Set("context.auto_compact_cooldown_turns", "1")
@@ -2126,7 +2126,7 @@ func TestMaybeAutoCompactSessionDegradesToLocalOnProviderFailure(t *testing.T) {
 		t.Fatalf("NewManagerWithDir: %v", err)
 	}
 	_ = cfg.Set("context.auto_compact", "true")
-	_ = cfg.Set("context.max_context_tokens", "50")
+	_ = cfg.Set("context.max_context_tokens", "2000")
 	_ = cfg.Set("context.auto_compact_threshold", "0.1")
 	_ = cfg.Set("context.auto_compact_min_messages", "2")
 	_ = cfg.Set("context.auto_compact_cooldown_turns", "1")
