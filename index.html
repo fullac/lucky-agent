@@ -1081,12 +1081,12 @@
               '小白用户可直接打开下载页选择系统安装包：./download.html。',
               '核心入口包括 lh chat、lh serve、lh msg-gateway start。',
               '部署路径包括源码运行、开发 Compose、生产 Compose 和镜像直跑。',
-              '服务健康检查固定为 GET /api/v1/health。',
+              '存活与就绪检查为 GET /api/v1/health/live 和 /api/v1/health/ready。',
               '运行时行为尽量以 config.json 为准，环境变量只做局部覆盖。'
             ],
             related: ['install-cli', 'config', 'runtime', 'source', 'dev-docker', 'prod-docker'],
             commands: [
-              { label: '最短验证链路', body: 'lh init\nlh config set provider openai\nlh config set api_key sk-your-api-key\nlh config set model gpt-5.4-mini\nlh chat "Hello"\nlh serve\ncurl http://127.0.0.1:9090/api/v1/health' }
+              { label: '最短验证链路', body: 'lh init\nlh config set provider openai\nlh config set api_key sk-your-api-key\nlh config set model gpt-5.4-mini\nlh chat "Hello"\nlh serve\ncurl http://127.0.0.1:9090/api/v1/health/live' }
             ]
           },
           {
@@ -1378,10 +1378,10 @@
                 description: 'server 提供 HTTP API 和 WebSocket。',
                 fields: [
                   { field: 'server.addr', example: '127.0.0.1:9090', description: 'HTTP API 监听地址；容器对外提供服务时通常填 0.0.0.0:9090。' },
-                  { field: 'server.api_keys', example: '[]', description: '访问 API 时允许的密钥数组；公网部署建议配置。' },
+                  { field: 'server.api_keys', example: '[]', description: '访问 API 的密钥数组；对外访问和反代必须配置。无密钥仅允许本机连接、loopback Host、同源 Origin 且无转发头。扫码临时 key 仍可使用。' },
                   { field: 'server.enable_cors', example: 'true', description: '是否启用跨域响应。' },
                   { field: 'server.cors_origins', example: '["*"]', description: '允许跨域的来源列表；生产环境不建议长期使用 *。' },
-                  { field: 'server.rate_limit', example: '60', description: 'HTTP API 每分钟请求上限。' },
+                  { field: 'server.rate_limit', example: '60', description: '每把凭据的每分钟业务请求额度；共用 key 的设备共用额度。认证尝试和公开健康探针使用独立额度。' },
                   { field: 'server.metrics_addr', example: '""', description: 'Prometheus 指标监听地址；留空表示不单独监听。' },
                   { field: 'server.log_level / log_format', example: 'info / text', description: '日志级别和格式，可按部署环境调整。' }
                 ]
@@ -1630,16 +1630,19 @@
             kind: 'core',
             x: 50,
             y: 48,
-            summary: 'lh serve 启动 HTTP API 服务。lh qr 会同时签发一把 24 小时临时 key，并在终端显示手机扫码用的二维码。API 重启后这把 key 立即失效。部署是否成功，先看 /api/v1/health。',
+            summary: 'lh serve 提供 HTTP、SSE 和 WebSocket。lh qr 签发的临时 key 默认 24 小时有效，API 重启后失效。部署先检查 /api/v1/health/live 和 /api/v1/health/ready。',
             points: [
               '本机调试可监听 127.0.0.1:9090。',
-              '容器或外部访问通常要监听 0.0.0.0:9090。',
-              'Docker healthcheck 走容器内部 http://127.0.0.1:9090/api/v1/health。',
+              '容器或外部访问通常监听 0.0.0.0:9090，并配置 server.api_keys；同机反代同样需要密钥。',
+              'JSON 请求默认限 2 MiB；超额返回 413，不支持的 Content-Type 返回 415。',
+              'WebSocket 相同会话和请求 ID 的重试复用原任务；不同输入报冲突。补发按已收到的 event_id 恢复。',
+              'SSE 区分 completed、failed、cancelled；错误不再跟随成功结束事件。SSE 本身不提供持久游标补发。',
+              'Docker healthcheck 走容器内部 http://127.0.0.1:9090/api/v1/health/live；detail 需要普通鉴权。',
               'Bot 已启动但外部访问不到 API 时，优先检查 server.addr。'
             ],
             related: ['source', 'dev-docker', 'prod-docker', 'telegram', 'napcat'],
             commands: [
-              { label: '启动和验证', body: 'lh serve --addr 127.0.0.1:9090\ncurl http://127.0.0.1:9090/api/v1/health' }
+              { label: '启动和验证', body: 'lh serve --addr 127.0.0.1:9090\ncurl http://127.0.0.1:9090/api/v1/health/live\ncurl http://127.0.0.1:9090/api/v1/health/ready' }
             ]
           },
           {
@@ -1789,7 +1792,7 @@
             ],
             related: ['troubleshooting', 'commands', 'telegram', 'napcat'],
             commands: [
-              { label: '常用检查命令', body: 'lh config list\ncurl http://127.0.0.1:9090/api/v1/health\ndocker compose logs -f luckyagent\ndocker compose logs -f luckyagent-napcat' }
+              { label: '常用检查命令', body: 'lh config list\ncurl http://127.0.0.1:9090/api/v1/health/live\ndocker compose logs -f luckyagent\ndocker compose logs -f luckyagent-napcat' }
             ]
           },
           {
