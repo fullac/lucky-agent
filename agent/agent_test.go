@@ -2095,13 +2095,13 @@ func TestMaybeAutoCompactSessionWritesBoundary(t *testing.T) {
 	}
 }
 
-func TestMaybeAutoCompactSessionSkipsShortSession(t *testing.T) {
+func TestMaybeAutoCompactSessionSkipsShortSessionWithinBudget(t *testing.T) {
 	cfg, err := config.NewManagerWithDir(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewManagerWithDir: %v", err)
 	}
 	_ = cfg.Set("context.auto_compact", "true")
-	_ = cfg.Set("context.max_context_tokens", "50")
+	_ = cfg.Set("context.max_context_tokens", "8000")
 	_ = cfg.Set("context.auto_compact_threshold", "0.1")
 	_ = cfg.Set("context.auto_compact_min_messages", "10")
 

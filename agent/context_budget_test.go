@@ -12,11 +12,11 @@ func TestDefaultContextBudgetMatchesHistoricalSplit(t *testing.T) {
 		t.Fatalf("expected max_tokens 4096, got %d", cfg.MaxTokens)
 	}
 	reserved := reservedTokensFor(cfg)
-	if reserved != 1024 {
-		t.Fatalf("expected reserved 1024, got %d", reserved)
+	if reserved != 2000 {
+		t.Fatalf("expected reserved 2000 from context limit, got %d", reserved)
 	}
-	budget := computeContextBudget(cfg.MaxTokens, reserved, contextBudgetShareFor(nil))
-	if budget.System != 460 || budget.Memory != 307 || budget.RAG != 614 || budget.History != 768 || budget.ToolResult != 921 {
+	budget := computeContextBudget(cfg.Context.MaxContextTokens, reserved, contextBudgetShareFor(nil))
+	if budget.System != 900 || budget.Memory != 600 || budget.RAG != 1200 || budget.History != 1500 || budget.ToolResult != 1800 {
 		t.Fatalf("default split changed: %+v", budget)
 	}
 }

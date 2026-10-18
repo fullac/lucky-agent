@@ -1049,6 +1049,9 @@ func (a *Agent) processToolCallBatch(
 			ToolCallID: execResult.ToolCall.ID,
 			Name:       execResult.ToolCall.Name,
 		}
+		if contextToolMsg.Content != execResult.Result {
+			contextToolMsg.Content += "\n[Full result: context_history_read action=result tool_call_id=" + execResult.ToolCall.ID + "]"
+		}
 		sig := toolCallSignature(tcLog.Name, tcLog.Arguments)
 		if previous, seen := loopState.toolCallLastResult[sig]; !seen || previous != tcLog.Result {
 			loopState.toolCallRepeatCount[sig] = 0
@@ -1537,6 +1540,7 @@ func (a *Agent) fitContextWindow(messages []provider.Message) []provider.Message
 			return messages
 		}
 	}
+	messages = a.projectToolEvidence(messages)
 	contextMessages := a.toContextMessages(messages)
 	fitted, trimResult := a.contextWin.Fit(contextMessages)
 	if trimResult.Trimmed {

@@ -101,6 +101,7 @@ func (p *contextPlanner) inspectResult(sess *session.Session, messages []provide
 		HeadroomTokens:  available - report.totalTokens,
 		Estimate:        "local",
 		Buckets: map[string]ContextInspectBucket{
+			"project":     {Tokens: report.bucketTokens["project"], Messages: report.bucketCounts["project"], Budget: p.budget.Project},
 			"system":      {Tokens: report.bucketTokens["system"], Messages: report.bucketCounts["system"], Budget: p.budget.System},
 			"history":     {Tokens: report.bucketTokens["history"], Messages: report.bucketCounts["history"], Budget: p.budget.History},
 			"memory":      {Tokens: report.bucketTokens["memory"], Messages: report.bucketCounts["memory"], Budget: p.budget.Memory},
@@ -117,7 +118,7 @@ func (p *contextPlanner) inspectResult(sess *session.Session, messages []provide
 			Role:    msg.Role,
 			Bucket:  classifyContextBucket(msg),
 			Label:   classifyContextLabel(msg),
-			Tokens:  p.est.Estimate(content) + 4,
+			Tokens:  estimateProviderMessages(p.est, []provider.Message{msg}),
 			Chars:   utf8.RuneCountInString(content),
 			Preview: previewContextText(content, 160),
 		}
@@ -140,6 +141,8 @@ func classifyContextLabel(msg provider.Message) string {
 		return "history"
 	}
 	switch {
+	case strings.HasPrefix(msg.Content, "[Project Context]"):
+		return "project_context"
 	case strings.HasPrefix(msg.Content, "[Available Tools]"):
 		return "tool_catalog"
 	case strings.HasPrefix(msg.Content, "[Core Memory"):

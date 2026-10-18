@@ -25,6 +25,9 @@ func (a *Agent) applyIntentToolGating(loopCfg *LoopConfig, routingText string) {
 	if !recognized {
 		return
 	}
+	// Reading the current session's own evidence remains available after a
+	// projection was shortened; explicit deny/allow policies still apply.
+	allowed["context_history_read"] = struct{}{}
 
 	explicit := makeToolNameSet(a.extractRequiredToolNames(routingText))
 	for name := range explicit {

@@ -148,6 +148,7 @@ func NewWithDependencies(opts Options, deps *Dependencies) (*Agent, error) {
 	})
 	supportRT.ToolServices.Heartbeat = tool.NewHeartbeatToolService(a.handleHeartbeatTrigger, a.handleHeartbeatStatus)
 	supportRT.ToolServices.RegisterCoreTools(supportRT.Tools)
+	a.registerContextHistoryTool()
 	if err := a.registerPluginTools(); err != nil {
 		return nil, fmt.Errorf("register plugin tools: %w", err)
 	}
