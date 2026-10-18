@@ -51,6 +51,7 @@ type Agent struct {
 	closeOnce        sync.Once
 	closeError       error
 	foregroundActive sync.Map // session ID -> active caller; removed when the request ends
+	sessionCalls     sync.Map // *sessionCall -> active model/tool request
 	loopMu           sync.Mutex
 	loop             *Loop
 	cfg              *config.Manager
@@ -490,7 +491,7 @@ func (a *Agent) chatWithSessionInput(ctx context.Context, sess *session.Session,
 
 	result, err := a.runLoopWithProviderSnapshot(ctx, sess, input, loopCfg, turnProvider)
 	if err != nil {
-		if loopCfg.Foreground || ctx.Err() != nil {
+		if loopCfg.Foreground || ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isSessionError(err) {
 			return "", err
 		}
 		// 如果 RunLoop 失败，回退到简单流式聊天
@@ -596,6 +597,11 @@ func (a *Agent) chatStreamSimpleInput(ctx context.Context, sess *session.Session
 }
 
 func (a *Agent) chatStreamSimpleInputWithProvider(ctx context.Context, sess *session.Session, input UserTurnInput, turnProvider providerSnapshot) (string, error) {
+	ctx, finish, err := a.beginSessionCall(ctx, sess)
+	if err != nil {
+		return "", err
+	}
+	defer finish()
 	input = input.Normalize()
 	if !turnProvider.valid() {
 		return "", fmt.Errorf("provider not initialized")
@@ -625,7 +631,9 @@ func (a *Agent) chatStreamSimpleInputWithProvider(ctx context.Context, sess *ses
 	}
 
 	response := utils.SanitizeToolProtocolOutput(result.String())
-	sess.AddProviderMessage(input.Message)
+	if err := sess.AddProviderMessageWithError(input.Message); err != nil {
+		return "", sessionError(err)
+	}
 	msg := provider.Message{Role: "assistant", Content: response}
 	if usageDetails != nil {
 		usage := &provider.TokenUsage{}
@@ -634,10 +642,14 @@ func (a *Agent) chatStreamSimpleInputWithProvider(ctx context.Context, sess *ses
 			msg.Usage = usage
 		}
 	}
-	sess.AddProviderMessage(msg)
+	if err := sess.AddProviderMessageWithError(msg); err != nil {
+		return "", sessionError(err)
+	}
 
 	// 保存会话
-	_ = sess.Save()
+	if err := sess.Save(); err != nil {
+		return "", sessionError(err)
+	}
 	a.maybeRollSession(sess)
 
 	// 自动记忆：将对话存为短期记忆（去重 + 智能分类 + 截断）。计数和
@@ -1393,14 +1405,31 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 	if !ok {
 		return nil, fmt.Errorf("session not found: %s", sessionID)
 	}
+	return a.ChatWithSessionStreamForSession(ctx, sess, input, loopCfg)
+}
+
+// ChatWithSessionStreamForSession retains the caller's original session handle
+// across scheduling. Reusing its ID after deletion cannot redirect this turn to
+// a replacement conversation.
+func (a *Agent) ChatWithSessionStreamForSession(ctx context.Context, sess *session.Session, input UserTurnInput, loopCfg LoopConfig) (<-chan ChatEvent, error) {
+	if sess == nil {
+		return nil, fmt.Errorf("session is nil")
+	}
+	sessionID := sess.ID
+	ctx, finish, err := a.beginSessionCall(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
 	input = a.expandPluginCommand(input)
 	routingText := input.RoutingText
 	turnProvider := a.providerSnapshotForTurn(routingText)
 	if !turnProvider.valid() {
+		finish()
 		return nil, fmt.Errorf("provider not initialized")
 	}
 	snapshot, snapshotErr := a.sandboxSnapshot(sess)
 	if snapshotErr != nil {
+		finish()
 		return nil, fmt.Errorf("prepare %s sandbox: %w", a.SandboxMode(), snapshotErr)
 	}
 	loopCfg.Sandbox = snapshot
@@ -1411,6 +1440,7 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 
 	go func() {
 		defer close(events)
+		defer finish()
 		defer snapshot.Close()
 
 		sanitizeLoopConfig(&loopCfg)
@@ -1459,7 +1489,10 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 		buildOpts.DisabledTools = append([]string(nil), loopCfg.DisabledTools...)
 		a.maybeAutoCompactSessionWithProvider(ctx, sess, routingText, loopCfg.Ephemeral, turnProvider, compactProgressEmitter(loopCfg))
 		messages := a.buildContextMessagesForInputWithProvider(ctx, sess, input, buildOpts, turnProvider)
-		sess.AddProviderMessage(input.Message)
+		if err := sess.AddProviderMessageWithError(input.Message); err != nil {
+			sendForegroundEvent(ctx, events, ChatEvent{Type: ChatEventError, Err: sessionError(err)})
+			return
+		}
 		callOpts := a.buildLoopCallOptions(routingText, loopCfg)
 
 		state := &streamConvergenceState{
@@ -1756,12 +1789,14 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 				ToolCalls:        toolCalls,
 			})
 			if sess != nil {
-				sess.AddProviderMessage(provider.Message{
+				if !appendStreamSessionMessage(events, sess, provider.Message{
 					Role:             "assistant",
 					Content:          assistantContent,
 					ReasoningContent: reasoning.String(),
 					ToolCalls:        toolCalls,
-				})
+				}) {
+					return
+				}
 			}
 
 			emitChatToolCallEvents(events, toolCalls)
@@ -1792,17 +1827,22 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 					Name:       execResult.ToolCall.Name,
 				})
 				if sess != nil {
-					sess.AddProviderMessage(provider.Message{
+					if !appendStreamSessionMessage(events, sess, provider.Message{
 						Role:       "tool",
 						Content:    execResult.Result,
 						ToolCallID: execResult.ToolCall.ID,
 						Name:       execResult.ToolCall.Name,
-					})
+					}) {
+						return
+					}
 				}
 				state.rememberToolCallResult(execResult.ToolCall.Name, execResult.ToolCall.Arguments, execResult.Result, execResult.Duration)
 			}
 			if sess != nil {
-				_ = sess.Save()
+				if err := sess.Save(); err != nil {
+					events <- ChatEvent{Type: ChatEventError, Err: sessionError(err)}
+					return
+				}
 			}
 
 			// 裁剪上下文，继续下一轮；保留最新 computer frame transiently。
@@ -2028,12 +2068,14 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 			ToolCalls:        resp.ToolCalls,
 		})
 		if sess != nil {
-			sess.AddProviderMessage(provider.Message{
+			if !appendStreamSessionMessage(events, sess, provider.Message{
 				Role:             "assistant",
 				Content:          resp.Content,
 				ReasoningContent: resp.ReasoningContent,
 				ToolCalls:        resp.ToolCalls,
-			})
+			}) {
+				return
+			}
 		}
 
 		emitChatToolCallEvents(events, resp.ToolCalls)
@@ -2064,17 +2106,22 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 				Name:       execResult.ToolCall.Name,
 			})
 			if sess != nil {
-				sess.AddProviderMessage(provider.Message{
+				if !appendStreamSessionMessage(events, sess, provider.Message{
 					Role:       "tool",
 					Content:    execResult.Result,
 					ToolCallID: execResult.ToolCall.ID,
 					Name:       execResult.ToolCall.Name,
-				})
+				}) {
+					return
+				}
 			}
 			state.rememberToolCallResult(execResult.ToolCall.Name, execResult.ToolCall.Arguments, execResult.Result, execResult.Duration)
 		}
 		if sess != nil {
-			_ = sess.Save()
+			if err := sess.Save(); err != nil {
+				events <- ChatEvent{Type: ChatEventError, Err: sessionError(err)}
+				return
+			}
 		}
 
 		// 裁剪上下文，递归继续；保留最新 computer frame transiently。
@@ -2221,8 +2268,14 @@ func (a *Agent) finalizeStreamWithUsage(events chan<- ChatEvent, sess *session.S
 			usageCopy := *usage
 			msg.Usage = &usageCopy
 		}
-		sess.AddProviderMessage(msg)
-		_ = sess.Save()
+		if err := sess.AddProviderMessageWithError(msg); err != nil {
+			events <- ChatEvent{Type: ChatEventError, Err: sessionError(err)}
+			return
+		}
+		if err := sess.Save(); err != nil {
+			events <- ChatEvent{Type: ChatEventError, Err: sessionError(err)}
+			return
+		}
 	}
 
 	maintenance := a.recordMemoryTurn(sess)
@@ -2271,6 +2324,10 @@ func (a *Agent) finalizeStreamAfterInterruption(
 	err error,
 	partial string,
 ) bool {
+	if errors.Is(context.Cause(ctx), errSessionCallCancelled) {
+		events <- ChatEvent{Type: ChatEventError, Err: context.Canceled}
+		return true
+	}
 	if state == nil {
 		return a.finalizeStreamInterruption(events, sess, turnInput, nil, err, partial)
 	}

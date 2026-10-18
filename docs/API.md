@@ -321,6 +321,14 @@ Patch body fields are optional, but at least one is required:
 
 An empty `title` is rejected. An empty `project` clears the group. Delete returns `{"id":"...","deleted":true}`.
 
+Metadata updates persist the sidecar without loading or rewriting the full
+history. A successful delete invalidates existing session handles and cancels
+active calls owned by this Agent, including this server's HTTP and WebSocket
+work. Accepted WebSocket queue items remain bound to the original handle and
+cannot recreate it after deletion. A filesystem failure returns an error and
+does not trigger task cancellation or clear the manager's live entry. External
+work stops when its provider or tool observes cancellation.
+
 Get-session query parameters:
 
 | Parameter | Description |
@@ -331,6 +339,12 @@ Get-session query parameters:
 | `all=1` | Legacy full history helper used by some clients |
 
 Response extras: `format`, `byte_size`, `content_truncated` (true when bodies were capped).
+
+History reads and tool traces return `500` for storage/decoding failures instead
+of an empty history. A previously fetched handle invalidated by concurrent
+deletion returns `410`; an unknown session ID returns `404`. Cold segment pages
+build a bounded sparse offset index on first access and reuse it while the file
+fingerprint is unchanged. Full-history requests still load the transcript.
 
 Tool-trace query parameters:
 
@@ -411,6 +425,15 @@ Related config keys under `context`:
 
 - `session_auto_roll`, `session_max_messages`, `session_max_bytes`, `session_roll_retain_turns`
 - `history_preview_chars`
+
+New backups embed external message bodies; existing version 1 backups remain
+readable when their bodies are available. Restore forces a complete transcript
+rewrite, and GC retains references from live history, archives and backups.
+Unreadable reference sources stop GC before deletion. Readers preserve complete
+history before an incomplete uncommitted JSONL tail; missing committed messages
+and middle corruption remain errors. The next append repairs that tail.
+See [session storage reliability](session-reliability.md). No configuration keys
+were added for these guarantees.
 
 ## Tasks
 

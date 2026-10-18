@@ -72,7 +72,9 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 		opts.DisabledTools = cfg.DisabledTools
 		cp.Messages = a.buildContextMessagesForInputWithProvider(ctx, sess, input, opts, snapshot)
 		if sess != nil {
-			sess.AddProviderMessage(input.Message)
+			if err := sess.AddProviderMessageWithError(input.Message); err != nil {
+				return result, sessionError(err)
+			}
 		}
 	}
 	if cp.LastResults == nil {
@@ -101,7 +103,7 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 		}
 		if sess != nil {
 			if err := sess.Save(); err != nil {
-				return fmt.Errorf("%w: session persistence failed: %v", autonomy.ErrBlocked, err)
+				return fmt.Errorf("%w: session persistence failed: %w", autonomy.ErrBlocked, sessionError(err))
 			}
 		}
 		return nil
@@ -151,19 +153,30 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 		result.Verified = true
 		result.Verification = cp.Verification.Reason + "\n" + strings.Join(cp.Verification.Evidence, "\n")
 		if sess != nil {
-			all := sess.GetMessages()
+			all, err := sess.GetMessagesWithError()
+			if err != nil {
+				return result, sessionError(err)
+			}
 			if len(all) == 0 || all[len(all)-1].Role != "assistant" || all[len(all)-1].Content != result.Response {
 				msg := provider.Message{Role: "assistant", Content: result.Response, ReasoningContent: cp.Reasoning, CreatedAt: result.CreatedAt}
 				if result.Usage != nil {
 					usage := *result.Usage
 					msg.Usage = &usage
 				}
-				sess.AddProviderMessage(msg)
+				if err := sess.AddProviderMessageWithError(msg); err != nil {
+					return result, sessionError(err)
+				}
 			}
 		}
 		return result, save()
 	}
 	for i := 0; i < cfg.MaxIterations; i++ {
+		if err := checkSessionHistory(ctx, sess); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return result, autonomy.ErrYield
+			}
+			return result, err
+		}
 		result.Iterations = i + 1
 		if _, err := cfg.Execution.Snapshot(); err != nil {
 			return result, err
@@ -306,7 +319,9 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 			msg := provider.Message{Role: "assistant", Content: resp.Content, ReasoningContent: resp.ReasoningContent, ToolCalls: resp.ToolCalls}
 			cp.Messages = append(cp.Messages, msg)
 			if sess != nil {
-				sess.AddProviderMessage(msg)
+				if err := sess.AddProviderMessageWithError(msg); err != nil {
+					return result, sessionError(err)
+				}
 			}
 			for j, call := range resp.ToolCalls {
 				cp.Pending = append(cp.Pending, durablePendingCall{ID: fmt.Sprintf("step-%d-%d", cp.Batch, j+1), Call: call})
@@ -461,7 +476,9 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 		cp.Messages = append(cp.Messages, msg)
 		cp.Messages = appendLatestComputerObservation(cp.Messages, []executedToolCall{{ToolCall: pending.Call, Observations: executed.Observations}})
 		if sess != nil {
-			sess.AddProviderMessage(msg)
+			if err := sess.AddProviderMessageWithError(msg); err != nil {
+				return sessionError(err)
+			}
 		}
 		artifacts.recordToolResult(pending.Call.Name, executeArgs, executed.Output)
 		sig := toolCallSignature(pending.Call.Name, pending.Call.Arguments)

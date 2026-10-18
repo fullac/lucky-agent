@@ -429,6 +429,18 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	if l == nil || l.runtime == nil {
 		return nil, fmt.Errorf("loop runtime not initialized")
 	}
+	if owner, ok := l.runtime.(interface {
+		beginSessionCall(context.Context, *session.Session) (context.Context, func(), error)
+	}); ok {
+		var finish func()
+		ctx, finish, err = owner.beginSessionCall(ctx, sess)
+		if err != nil {
+			return nil, err
+		}
+		defer finish()
+	} else if err := checkSessionHistory(ctx, sess); err != nil {
+		return nil, err
+	}
 	turnInput = turnInput.Normalize()
 	routingText := turnInput.RoutingText
 	if !turnProvider.valid() {
@@ -571,7 +583,9 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	buildOpts.DisabledTools = append([]string(nil), loopCfg.DisabledTools...)
 	messages := l.runtime.buildContextMessagesForInputWithProvider(ctx, sess, turnInput, buildOpts, turnProvider)
 	if sess != nil {
-		sess.AddProviderMessage(turnInput.Message)
+		if err := sess.AddProviderMessageWithError(turnInput.Message); err != nil {
+			return result, sessionError(err)
+		}
 	}
 
 	callOpts := l.runtime.buildLoopCallOptions(routingText, loopCfg)
@@ -584,6 +598,12 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	)
 
 	for i := 0; i < loopCfg.MaxIterations; i++ {
+		if loopState.sessionErr != nil {
+			return result, sessionError(loopState.sessionErr)
+		}
+		if err := checkSessionHistory(ctx, sess); err != nil {
+			return result, err
+		}
 		callOpts = l.runtime.appendEphemeralToolSchemas(callOpts, loopCfg.SessionID)
 		callOpts = applyToolAllowlist(callOpts, loopCfg)
 		result.Iterations = i + 1
@@ -638,13 +658,15 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 			var finalized bool
 			var finalResponse string
 			messages, finalized, finalResponse = l.runtime.processToolCallBatch(resp, loopCfg, result, sess, messages, loopState, memoryGate, turnInput.RoutingText)
+			if loopState.sessionErr != nil {
+				return result, sessionError(loopState.sessionErr)
+			}
 			if finalized {
 				if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
 					messages = updatedMessages
 					continue
 				}
-				finalizer.Finalize(finalResponse, "")
-				return result, nil
+				return result, finalizer.Finalize(finalResponse, "")
 			}
 			if updatedMessages, enforced := l.runtime.executeMemoryGateForLoop(memoryGate, loopCfg, result, sess, messages, loopState); enforced {
 				messages = updatedMessages
@@ -663,13 +685,11 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 		if !finalized {
 			continue
 		}
-		finalizer.Finalize(finalResponse, directReasoningContent(resp, loopState))
-		return result, nil
+		return result, finalizer.Finalize(finalResponse, directReasoningContent(resp, loopState))
 	}
 
 	if strings.TrimSpace(loopState.continuedResponse.String()) != "" {
-		finalizer.Finalize(strings.TrimSpace(loopState.continuedResponse.String())+lengthTruncatedNotice, strings.TrimSpace(loopState.continuedReasoning.String()))
-		return result, nil
+		return result, finalizer.Finalize(strings.TrimSpace(loopState.continuedResponse.String())+lengthTruncatedNotice, strings.TrimSpace(loopState.continuedReasoning.String()))
 	}
 
 	if memoryGate != nil && (memoryGate.shouldBlockFinal() || len(memoryGate.attemptedTools()) > 0) {
@@ -677,7 +697,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 		result.State = StateDone
 		if sess != nil {
 			if saveErr := sess.Save(); saveErr != nil {
-				logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
+				return result, sessionError(saveErr)
 			}
 			l.runtime.maybeRollSession(sess)
 		}
@@ -691,7 +711,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	// v0.24.1: 保存会话到磁盘
 	if sess != nil {
 		if saveErr := sess.Save(); saveErr != nil {
-			logger.Warn("agent session save failed", "session_id", sessionID, "error", saveErr)
+			return result, sessionError(saveErr)
 		}
 		l.runtime.maybeRollSession(sess)
 	}
@@ -716,6 +736,7 @@ loopRuntimeState 收纳 RunLoopWithSession 在单次执行过程中的临时状�
 把它们集中到一个结构体里，能让主循环更容易阅读和后续拆分。
 */
 type loopRuntimeState struct {
+	sessionErr error
 	// provider is captured once when the turn starts and must not be replaced
 	// while iterations or tool-recovery paths are running.
 	provider                       providerSnapshot
@@ -1006,12 +1027,15 @@ func (a *Agent) processToolCallBatch(
 		ToolCalls:        resp.ToolCalls,
 	})
 	if sess != nil {
-		sess.AddProviderMessage(provider.Message{
+		if err := sess.AddProviderMessageWithError(provider.Message{
 			Role:             "assistant",
 			Content:          resp.Content,
 			ReasoningContent: resp.ReasoningContent,
 			ToolCalls:        resp.ToolCalls,
-		})
+		}); err != nil {
+			loopState.sessionErr = err
+			return messages, false, ""
+		}
 	}
 
 	executed := a.executeToolCallsOrderedGuardedContext(
@@ -1060,12 +1084,15 @@ func (a *Agent) processToolCallBatch(
 		messages = append(messages, contextToolMsg)
 		loopState.noteExplorationResult(execResult.ToolCall.Name, len(execResult.Result))
 		if sess != nil {
-			sess.AddProviderMessage(provider.Message{
+			if err := sess.AddProviderMessageWithError(provider.Message{
 				Role:       "tool",
 				Content:    execResult.Result,
 				ToolCallID: execResult.ToolCall.ID,
 				Name:       execResult.ToolCall.Name,
-			})
+			}); err != nil {
+				loopState.sessionErr = err
+				return messages, false, ""
+			}
 		}
 		logger.Debug("agent loop tool result appended",
 			"session_id", func() string {

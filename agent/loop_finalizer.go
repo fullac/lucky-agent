@@ -40,9 +40,9 @@ func newLoopFinalizer(runtime loopRuntime, appendRunningTaskNotice func(string) 
 // Finalize applies the final response and persists the turn's durable
 // artifacts. It preserves the provider-message order and side-effect policy
 // used by the original inline closure in Loop.RunWithProviderSnapshot.
-func (f *loopFinalizer) Finalize(response, reasoningContent string) {
+func (f *loopFinalizer) Finalize(response, reasoningContent string) error {
 	if f == nil || f.result == nil {
-		return
+		return nil
 	}
 	if strings.TrimSpace(response) == "" {
 		response = emptyFinalResponseMessage
@@ -66,7 +66,12 @@ func (f *loopFinalizer) Finalize(response, reasoningContent string) {
 			usage := *f.result.Usage
 			msg.Usage = &usage
 		}
-		f.sess.AddProviderMessage(msg)
+		if err := f.sess.AddProviderMessageWithError(msg); err != nil {
+			return sessionError(err)
+		}
+		if err := f.sess.Save(); err != nil {
+			return sessionError(err)
+		}
 	}
 
 	// Final answers are not indexed into RAG by default: indexed source
@@ -83,11 +88,9 @@ func (f *loopFinalizer) Finalize(response, reasoningContent string) {
 
 	// v0.24.1: save the session to disk.
 	if f.sess != nil {
-		if saveErr := f.sess.Save(); saveErr != nil {
-			logger.Warn("agent session save failed", "session_id", f.sessionID, "error", saveErr)
-		}
 		if f.runtime != nil {
 			f.runtime.maybeRollSession(f.sess)
 		}
 	}
+	return nil
 }
