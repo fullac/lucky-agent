@@ -34,7 +34,7 @@ shared without making channel handlers depend on CLI packages.
 | `luckyagent-runtime/appservice` | Independent session/model/configuration services and startup Profile persistence; no host imports |
 | `luckyagent-app/appservice` | Type aliases and host configuration-schema/provider-catalog adapters |
 | `api/grpc` | Application gRPC implementation and protocol aliases |
-| `internal/workflow` | Compatibility aliases for `luckyagent-tools/workflow` and `luckyagent-api/workflow` |
+| `luckyagent-runtime/workflow` | Compatibility aliases for `luckyagent-tools/workflow` and `luckyagent-api/workflow` |
 
 The workflow DAG kernel is owned by the tool module; its optional Gin request
 handlers are owned by the API module. Host action registration and the existing
@@ -61,9 +61,10 @@ public tool-runtime ports, with callbacks for host-owned installation policy
 and orchestrator session creation. `luckyagent-app/apiapp/resource_controller.go` is
 the assembly point; it normalizes an absent Agent before interface injection.
 
-For joint development, use an ignored workspace with the launcher, its `agent`
-leaf module and the app/runtime checkouts. Normal builds use published versions
-and do not require external source checkouts or local replacements. Run each
+The committed workspace selects the launcher and its local `agent` leaf module.
+For joint development, use an ignored go.local.work that also includes the
+app/runtime checkouts. External modules use published versions by default and
+do not require source checkouts or local replacements. Run each
 changed module's own tests, and build the launcher with `GOWORK=off` after
 updating pinned dependencies. See the core module guide for exact commands.
 

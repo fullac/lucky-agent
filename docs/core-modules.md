@@ -66,16 +66,23 @@ HTTP/SSE/WS/gRPC fields and platform permission rules are unchanged.
 
 ```bash
 # From the main repository
+go build -o lh ./cmd/la
+go list -f '{{.Dir}}' github.com/yurika0211/lucky-agent/agent
+
+# Independently verify published dependency versions
 GOWORK=off go build -mod=readonly -o lh ./cmd/la
 GOWORK=off go test -mod=readonly ./...
 (cd agent && GOWORK=off go test -mod=readonly -race ./...)
 ```
 
 The parent module's `./...` skips the Agent leaf. `make test` and CI check both.
-Docker excludes local workspaces and builds pinned downloadable modules.
+The committed portable `go.work` includes only the root and `./agent`. Normal
+builds and Docker compile the checked-out Agent, so local core edits affect the
+resulting executable. All external dependencies have downloadable versions.
 
-For joint development, use an ignored workspace selecting the root, `./agent`
-and the actual app/runtime checkout paths. Published builds need no workspace
-or local source replacement. When changing core code, test the local leaf and
-update the launcher/app pins to its published commit; final GOWORK=off checks
-verify the exact dependency versions that users will build.
+For joint development, copy `go.work` to an ignored `go.local.work`, add the
+actual app/runtime checkout paths with `GOWORK=$PWD/go.local.work go work use`,
+and select it explicitly with `GOWORK=$PWD/go.local.work`. Do not add absolute
+paths or local replacements to the committed workspace/manifests. When
+publishing core changes, update app/launcher pins to their published commits;
+final `GOWORK=off` checks verify the exact downloadable dependency versions.

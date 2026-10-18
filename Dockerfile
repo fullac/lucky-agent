@@ -5,7 +5,8 @@ RUN apk add --no-cache git make
 
 WORKDIR /app
 
-COPY go.mod go.sum ./
+COPY go.mod go.sum go.work ./
+COPY agent/go.mod agent/go.sum ./agent/
 RUN go mod download
 
 COPY . .
@@ -14,7 +15,7 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
 
-RUN GOWORK=off CGO_ENABLED=0 GOOS=linux go build \
+RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
     -o luckyagent ./cmd/la
 

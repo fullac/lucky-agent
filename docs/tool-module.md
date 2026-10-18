@@ -20,8 +20,9 @@ New embedding code can prepare runtime components and pass them to
 Resource activation is explicit and ownership is transferred only after a
 successful core construction.
 
-Use published tools/runtime/Agent/app versions for independent builds. An
-ignored workspace can select local checkouts for joint development; it must not
+Use published tools/runtime/Agent/app versions for independent builds. The
+portable go.work selects this repository's root and Agent. An optional ignored
+go.local.work can select external checkouts for joint development; it must not
 leak machine-specific paths into committed manifests. Test each changed module,
 then verify `GOWORK=off go build -o lh ./cmd/la` in the launcher repository.
 

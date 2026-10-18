@@ -67,8 +67,10 @@ GOWORK=off go build -mod=readonly -o lh ./cmd/la
 ```
 
 Parent ./... skips the nested Agent module. `make test` and CI explicitly check
-both. An ignored go.work can select local Agent/app/runtime checkouts for joint
-development; validate final pinned versions with GOWORK=off.
+both. The committed portable go.work selects the root and ./agent, so normal
+builds and Docker use the checked-out Agent source. Optional go.local.work files
+may select external app/runtime checkouts with an explicit GOWORK path; keep
+machine-specific paths out of go.work. Validate published pins with GOWORK=off.
 
 Report exact verified results and remaining limits. Do not claim tests,
 publication, merge or deployment succeeded without direct evidence. Project

@@ -246,9 +246,11 @@ docs/                    使用文档与模块边界
 make test
 ```
 
-`agent` 有自己的 `go.mod`，父目录的 `go test ./...` 不会遍历它。关闭 workspace 可验证依赖版本，并在主仓库构建完整程序：
+`agent` 有自己的 `go.mod`，父目录的 `go test ./...` 不会遍历它。仓库自带的 `go.work` 只包含本仓库两个模块，普通编译和 Docker 都会使用当前 `agent/` 源码：
 
 ```bash
+go build -o lh ./cmd/la
+# 另行验证已发布依赖，确保不需要其他仓库的本地源码
 GOWORK=off go build -o lh ./cmd/la
 ```
 
