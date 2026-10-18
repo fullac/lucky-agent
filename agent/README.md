@@ -44,6 +44,11 @@ compatible inputs; this migration does not invent a second configuration schema.
 
 ## Validate independently
 
+[Long-task context](../docs/long-task-context.md) documents the shared context
+budget, bounded recoverable history, host-bound evidence reader and execution
+ledger. [Packing details](../docs/prompts/la-context-packing-strategy.md) describe
+the message order and trimming priorities.
+
 ```bash
 GOWORK=off go test -mod=readonly -race ./...
 GOWORK=off go vet ./...

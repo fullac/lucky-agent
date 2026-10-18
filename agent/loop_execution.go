@@ -198,6 +198,9 @@ func (a *Agent) chatLoopIteration(ctx context.Context, messages []provider.Messa
 	if !turnProvider.valid() {
 		return nil, fmt.Errorf("provider not initialized")
 	}
+	if err := a.ensureContextFits(messages); err != nil {
+		return nil, err
+	}
 	opts := prepareLoopCallOptions(messages, base, forceSearchSynthesis)
 	if fcProvider, ok := turnProvider.provider.(provider.FunctionCallingProvider); ok && len(opts.Tools) > 0 {
 		return fcProvider.ChatWithOptions(ctx, messages, opts)
@@ -268,6 +271,9 @@ func (a *Agent) chatLoopIterationWithSoftRetry(
 func (a *Agent) streamLoopIteration(ctx context.Context, messages []provider.Message, base provider.CallOptions, forceSearchSynthesis bool, turnProvider providerSnapshot) (<-chan provider.StreamChunk, error) {
 	if !turnProvider.valid() {
 		return nil, fmt.Errorf("provider not initialized")
+	}
+	if err := a.ensureContextFits(messages); err != nil {
+		return nil, err
 	}
 	opts := prepareLoopCallOptions(messages, base, forceSearchSynthesis)
 	if fcProvider, ok := turnProvider.provider.(provider.FunctionCallingProvider); ok && len(opts.Tools) > 0 {

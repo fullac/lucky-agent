@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"time"
 
 	"github.com/yurika0211/luckyagent-runtime/config"
 	"github.com/yurika0211/luckyagent-runtime/logger"
@@ -66,10 +65,7 @@ func (a *Agent) maybeAutoCompactSessionWithProvider(ctx context.Context, sess *s
 		return
 	}
 	cfg := a.autoCompactConfig()
-	maxTokens := cfg.MaxContextTokens
-	if maxTokens <= 0 {
-		maxTokens = 8000
-	}
+	maxTokens := a.contextInputLimit()
 	targetRatio := cfg.AutoCompactTargetRatio
 	if targetRatio <= 0 || targetRatio >= cfg.AutoCompactThreshold {
 		targetRatio = 0.50
@@ -82,13 +78,6 @@ func (a *Agent) maybeAutoCompactSessionWithProvider(ctx context.Context, sess *s
 	// Prefer a full summarizer budget over a nearly-expired turn deadline.
 	// Explicit cancel still fails fast inside the compaction engine.
 	compactCtx := ctx
-	if ctx != nil {
-		if deadline, ok := ctx.Deadline(); ok {
-			if remaining := time.Until(deadline); remaining > 0 && remaining < compactSummaryTimeout {
-				compactCtx = context.WithoutCancel(ctx)
-			}
-		}
-	}
 
 	opts := CompactSessionOptions{
 		RetainRecentTurns: cfg.AutoCompactRetainTurns,
@@ -97,6 +86,9 @@ func (a *Agent) maybeAutoCompactSessionWithProvider(ctx context.Context, sess *s
 	}
 	result, err := a.compactSessionWithProvider(compactCtx, sess, "auto", opts, turnProvider)
 	if err != nil {
+		if ctx != nil && ctx.Err() == context.Canceled {
+			return
+		}
 		a.recordAutoCompactFailure(sess.ID)
 		logger.Warn("auto compact failed", "session_id", sess.ID, "error", err)
 		// Degrade: local summary without the provider. Keeps the session usable
@@ -168,33 +160,34 @@ func (a *Agent) shouldAutoCompactSession(sess *session.Session, routingText stri
 	}
 	all := sess.GetMessages()
 	raw, _, _, hadPrior := session.MessagesAfterLastCompactBoundary(all)
+	planner := newContextPlanner(a, defaultContextBuildOptions())
+	checkMessages := append([]provider.Message(nil), raw...)
+	checkMessages = append(checkMessages, provider.Message{Role: "user", Content: routingText})
+	core := a.buildSystemPromptWithOptions(sess, systemPromptOptions{OmitProjectContext: true})
+	checkMessages = append(checkMessages, provider.Message{Role: "system", Content: planner.fitTextToBudget(core, planner.budget.System)})
+	project := planner.fitEvidenceToBudget(a.buildPinnedProjectPrompt(sess), planner.budget.Project)
+	checkMessages = append(checkMessages, provider.Message{Role: "system", Content: project})
+	estimated := estimateProviderMessages(planner.est, checkMessages)
+	maxTokens := a.contextInputLimit()
+	emergency := estimated >= maxTokens
 	minMessages := cfg.AutoCompactMinMessages
 	if minMessages <= 0 {
 		minMessages = 24
 	}
-	if len(raw) < minMessages {
+	if len(raw) < minMessages && !emergency {
 		return false
 	}
 	cooldownTurns := cfg.AutoCompactCooldownTurns
 	if cooldownTurns <= 0 {
 		cooldownTurns = 8
 	}
-	if hadPrior && compactMessageTurns(raw) < cooldownTurns {
+	if hadPrior && compactMessageTurns(raw) < cooldownTurns && !emergency {
 		return false
-	}
-	maxTokens := cfg.MaxContextTokens
-	if maxTokens <= 0 {
-		maxTokens = 8000
 	}
 	threshold := cfg.AutoCompactThreshold
 	if threshold <= 0 {
 		threshold = 0.82
 	}
-	checkMessages := append([]provider.Message(nil), raw...)
-	if routingText != "" {
-		checkMessages = append(checkMessages, provider.Message{Role: "user", Content: routingText})
-	}
-	estimated := estimateProviderMessages(a.contextEst, checkMessages)
 	if estimated <= 0 {
 		return false
 	}

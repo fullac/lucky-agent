@@ -905,6 +905,12 @@ func estimateProviderMessages(est *contextx.TokenEstimator, messages []provider.
 	total := 0
 	for _, message := range messages {
 		total += compactlib.EstimateMessage(est, message.Content, message.ReasoningContent)
+		if message.Name != "" {
+			total += est.Estimate(message.Name) + 1
+		}
+		for _, call := range message.ToolCalls {
+			total += est.Estimate(call.Name) + est.Estimate(call.Arguments) + 4
+		}
 	}
 	return total
 }
@@ -3533,6 +3539,20 @@ toContextMessages 将 provider 消息转换为带优先级的上下文消息。
 */
 func (a *Agent) toContextMessages(messages []provider.Message) []contextx.Message {
 	result := make([]contextx.Message, len(messages))
+	latestUser := latestUserMessageIndex(messages)
+	latestCall, latestCallEnd := -1, -1
+	for i, msg := range messages {
+		if len(msg.ToolCalls) > 0 {
+			latestCall, latestCallEnd = i, i+1
+			for latestCallEnd < len(messages) && messages[latestCallEnd].Role == "tool" {
+				latestCallEnd++
+			}
+		}
+	}
+	hasCurrentTask := false
+	for _, msg := range messages {
+		hasCurrentTask = hasCurrentTask || strings.HasPrefix(msg.Content, "[Current Task]")
+	}
 	for i, msg := range messages {
 		priority := contextx.PriorityNormal
 		category := msg.Role
@@ -3546,6 +3566,12 @@ func (a *Agent) toContextMessages(messages []provider.Message) []contextx.Messag
 		// 记忆上下文按层级分配优先级
 		if msg.Role == "system" && len(msg.Content) > 0 {
 			switch {
+			case strings.HasPrefix(msg.Content, "[Task State]"):
+				priority = contextx.PriorityHigh
+				category = "task_state"
+			case isContextEvidence(msg.Content):
+				priority = contextx.PriorityNormal
+				category = "history_summary"
 			case strings.HasPrefix(msg.Content, "[Core Memory"):
 				priority = contextx.PriorityHigh
 				category = "memory_long"
@@ -3569,6 +3595,13 @@ func (a *Agent) toContextMessages(messages []provider.Message) []contextx.Messag
 		if msg.Role == "tool" {
 			priority = contextx.PriorityNormal
 			category = "tool_result"
+		}
+		if i == latestUser && !hasCurrentTask {
+			priority = contextx.PriorityCritical
+			category = "current_request"
+		}
+		if i >= latestCall && i < latestCallEnd && latestCall >= 0 {
+			priority = contextx.PriorityHigh
 		}
 
 		result[i] = contextx.Message{

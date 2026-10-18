@@ -38,7 +38,8 @@ var (
 )
 
 type systemPromptOptions struct {
-	DisabledTools []string
+	DisabledTools      []string
+	OmitProjectContext bool
 	// turnProvider, when valid, supplies the immutable provider metadata for
 	// the current request. A zero value keeps the legacy config-based behavior.
 	turnProvider providerSnapshot
@@ -59,7 +60,10 @@ func (a *Agent) buildSystemPromptWithOptions(sess *session.Session, opts systemP
 	parts := make([]string, 0, 16)
 	toolNames := a.enabledToolNamesExcept(opts.DisabledTools)
 	manualBlock := a.buildLuckyAgentManualPrompt(sess)
-	contextBlock := a.buildContextFilesPrompt(sess)
+	contextBlock := ""
+	if !opts.OmitProjectContext {
+		contextBlock = a.buildContextFilesPrompt(sess)
+	}
 
 	// Runtime-owned role instructions must precede a potentially long SOUL;
 	// otherwise the context budget can truncate away a plugin agent's purpose.
