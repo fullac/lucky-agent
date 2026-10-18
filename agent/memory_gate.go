@@ -289,7 +289,10 @@ func (a *Agent) executeMemoryGateForLoop(
 		assistantMsg := gate.assistantToolCallMessage(calls)
 		messages = append(messages, assistantMsg)
 		if sess != nil {
-			sess.AddProviderMessage(assistantMsg)
+			if err := sess.AddProviderMessageWithError(assistantMsg); err != nil {
+				loopState.sessionErr = err
+				return messages, true
+			}
 		}
 
 		executed = a.executePreparedMemoryGateToolCalls(
@@ -325,12 +328,15 @@ func (a *Agent) executeMemoryGateForLoop(
 		}
 		messages = append(messages, contextToolMsg)
 		if sess != nil {
-			sess.AddProviderMessage(provider.Message{
+			if err := sess.AddProviderMessageWithError(provider.Message{
 				Role:       "tool",
 				Content:    execResult.Result,
 				ToolCallID: execResult.ToolCall.ID,
 				Name:       execResult.ToolCall.Name,
-			})
+			}); err != nil {
+				loopState.sessionErr = err
+				return messages, true
+			}
 		}
 	}
 
@@ -360,7 +366,9 @@ func (a *Agent) continueAfterStreamMemoryGate(
 		assistantMsg := state.memoryGate.assistantToolCallMessage(calls)
 		messages = append(messages, assistantMsg)
 		if sess != nil {
-			sess.AddProviderMessage(assistantMsg)
+			if !appendStreamSessionMessage(events, sess, assistantMsg) {
+				return true
+			}
 		}
 		emitChatToolCallEvents(events, calls)
 		executed = a.executePreparedMemoryGateToolCalls(
@@ -384,12 +392,14 @@ func (a *Agent) continueAfterStreamMemoryGate(
 			Name:       execResult.ToolCall.Name,
 		})
 		if sess != nil {
-			sess.AddProviderMessage(provider.Message{
+			if !appendStreamSessionMessage(events, sess, provider.Message{
 				Role:       "tool",
 				Content:    execResult.Result,
 				ToolCallID: execResult.ToolCall.ID,
 				Name:       execResult.ToolCall.Name,
-			})
+			}) {
+				return true
+			}
 		}
 		state.rememberToolCallResult(execResult.ToolCall.Name, execResult.ToolCall.Arguments, execResult.Result, execResult.Duration)
 	}

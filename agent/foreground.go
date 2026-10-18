@@ -245,6 +245,9 @@ func (a *Agent) runForeground(ctx context.Context, sess *session.Session, input 
 			last.foregroundInput = &input
 			return last, nil
 		}
+		if isSessionError(err) {
+			return last, foregroundInterrupted(task, err)
+		}
 		if runCtx.Err() != nil {
 			return last, foregroundInterrupted(task, runCtx.Err())
 		}

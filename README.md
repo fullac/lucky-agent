@@ -50,6 +50,7 @@ go run ./examples/embed_minimal
 ## 核心能力
 
 - **统一运行时**：CLI、HTTP API 和消息网关共享同一个 Agent 核心。
+- **会话存储**：并发保存、备份恢复和删除使用同一生命周期保护；冷元数据更新不加载正文，大历史分页复用偏移索引。见[会话存储可靠性](docs/session-reliability.md)。
 - **长期记忆**：用 Obsidian-compatible Markdown vault 保存用户画像、事实、规则、决策和会话轨迹。
 - **RAG 知识库**：索引项目文档、个人笔记和运维资料，并在 Agent 运行时检索。
 - **工具与技能**：支持内置工具、技能加载、技能安装、MCP 和 OpenCLI。
