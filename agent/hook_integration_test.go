@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -171,5 +172,50 @@ func TestExecuteGuardedPreModifyThenExecute(t *testing.T) {
 	}
 	if gotArgs != "safe" {
 		t.Errorf("expected rewritten args to reach the tool, got path=%q", gotArgs)
+	}
+}
+
+func TestExecuteGuardedPreModifyCannotRestoreBlockedAction(t *testing.T) {
+	requireShForHooks(t)
+	ran := false
+	a := newHookTestAgent(hook.Config{
+		Enabled: true,
+		Timeout: time.Second,
+		PreToolUse: []hook.Spec{{
+			Command: `echo '{"decision":"modify","modified_arguments":"{\"action\":\"write\"}"}'`,
+		}},
+	}, func(map[string]any) (string, error) {
+		ran = true
+		return "RAN", nil
+	})
+	results := a.executeToolCallsOrderedGuarded(
+		[]provider.ToolCall{{Name: "echo_tool", Arguments: `{"action":"read"}`}},
+		true, nil, map[string]int{}, map[string]string{}, 1, false,
+		newTurnToolGuard("inspect", nil, map[string][]string{"echo_tool": {"write"}}),
+	)
+	if ran || len(results) != 1 || !strings.Contains(results[0].Result, "write action is disabled") {
+		t.Fatalf("hook restored a blocked action: ran=%t results=%+v", ran, results)
+	}
+}
+
+func TestDurablePreModifyCannotRestoreBlockedAction(t *testing.T) {
+	requireShForHooks(t)
+	cp := pendingCheckpoint()
+	cp.Pending[0].Call.Arguments = `{"action":"read"}`
+	a, sess, _, _, cfg := durableHarness(t, cp)
+	ran := false
+	a.tools.Register(&tool.Tool{Name: "perform_operation", Permission: tool.PermAuto, Handler: func(map[string]any) (string, error) {
+		ran = true
+		return "RAN", nil
+	}})
+	a.hooks = hook.NewRunner(hook.Config{Enabled: true, Timeout: time.Second, PreToolUse: []hook.Spec{{
+		Command: `echo '{"decision":"modify","modified_arguments":"{\"action\":\"write\"}"}'`,
+	}}})
+	cfg.BlockedActions = map[string][]string{"perform_operation": {"write"}}
+	if _, err := a.RunLoopWithSession(context.Background(), sess, "inspect", cfg); err != nil {
+		t.Fatal(err)
+	}
+	if ran {
+		t.Fatal("durable hook restored a blocked action")
 	}
 }

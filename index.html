@@ -1486,7 +1486,7 @@
               {
                 id: 'hooks-skills',
                 title: 'hooks / skills · 扩展边界',
-                description: 'hooks 保护工具执行边界，skills 控制技能加载和安装限制。',
+                description: 'hooks 保护工具执行边界，skills 控制技能加载和安装限制。独立插件通过 lh plugin install/list/enable/disable/update/remove 管理，索引在 runtimeHome/plugins/index.json，不新增 config.json 键；安装变更重启后生效，执行能力需 --trust。',
                 fields: [
                   { field: 'hooks.enabled', example: 'false', description: '是否启用 PreToolUse 和 PostToolUse hook。' },
                   { field: 'hooks.timeout_seconds', example: '30', description: '单个 hook 的执行超时时间。' },

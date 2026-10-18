@@ -404,6 +404,10 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 					sessionID = sess.ID
 				}
 				executeArgs, blocked, blockMessage = a.hooks.RunPre(a.canonicalToolName(pending.Call.Name), executeArgs, cfg.Source, sessionID)
+				if !blocked {
+					guardCall.Arguments = executeArgs
+					blockMessage, blocked = guard.blockMessage(guardCall)
+				}
 			}
 			if blocked {
 				executed.Output = blockMessage
@@ -424,6 +428,7 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 						emit := cfg.emit
 						execCtx = withHITLEmitter(ctx, func(event ChatEvent) { emit(ctx, event) })
 					}
+					execCtx = withPluginCallPolicy(execCtx, cfg, input.Scope, input.RoutingText)
 					executed, toolErr = a.executeToolWithSessionDetailedContext(execCtx, pending.Call.Name, executeArgs, cfg.AutoApprove, sess, cfg.Source, input.RoutingText)
 				}
 				if toolErr != nil {

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +11,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/yurika0211/luckyagent-runtime/bootstrap"
 	"github.com/yurika0211/luckyagent-runtime/config"
 	"github.com/yurika0211/luckyagent-runtime/mcpclient"
+	"github.com/yurika0211/luckyagent-runtime/tool"
 	"github.com/yurika0211/luckyagent-tools/memory"
 )
 
@@ -127,5 +131,48 @@ func TestInvalidInjectionDoesNotTakeOwnership(t *testing.T) {
 	components.Provider.Provider = nil
 	if _, err := NewWithDependencies(Options{TakeOwnership: true}, components); err == nil || store.closed != 0 {
 		t.Fatal("invalid constructor accepted dependencies or closed caller resources")
+	}
+}
+
+func TestInjectedPluginSnapshotWaitsForExplicitStartup(t *testing.T) {
+	var requests atomic.Int32
+	backend := mcp.NewServer(&mcp.Implementation{Name: "injected-plugin", Version: "1"}, nil)
+	backend.AddTool(&mcp.Tool{Name: "echo", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "injected-plugin-called"}}}, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return backend }, &mcp.StreamableHTTPOptions{Stateless: true})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	components := preparedTestComponents(t, "")
+	root := pluginFixture(t, map[string]string{
+		"commands/review.md": "Review $ARGUMENTS",
+		".mcp.json":          fmt.Sprintf(`{"mcpServers":{"docs":{"type":"http","url":%q}}}`, server.URL),
+	})
+	installPluginFixture(t, components.Config, root, true)
+	before := treeNames(t, components.Config.HomeDir())
+	instance, err := NewWithDependencies(Options{}, components)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	if !instance.HasPluginCommand("/fixture:review source.go") {
+		t.Fatal("injected construction omitted the plugin snapshot")
+	}
+	if requests.Load() != 0 {
+		t.Fatal("injected construction started plugin MCP")
+	}
+	if after := treeNames(t, components.Config.HomeDir()); !reflect.DeepEqual(before, after) {
+		t.Fatal("injected plugin construction created runtime files")
+	}
+	if err := components.Start(context.Background(), instance.StartupHooks()); err != nil {
+		t.Fatal(err)
+	}
+	name := tool.MCPToolName("fixture.docs", "echo")
+	output, err := instance.Tools().CallWithContext(name, nil, tool.ExecutionContext{Context: context.Background(), AutoApprove: true})
+	if err != nil || output != "injected-plugin-called" || requests.Load() == 0 {
+		t.Fatalf("explicit startup did not activate plugin MCP: output=%q err=%v", output, err)
 	}
 }

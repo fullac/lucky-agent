@@ -98,10 +98,7 @@ func (a *Agent) matchSkillRoute(userInput string) *skillRouteMatch {
 		return nil
 	}
 	skill := skills[matched.Index]
-	preferred := ""
-	if name := fmt.Sprintf("skill_%s_run", skill.Name); a.hasModelVisibleTool(name) {
-		preferred = name
-	}
+	preferred := a.visibleSkillRunTool(skill.Name, nil)
 	return &skillRouteMatch{skill: skill, score: matched.Score, explicit: matched.Explicit, reason: matched.Reason, preferredRun: preferred}
 }
 
@@ -121,6 +118,12 @@ func (a *Agent) hasModelVisibleToolExcept(name string, disabled []string) bool {
 }
 
 func (a *Agent) visibleSkillRunTool(skillName string, disabled []string) string {
+	if strings.Contains(skillName, ":") {
+		name := pluginResourceName("plugin_" + strings.ReplaceAll(skillName, ":", "_") + "_run")
+		if a.hasModelVisibleToolExcept(name, disabled) {
+			return name
+		}
+	}
 	runToolName := fmt.Sprintf("skill_%s_run", strings.TrimSpace(skillName))
 	if a.hasModelVisibleToolExcept(runToolName, disabled) {
 		return runToolName

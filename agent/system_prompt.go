@@ -61,9 +61,8 @@ func (a *Agent) buildSystemPromptWithOptions(sess *session.Session, opts systemP
 	manualBlock := a.buildLuckyAgentManualPrompt(sess)
 	contextBlock := a.buildContextFilesPrompt(sess)
 
-	if core := a.buildCorePromptBlock(); core != "" {
-		parts = append(parts, core)
-	}
+	// Runtime-owned role instructions must precede a potentially long SOUL;
+	// otherwise the context budget can truncate away a plugin agent's purpose.
 	if sess != nil {
 		if role, profile := sess.AgentProfile(); strings.TrimSpace(profile) != "" {
 			role = strings.TrimSpace(role)
@@ -72,6 +71,9 @@ func (a *Agent) buildSystemPromptWithOptions(sess *session.Session, opts systemP
 			}
 			parts = append(parts, "【执行角色："+role+"】\n"+strings.TrimSpace(profile))
 		}
+	}
+	if core := a.buildCorePromptBlock(); core != "" {
+		parts = append(parts, core)
 	}
 	if len(toolNames) > 0 {
 		if toolPolicy := a.buildToolPolicyPromptBlock(); toolPolicy != "" {

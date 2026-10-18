@@ -126,6 +126,16 @@ func NewWithDependencies(opts Options, deps *Dependencies) (*Agent, error) {
 		activeAPIBase:       c.APIBase,
 	}
 
+	if err := a.preparePlugins(); err != nil {
+		return nil, fmt.Errorf("prepare plugins: %w", err)
+	}
+	a.hooks.Reload(a.pluginHookConfig(c))
+	if a.mcpClient != nil {
+		if err := a.mcpClient.Configure(a.pluginMCPConfig(c.MCP)); err != nil {
+			return nil, fmt.Errorf("configure plugin MCP: %w", err)
+		}
+	}
+
 	supportRT.ToolServices.Cron = tool.NewCronToolService(
 		supportRT.CronEngine,
 		a.saveCronJobs,
@@ -138,6 +148,9 @@ func NewWithDependencies(opts Options, deps *Dependencies) (*Agent, error) {
 	})
 	supportRT.ToolServices.Heartbeat = tool.NewHeartbeatToolService(a.handleHeartbeatTrigger, a.handleHeartbeatStatus)
 	supportRT.ToolServices.RegisterCoreTools(supportRT.Tools)
+	if err := a.registerPluginTools(); err != nil {
+		return nil, fmt.Errorf("register plugin tools: %w", err)
+	}
 
 	// v0.38.0: 设置 delegate 的 Agent 执行器，让 delegate_task 真正走 Agent Loop
 	delegateCfg := supportRT.DelegateMgr.Config()
