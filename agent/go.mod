@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/yurika0211/luckyagent-plugins v0.1.0
-	github.com/yurika0211/luckyagent-runtime v0.0.0-20261018035045-ce877c58a905
+	github.com/yurika0211/luckyagent-runtime v0.0.0-20261018035537-9e627943ed44
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -15,6 +15,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
+	github.com/jezek/xgb v1.3.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v1.14.42 // indirect
@@ -61,7 +62,7 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yurika0211/luckyagent-gateway v0.2.2 // indirect
-	github.com/yurika0211/luckyagent-tools v0.2.3-0.20261017170624-31ef6846a434
+	github.com/yurika0211/luckyagent-tools v0.2.3-0.20261018034717-bd3557ec03fa
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
