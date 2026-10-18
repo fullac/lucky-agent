@@ -1,85 +1,30 @@
-# Standalone tool module
+# Tool module and Agent integration
 
-`github.com/yurika0211/luckyagent-tools` owns the reusable tool implementation.
-LuckyAgent embeds this Go module in process and supplies application services.
+`luckyagent-tools` retains tool contracts, registry, builtins, Skills, MCP tool
+adapters and execution packages such as hitl, skillroute, execpolicy, compact,
+workflow, cron and autonomy. These packages do not import the Agent core.
 
-| Location | Ownership |
-| --- | --- |
-| `luckyagent-tools` root | Tool contracts, registry, routing, execution gateway, generic builtins, Skills, MCP and usage tracking |
-| `luckyagent-tools/search` | Search engines and aggregation |
-| `luckyagent-tools/sandbox` | Execution snapshots and shell/path boundaries |
-| `luckyagent-tools/opencli` | Shared OpenCLI configuration shape |
-| `luckyagent-tools/textutil` | Shared text/HTML/URL formatting |
-| `luckyagent-tools` runtime services | Memory/RAG argument handling, delegation, scheduling, media/computer tools, temporary credential execution and Codex/Grok bridges |
-| `luckyagent-tools/{task,collab,cron,autonomy}` | Optional generic engines, storage and injected execution callbacks |
-| `luckyagent-tools/{memory,rag,credentials,chat}` | Neutral ports, shared values and validation |
-| `luckyagent-tools/{computer,multimodal,codex,grok}` | Optional providers and external clients |
-| `luckyagent-tools/{approval,hitl}` | Shared approval values and runtime-scoped input/approval waits |
-| `luckyagent-tools/skillroute` | Matching skill snapshots; host owns routing exceptions and model-tool choice |
-| `luckyagent-tools/execpolicy` | Pure intent allowlists and turn-local tool constraints |
-| `luckyagent-tools/compact` | Chunking, parallel summaries, validation, fallback and restore evidence |
-| `luckyagent-tools/workflow` | DAG engine with injected action handlers |
-| `luckyagent-api/workflow` | Optional Gin workflow request handling |
-| `internal/toolapp` | Per-call credential-store opening and cleanup; real-backend integration tests |
-| `internal/tool`, `internal/tool/search` | Existing import paths forwarded to the owning module or application adapter |
-| `internal/sandbox`, selected `internal/utils` helpers | Aliases to the single shared implementation |
+The public Agent is `github.com/yurika0211/lucky-agent/agent`. Its runtime-owned
+adapters for tool choice, context, approvals and convergence stay with the core.
+Actual model, session, memory and RAG implementations are public packages in
+`luckyagent-runtime`; the full product's CLI/API/channel operations and default
+assembly live in `luckyagent-app`.
 
-The standalone module does not construct an Agent, open LuckyAgent's memory
-backend or import LuckyAgent. Memory/RAG services consume backend interfaces.
-Approval prompting remains in the embedding application. Tool names, JSON
-parameters, permission levels, filesystem defaults and sandbox behavior retain
-their existing semantics.
+`luckyagent-runtime/tool` retains small aliases and the host credential backend
+adapter. MCP connection lifecycle is in runtime/mcpclient. The Aestus SDK remains
+inside runtime/memoryaestus; public memory contracts come from tools/memory.
+Tool command parsing and HTTP/platform rendering stay outside the Agent.
 
-Task execution and provider choice remain in Agent assembly. The credential
-adapter implements `CredentialProvider`; the host retains encrypted storage.
-The Aestus SDK is still imported only by `internal/memoryaestus`; memory ports
-now have one owner in `luckyagent-tools/memory`. RAG storage, embedding and
-retrieval remain under `internal/rag`, implementing the SDK's two-method port.
+New embedding code can prepare runtime components and pass them to
+`agent.NewWithDependencies`. Default full applications use app/bootstrap.New.
+Resource activation is explicit and ownership is transferred only after a
+successful core construction.
 
-The original `OpenCLIConfig` and `ComputerUseToolConfig` alias module DTOs.
-It retains the same fields and JSON tags. No new configuration key is needed
-in `config.example.json` or the configuration website.
+Use published tools/runtime/Agent/app versions for independent builds. The
+portable go.work selects this repository's root and Agent. An optional ignored
+go.local.work can select external checkouts for joint development; it must not
+leak machine-specific paths into committed manifests. Test each changed module,
+then verify `GOWORK=off go build -o lh ./cmd/la` in the launcher repository.
 
-## Local joint development
-
-Create an ignored workspace when editing the execution components across
-repositories (replace the paths with the actual checkouts):
-
-```bash
-go work init . /path/to/luckyagent-tools /path/to/luckyagent-api /path/to/luckyagent-gateway
-```
-
-The committed `go.mod` pins merged tools/API commits as downloadable Go
-pseudo-versions and has no local `replace`. Normal checkouts can build with
-`GOWORK=off`; a workspace is only needed for local changes across repositories.
-New execution packages are not in tools v0.2.2/API v0.2.1. For future changes,
-merge tools first, update/merge API, then update the host requirements to the
-merged commits or newer release tags. Approval rendering, model/credential selection,
-automatic compaction policy, session persistence and actual dispatch remain
-host-owned. Shared compaction DTO aliases keep existing JSON fields unchanged.
-
-## Validation
-
-```bash
-# In luckyagent-tools
-go test ./...
-go test -race ./...
-
-# In LuckyAgent
-go test ./internal/toolapp ./internal/config ./internal/utils ./internal/agent ./internal/apiapp ./internal/cli/lhcmd ./sdk
-go test -p 2 ./...
-
-# Verify downloadable dependencies without the local workspace
-GOWORK=off go test -mod=readonly -p 2 ./...
-```
-
-All 552 original tool/search test entrypoints are retained exactly once across
-the two repositories. Generic MCP tests no longer create an unused host
-configuration manager. The standalone module additionally checks its import
-boundary and executes its embedding example.
-
-The v0.2.1 cleanup moves reusable runtime services and their tests, rather than
-keeping a second implementation behind host aliases. Host callers import the
-public capability packages directly. Legacy `internal/tool` names remain
-compatible; its runtime builtin registrations forward to the SDK's media-aware
-catalog. No configuration keys or tool wire names change.
+The migration adds no tool name or runtime configuration key. Existing JSON and
+wire fields remain unchanged. See [Agent core and launcher modules](core-modules.md).

@@ -1,235 +1,77 @@
-# AGENTS.md
+# LuckyAgent Agent core and launcher
 
-This file gives project-specific operating guidance for agents working in the
-LuckyAgent repository. Keep it factual, compact, and aligned with the current
-codebase.
+This repository primarily maintains the public Agent core plus a thin `lh`
+launcher. Application commands and runtime backends live in independent modules.
 
-## Project Shape
+## Modules and ownership
 
-LuckyAgent is a Go agent runtime, not only a chat wrapper. The main binary is
-`cmd/la`, with most runtime code under `internal/`.
+- `agent/` is module `github.com/yurika0211/lucky-agent/agent`: Agent loop,
+  context planning/packing, tool and approval policy, memory-use rules,
+  session-aware/durable execution, convergence and stream events.
+- The root is module `github.com/yurika0211/lucky-agent`: `cmd/la/main.go`,
+  build/release entrypoints and product documentation. It imports the external
+  CLI and still builds the complete `lh` executable.
+- `github.com/yurika0211/luckyagent-app`: CLI/REPL, API and channel product
+  handlers, shared application adapters, full embedding SDK and benchmarks.
+- `github.com/yurika0211/luckyagent-runtime`: provider/model protocols,
+  configuration, sessions, memory backend, RAG/embedding, MCP and support
+  components. It does not import the core or application.
+- Existing tools/API/gateway modules retain generic execution and wire/platform
+  implementation. The Agent leaf module must never import luckyagent-app.
 
-Primary entry points:
+The Agent leaf module and root launcher have separate manifests to avoid a
+module dependency cycle: launcher -> app -> Agent -> runtime/tools. Use actual
+published commit versions; never commit machine-specific replacements.
 
-- `lh`: prints command help.
-- `lh init`: initializes `${HOME}/.luckyagent`.
-- `lh chat [message]`: local one-shot chat or REPL debugging.
-- `lh serve`: HTTP API server.
-- `lh msg-gateway start`: external chat gateways.
-- `lh rag`: RAG index/search/stats commands.
-- `lh session`: list/migrate/gc/export/roll/compact session storage.
-- `lh qr`: start the API and show a temporary phone-pairing QR code.
-- `lh config` and `lh soul`: runtime management surfaces.
+## Construction and lifecycle
 
-Desktop GUI, TUI, and Electron are not part of this repository. Session,
-tool-trace, memory graph, skill, and gateway views are HTTP/WebSocket APIs.
-The Android client lives in `yurika0211/luckyagent-android`.
+`agent.NewWithDependencies(Options, *Dependencies)` binds prepared runtime
+components without backend construction, network startup or file writes.
+`Options.TakeOwnership` transfers cleanup only on successful construction.
+`StartupHooks` is inert until an application activates it. Default applications
+use `luckyagent-app/bootstrap.New`; legacy core New/NewWithMemory remain
+compatibility constructors. Shared config.Manager and public runtime storage
+contracts retain their existing schema and semantics.
 
-The runtime home defaults to `${HOME}/.luckyagent`. Source checkouts may also
-contain a local `config.json`, but deployed runtime state belongs under the
-configured home directory.
+## Context rules
 
-## Current Runtime Model
+- Root AGENTS.md/agents.md is project context; runtime manuals also come from
+  description/AGENTS.md, description/agents.md and legacy manual paths.
+- Preserve the latest user turn and its following messages when fitting history.
+- Retrieved memory/RAG are prior evidence, not the current task. Explicit current
+  user intent takes precedence. Sessions, durable memory and RAG stay distinct.
+- Inspect agent/context_planner.go, system_prompt.go, memory_gate.go and the
+  external session/channel adapters when investigating contamination.
 
-`internal/agent` is the coordination center. It builds the system prompt,
-packs context, routes skills, recalls memory, queries RAG, executes tools,
-streams chat events, and owns the loop-level convergence behavior.
+## Product compatibility
 
-Important context behavior:
+The runtime home remains ~/.luckyagent. CLI commands, /api/v1 HTTP routes,
+SSE/WS/gRPC fields, gateway protocols and session JSON/blob/compact formats are
+unchanged by moving source. Check route handlers in luckyagent-app/apiapp and
+transport catalogs in luckyagent-api before documenting endpoints.
 
-- Root `AGENTS.md` or `agents.md` is loaded as project context.
-- Runtime manual files are loaded from `description/AGENTS.md`,
-  `description/agents.md`, or the legacy `LUCKYHARNESS_AGENT_MANUAL.md` paths.
-- Recent session history is filtered by intent, but the latest user turn and
-  following messages must remain available to avoid old memory overriding the
-  current task.
-- Retrieved memory is prior evidence, not the current task itself. Prefer the
-  latest user message and explicit session history when they conflict.
+Configuration schema/defaults live in luckyagent-runtime/config. The example
+and GitHub Pages source remain here. Whenever a field or feature changes,
+compare config.example.json and update the corresponding product documentation.
 
-## Key Packages
+## Workflow
 
-- `internal/agent`: agent loop, context planner, system prompt, tool execution,
-  memory gate, skill routing, session-aware chat.
-- `internal/config`: config loading, defaults, runtime home initialization.
-- `internal/session`: persistent conversation sessions.
-- `github.com/yurika0211/luckyagent-tools/memory`: provider-independent memory
-  contracts, evidence DTOs, write admission and context presentation. The host's
-  `internal/memory` retains only the Aestus import-boundary test.
-- `internal/memoryaestus`: sole Aestus SDK integration for the Markdown vault,
-  recall, session buffers/summaries, maintenance and optional Tidal resources.
-  `Open` owns backend construction; `agent/memory_runtime.go` is the default
-  assembly point. `NewWithMemory` accepts an injected runtime. Consumers use
-  Inspector, ToolBackend, ContextReader and maintenance ports; legacy Store is
-  for adapter compatibility and fixture/benchmark seeding. Backend diagnostic
-  values live in `luckyagent-tools/memory/diagnostic`.
-- `internal/rag`: RAG indexing, SQLite persistence, retrieval, stream indexer.
-- `internal/tool`: compatibility aliases for the standalone tool module and
-  host credential adapter; `internal/toolapp` opens/closes the encrypted store
-  per call and keeps real-backend integration tests.
-- `github.com/yurika0211/luckyagent-tools`: tool contracts, registry, generic
-  builtins, Skills, MCP, search and reusable runtime services. Optional task,
-  collaboration, cron/autonomy, computer/media and coding-agent engines live in
-  its public subpackages. Agent execution, Aestus/RAG persistence, credentials
-  and provider selection remain host-owned. It never imports LuckyAgent.
-- `internal/server`, `internal/gateway/*`, `internal/websocket`: thin compatibility
-  bindings to the extracted modules and host application packages.
-- `internal/apiapp`: HTTP API domain operations and runtime assembly; resource
-  parsing/rendering and WebSocket run replay live in the API module.
-- `internal/channelapp/telegram`, `qqofficial`, `websocket`: host command,
-  session, approval and run-execution policy.
-- `luckyagent-tools/{hitl,skillroute,execpolicy,compact,workflow}`: reusable
-  approval waits, skill matching, per-call constraints, text-only compaction
-  and DAG execution. Host adapters retain presentation, model/credential
-  selection, automatic compaction policy and session persistence. These
-  packages do not import the host or API/gateway modules.
-- `internal/workflow`: compatibility aliases for the tool-module DAG engine
-  and the API module's optional Gin workflow handlers.
-- `github.com/yurika0211/luckyagent-gateway`: platform protocols and neutral turn
-  contracts. `github.com/yurika0211/luckyagent-api`: HTTP/SSE/WebSocket/gRPC
-  transport and protocol. These modules must never import the LuckyAgent runtime.
-- `internal/mcpclient`: runtime-owned MCP manager, stdio/Streamable HTTP,
-  versioned tool catalogs, calls and credential resolver port. Independent of
-  agent/tool packages; the official MCP Go SDK stays behind this boundary.
-- `internal/cli/lhcmd`: Cobra command definitions and command handlers.
-
-## HTTP API Surface
-
-`lh serve` registers the API under `/api/v1`.
-
-Common routes include:
-
-- `POST /api/v1/chat` for SSE chat.
-- `POST /api/v1/chat/sync` for synchronous chat.
-- `GET /api/v1/sessions` and `/api/v1/sessions/`.
-- `GET|POST /api/v1/memory`, `GET /api/v1/memory/recall`,
-  `GET /api/v1/memory/stats`.
-- `POST /api/v1/rag/index`, `POST /api/v1/rag/search`,
-  `GET /api/v1/rag/stats`, `/api/v1/rag/store`.
-- `/api/v1/rag/stream/*` for stream indexer watch, scan, start, stop, queue,
-  status, and process operations.
-- `GET /api/v1/context` for the context window. `inspect=1` adds the
-  assembled composition and local token length. `POST /api/v1/context/fit`
-  trims caller-supplied messages.
-- `POST /api/v1/config/reload` to safely reload configuration for later requests.
-- `GET|POST /api/v1/mcp/servers` for connection status and configured-server
-  connect/refresh/disconnect actions. See `docs/mcp.md` for configuration.
-- `/api/v1/health/live`, `/ready`, `/detail`, and `/api/v1/metrics`.
-- `/api/v1/ws` and `/api/v1/ws/stats`.
-
-Check the extracted API route catalog and `internal/apiapp` before documenting
-or relying on an endpoint. See `docs/edge-modules.md` for checkout and test setup.
-Tool ownership and joint development are documented in `docs/tool-module.md`.
-
-## Gateways
-
-Gateway startup uses:
+1. Inspect git status --short; preserve unrelated modifications.
+2. Read the smallest relevant code path and tests. Use rg and apply_patch.
+3. Run focused checks, or both module suites for cross-cutting changes:
 
 ```bash
-lh msg-gateway start --platform telegram
-lh msg-gateway start --platform qqofficial
-lh msg-gateway start --platform napcat
-lh msg-gateway start --platform feishu
-lh msg-gateway start --platform weixin
-lh msg-gateway start --platform openclawweixin
+(cd agent && GOWORK=off go test -mod=readonly -race ./...)
+GOWORK=off go test -mod=readonly ./...
+GOWORK=off go build -mod=readonly -o lh ./cmd/la
 ```
 
-Telegram supports progress-message modes and session commands. NapCat uses
-OneBot v11 reverse WebSocket settings (`listen_addr`, `path`, `access_token`).
-Feishu uses an HTTP event callback and tenant access tokens; its Phase 1 adapter
-supports unencrypted text events. QQ Official and Weixin have their own
-auth/config paths. Platform implementation tests live in `luckyagent-gateway`;
-host integration tests live under `internal/channelapp`. Verify both before
-changing platform-specific assumptions.
+Parent ./... skips the nested Agent module. `make test` and CI explicitly check
+both. The committed portable go.work selects the root and ./agent, so normal
+builds and Docker use the checked-out Agent source. Optional go.local.work files
+may select external app/runtime checkouts with an explicit GOWORK path; keep
+machine-specific paths out of go.work. Validate published pins with GOWORK=off.
 
-`/lucky on` and `/lucky off` collect multiple gateway messages into one user
-turn through `internal/gateway/collector`, preserving segment boundaries and
-attachments.
-
-## Memory, RAG, And Context
-
-Memory is stored in the LuckyAgent Markdown vault under
-`${HOME}/.luckyagent/memory`. It is the durable memory source of truth. RAG is
-separate retrieved evidence and may use SQLite persistence under the runtime
-home.
-
-Do not treat session history, memory, and RAG as interchangeable:
-
-- Sessions carry chat continuity.
-- Memory stores durable facts, preferences, project rules, and decisions.
-- RAG stores indexed documents and final-answer artifacts when enabled.
-
-Durable short-tier compaction must preserve scope and expiry, keep recent facts,
-and never copy facts into the conversation summary store. It is performed by
-the SDK under one Store lock. Session buffers require an explicit session ID;
-there is no process-wide fallback. HTTP and gRPC recall use the cancellable
-Reader port, including the read-only recall trace endpoint.
-
-When debugging context contamination, inspect:
-
-- `internal/agent/context_planner.go`
-- `internal/agent/system_prompt.go`
-- `internal/agent/memory_gate.go`
-- `internal/session/session.go`
-- relevant gateway handler session writes
-
-## Config Notes
-
-Core config lives in `${HOME}/.luckyagent/config.json`.
-
-High-impact keys:
-
-- `provider`, `api_key`, `api_base`, `model`, `llm_provider.protocol`
-- `embedding.*`
-- `opencli.*`
-- `memory.short_term_max_turns`
-- `context.max_history_turns`, `context.max_context_tokens`,
-  `context.compression_threshold`
-- `agent.max_iterations`, `agent.timeout_seconds`, `agent.auto_approve`,
-  `agent.context_debug`
-- `server.addr`, `server.api_keys`, `server.enable_cors`
-- `msg_gateway.*`
-- `autonomy.*`
-- `hooks.*`
-
-Use `lh config get`, `lh config set`, or inspect `config.example.json` before
-claiming a key exists.
-
-## Engineering Workflow
-
-Before editing code:
-
-1. Run `git status --short` and note unrelated dirty files.
-2. Inspect the smallest relevant code path and nearby tests.
-3. Keep patches scoped to the user request.
-4. Do not revert user changes or unrelated dirty files.
-
-Use `rg`/`rg --files` for repository search. Use `apply_patch` for manual edits.
-
-Focused test examples:
-
-```bash
-go test ./internal/agent
-go test ./internal/config
-go test ./internal/apiapp
-go test ./internal/channelapp/telegram
-go test ./internal/channelapp/qqofficial
-go test ./internal/channelapp/websocket
-go test ./internal/memory ./internal/memoryaestus ./internal/rag
-```
-
-Large `go test ./...` runs may be noisy or slow; prefer focused packages unless
-the change crosses package boundaries.
-
-## Response Rules For Agents
-
-- Lead with the outcome.
-- Distinguish verified facts from inference.
-- Mention exact files, commands, ports, config keys, and test results when they
-  matter.
-- If verification was skipped or failed, say so plainly.
-- Do not claim a command, test, deployment, cleanup, commit, or push succeeded
-  without direct evidence.
-- Keep explanations operational; avoid broad philosophy or transient debug logs
-  in this file.
--
-- 如果修改了功能，注意比对是否需要同步更新config.example.json, 然后是否需要在githubpage的部分进行相关字段的补充说明，并及时更新。
+Report exact verified results and remaining limits. Do not claim tests,
+publication, merge or deployment succeeded without direct evidence. Project
+findings and decisions are synchronized to the user's Obsidian project vault.

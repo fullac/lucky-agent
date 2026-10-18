@@ -4,7 +4,7 @@
 
 # LuckyAgent
 
-LuckyAgent 是一个用 Go 构建的长期运行 Agent runtime。它把 Agent loop、模型路由、工具和技能、长期记忆、RAG、HTTP API 以及消息网关放在同一个运行时里，支持从本地调试逐步走向容器和线上部署。
+LuckyAgent 主仓库维护公开的 Agent 核心库，并保留构建完整 `lh` 程序的薄入口。模型、会话、记忆、RAG 和应用入口来自独立 Go 模块，在同一个进程内组装运行。
 
 它不是只提供一个聊天窗口，而是提供一套可以观察、配置和持续运行的 Agent 基础设施。
 
@@ -184,6 +184,8 @@ lh rag search "deployment"
 - [HTTP API](docs/API.md)
 - [消息网关与服务接口的模块边界](docs/edge-modules.md)
 - [独立工具模块与宿主适配](docs/tool-module.md)
+- [Agent 核心与可执行入口](docs/core-modules.md)
+- [共享应用服务及宿主适配](docs/application-services.md)
 - [Codex App Server 集成](docs/codex-app-server.md)
 - [Grok agent 集成](docs/grok-agent.md)
 - [记忆系统](docs/memory_system.md)
@@ -225,35 +227,34 @@ HOME="$PWD/.lh-home" go run ./cmd/la chat "Test the local runtime"
 ## 项目结构
 
 ```text
-cmd/la                   CLI 入口
-internal/agent           Agent 核心运行时和 Agent loop
-internal/config          配置加载、默认值和运行目录
-internal/memoryaestus     Aestus 记忆后端适配与资源生命周期
-internal/memory          记忆 SDK 导入边界检查
-internal/rag             RAG 索引、检索和持久化
-internal/tool            独立工具模块与宿主适配的兼容入口
-internal/toolapp         凭据存储适配；通用工具运行逻辑由独立模块提供
-internal/server          API 构造兼容入口
-internal/apiapp          API 业务与运行时组装
-internal/gateway         消息平台兼容入口
-internal/channelapp      网关业务与 Agent 接入
-luckyagent-tools         公共工具、任务引擎与能力接口（独立模块）
-luckyagent-gateway       平台协议与回复展示（独立模块）
-luckyagent-api           HTTP/WS/gRPC、资源处理与重连存储（独立模块）
-docker-compose.yml       开发环境 Compose
-docker-compose.prod.yml  生产环境 Compose
-config.example.json      配置模板
+agent/                   公开 Agent 核心与测试（独立 Go module）
+cmd/la/main.go           薄可执行入口
+luckyagent-app           CLI、API/渠道产品逻辑、SDK、评测（外部模块）
+luckyagent-runtime       模型、配置、会话、记忆、RAG 等组件（外部模块）
+luckyagent-tools         通用工具与执行能力（外部模块）
+luckyagent-api           HTTP/WS/gRPC 传输（外部模块）
+luckyagent-gateway       平台协议与连接（外部模块）
+config.example.json      产品配置模板
+docs/                    使用文档与模块边界
 ```
 
 ## 开发
 
-运行 Go 测试：
+运行 Agent 模块和薄入口模块的测试：
 
 ```bash
-go test ./...
+make test
 ```
 
-如果需要修改 API、记忆、RAG、技能或消息网关，建议先阅读对应 package 和 `docs/` 下的专题文档，再运行相关 focused tests。
+`agent` 有自己的 `go.mod`，父目录的 `go test ./...` 不会遍历它。仓库自带的 `go.work` 只包含本仓库两个模块，普通编译和 Docker 都会使用当前 `agent/` 源码：
+
+```bash
+go build -o lh ./cmd/la
+# 另行验证已发布依赖，确保不需要其他仓库的本地源码
+GOWORK=off go build -o lh ./cmd/la
+```
+
+Agent 核心修改在 `agent/`；CLI、API 和渠道产品逻辑在 `luckyagent-app`；后端组件在 `luckyagent-runtime`。新嵌入代码使用 `github.com/yurika0211/lucky-agent/agent`，完整应用 SDK 使用 `github.com/yurika0211/luckyagent-app/sdk`。
 
 ## License
 

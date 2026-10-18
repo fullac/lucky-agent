@@ -27,10 +27,23 @@ jobs:
           go-version: '1.25'
       - name: Download dependencies
         run: go mod download
+      - name: Test Agent module
+        working-directory: agent
+        env:
+          GOWORK: off
+        run: |
+          go test -mod=readonly -race -count=1 ./...
+          go vet ./...
       - name: Run tests
         run: go test ./... -race -count=1 -timeout 10m
       - name: Build
-        run: go build -o lh ./cmd/la
+        run: |
+          test "$(go list -f '{{.Dir}}' github.com/yurika0211/lucky-agent/agent)" = "$PWD/agent"
+          go build -o lh ./cmd/la
+      - name: Build published dependency graph
+        env:
+          GOWORK: off
+        run: go build -mod=readonly -o /tmp/lh-pinned ./cmd/la
       - name: Verify binary
         run: ./lh version
       - name: Smoke release archive layout

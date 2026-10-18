@@ -50,6 +50,7 @@ PROACTIVE_CONFIG_GUIDE.md
 dist/lh.exe
 pocketbase.pid
 
-# Local multi-module development only
-go.work
+# Local cross-repository development only
+go.local.work
+go.local.work.sum
 go.work.sum
