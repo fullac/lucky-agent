@@ -5,7 +5,8 @@ This document describes the HTTP API registered by `lh serve`.
 Source of truth: `luckyagent-api/routes.go` for route registration,
 `luckyagent-app/apiapp/server.go` for application bindings, and its handler files.
 If behavior differs from this document, verify the matching
-handler before relying on it.
+handler before relying on it. Wire contracts and HTTP policy live in
+`luckyagent-api`; the main repository retains this product guide.
 
 ## Base URL
 
@@ -55,7 +56,25 @@ Authorization: Bearer <key>
 
 Query-string API keys are not accepted.
 
-If `server.api_keys` is empty, only localhost is accepted. A key issued by `lh qr` is also accepted. That key lives in the API process memory, defaults to 24 hours, and expires immediately when the API process restarts. It is not written to `config.json`.
+If `server.api_keys` is empty, keyless access requires a loopback connection and
+loopback Host, an absent or same-origin Origin, and no forwarding headers.
+External reverse proxies must configure keys, including proxies running on the
+same machine. The `/health/live` and `/health/ready` probes and root service
+index are public for GET/HEAD; health detail follows ordinary authentication.
+
+A key issued by `lh qr` is also accepted. It lives in API process memory,
+defaults to 24 hours, and expires when the API restarts. It is not written to
+`config.json`.
+
+`server.rate_limit` is the business request quota per credential per minute;
+devices sharing one key share that quota. Authentication attempts have a
+separate per-peer admission limit, and public health probes have their own
+quota. Forwarding headers do not select the client identity. A 429 response
+includes `Retry-After: 60`.
+
+JSON bodies default to 2 MiB and must contain one complete JSON value. Multipart
+upload endpoints keep their separate limits. Unsupported explicit Content-Type
+returns 415; legacy clients omitting the header remain supported.
 
 ## Common Response Shape
 
@@ -65,6 +84,8 @@ Most successful responses are JSON. Error responses use:
 {
   "error": "message",
   "code": 400,
+  "error_code": "invalid_request",
+  "request_id": "server-generated-id",
   "details": "optional details"
 }
 ```
@@ -81,9 +102,14 @@ Common status codes:
 | `404` | Not found |
 | `405` | Method not allowed |
 | `409` | Conflict |
+| `413` | Request body too large |
+| `415` | Unsupported media type |
 | `429` | Rate limit exceeded |
 | `500` | Internal error |
 | `503` | Service not initialized |
+
+`X-Request-ID` identifies the response in logs and errors. Existing numeric
+`code`, `error` and optional `details` fields remain available.
 
 ## Models
 
@@ -113,6 +139,10 @@ the upstream model service.
 
 Streaming chat over Server-Sent Events.
 
+An omitted session ID creates a new session. An explicitly supplied session
+which does not exist returns 404 before any model or tool execution.
+`max_iterations` accepts 0 through 300; zero selects the configured default.
+
 Request body:
 
 ```json
@@ -137,9 +167,25 @@ curl -N http://127.0.0.1:9090/api/v1/chat \
   -d "{\"message\":\"hello\"}"
 ```
 
+SSE frames retain their event type and content and include `run_id`, `event_id`
+and an `id:` line. Available creation time and token usage are also forwarded.
+A failed event carries a string `error`, `error_code` and `status: "failed"`;
+it is not followed by a successful `complete`. Explicit cancellation has
+`type: "cancelled"` and `status: "cancelled"` when the connection can still be
+written. Only a completed Agent turn ends with `complete,status=completed`.
+An incomplete stream is an error. Heartbeats and disconnect cancellation remain
+enabled.
+
+SSE event IDs identify the current response; this endpoint does not replay a
+persisted SSE cursor. Reposting can execute a new turn. Use the WebSocket
+request-ID and reconnect contract for durable retryable delivery.
+
 ### `POST /api/v1/chat/sync`
 
 Synchronous chat response.
+
+Unknown explicit sessions also return 404. Successful responses use the actual
+session where the messages were saved; there is no sessionless fallback.
 
 Request body is the same as `/api/v1/chat`.
 
@@ -691,6 +737,34 @@ WebSocket URL:
 ws://127.0.0.1:9090/api/v1/ws?session=<session-id>
 ```
 
+Authenticate the upgrade with the same headers as HTTP. Choose a stable `id`
+for each chat request. Repeating the same session, ID and input returns the
+accepted run and stored output without another execution. Different input
+under that ID returns `REQUEST_CONFLICT`; failed initial persistence returns
+`PERSIST_FAILED` without queueing a run. The running-state write must also
+succeed before execution. A later event write failure reports `PERSIST_FAILED`,
+stops execution and suppresses subsequent success output. This error is sent
+without a replay cursor when the store itself is unavailable; the run is failed
+rather than classified as user cancellation.
+
+Send `type: "reconnect"` with `data.last_message_id` set to the last event
+actually received. The server uses reliable bounded replay, buffers live
+events during recovery, and deduplicates overlapping event IDs. If a client
+cannot keep up it is explicitly disconnected and can retry from its cursor.
+Clients should also deduplicate `event_id`. Recovery failures are reported as
+`RECOVERY_FAILED` rather than an empty history.
+
+`max_iterations` is applied to the actual Agent Loop and accepts 0 through 300.
+Per-request `profile_id` is explicitly unsupported; use the model profile API
+to change defaults. Partial or empty stream EOF is a failed run, not a completed
+answer. Request deduplication does not make external tool side effects
+transactional across a process crash.
+
+Run persistence uses compatible JSON snapshots plus incremental JSONL journals
+under the runtime home. Back up both. Older binaries cannot read new journal
+entries after the last snapshot. Retention remains seven days, with active
+work retained and cleanup performed on access/checkpoint.
+
 Client message `type: "lucky"` collects several chat messages for one session
 and submits them as a single turn. `data.action` is `on`, `off`, `status`, or
 `cancel`. While collection is active, ordinary `chat` messages are stored
@@ -699,8 +773,9 @@ instead of starting a run. The server replies with `type: "status"` and
 segments. Collection state is in memory for the current server process.
 
 On startup, durable run recovery scans session IDs and queued/running run
-metadata without retaining all stored event histories. Event replay still
-loads a session lazily through the existing reconnect path. Run fields,
+metadata from snapshots and journals without retaining all stored event
+histories, including sessions with only a journal. Event replay still loads
+a session lazily through the existing reconnect path. Run fields,
 attachments, event JSON and reconnect cursors are unchanged. See
 [runtime request and recovery options](runtime-request-recovery.md).
 
@@ -708,6 +783,20 @@ Server push `type: "task_event"` is sent to every connected client when a task
 event is stored. `data` carries `type`, `task_id`, `parent_id`, `status`,
 `mode`, `message`, `progress`, `session_id`, and `description`. A scheduled
 message delivered into a session is still `type: "stream_end"` with no run id.
+
+## gRPC embedding
+
+`lh serve` does not start a gRPC listener. The application module's
+`api/grpc.NewGRPCServer` library inherits Agent server keys and quotas and
+protects unary/streaming methods, health and reflection. Embedders can supply
+configuration and pairing validation with `NewGRPCServerWithOptions`.
+
+Chat uses real sessions and execution statistics; ChatStream forwards live
+Agent content with valid UTF-8 and one terminal Done. Errors and cancellation
+return gRPC statuses. `max_iterations` accepts 0 through 300; nonempty metadata
+is rejected because it has no defined semantics. The existing proto3 boolean
+has no presence bit, so omitted `auto_approve` means false. The protobuf stream
+continues to carry content/session/done fields rather than tool/approval events.
 
 ## Soul Templates
 
