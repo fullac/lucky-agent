@@ -176,3 +176,35 @@ func TestInjectedPluginSnapshotWaitsForExplicitStartup(t *testing.T) {
 		t.Fatalf("explicit startup did not activate plugin MCP: output=%q err=%v", output, err)
 	}
 }
+
+func TestInjectedPluginsPreservePreparedMCPSettings(t *testing.T) {
+	components := preparedTestComponents(t, "")
+	host := mcpclient.Config{Servers: map[string]mcpclient.ServerConfig{
+		"custom":       {URL: "http://127.0.0.1:1", Disabled: true},
+		"fixture.docs": {URL: "http://127.0.0.1:2", Disabled: true},
+	}}
+	if err := components.MCP.Configure(host); err != nil {
+		t.Fatal(err)
+	}
+	root := pluginFixture(t, map[string]string{
+		".mcp.json": `{"mcpServers":{"docs":{"type":"http","url":"http://127.0.0.1:3"},"extra":{"type":"http","url":"http://127.0.0.1:4"}}}`,
+	})
+	installPluginFixture(t, components.Config, root, true)
+	instance, err := NewWithDependencies(Options{}, components)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	actual := components.MCP.Configured()
+	if len(actual.Servers) != 3 || actual.Servers["fixture.extra"].URL != "http://127.0.0.1:4" {
+		t.Fatalf("plugin MCP declarations missing: %+v", actual)
+	}
+	for name, expected := range host.Servers {
+		if !reflect.DeepEqual(actual.Servers[name], expected) {
+			t.Fatalf("plugin replaced prepared server %s: %+v", name, actual.Servers[name])
+		}
+	}
+	if len(components.MCP.Status()) != 0 {
+		t.Fatal("injected configuration activated MCP")
+	}
+}

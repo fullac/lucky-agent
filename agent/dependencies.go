@@ -131,7 +131,7 @@ func NewWithDependencies(opts Options, deps *Dependencies) (*Agent, error) {
 	}
 	a.hooks.Reload(a.pluginHookConfig(c))
 	if a.mcpClient != nil {
-		if err := a.mcpClient.Configure(a.pluginMCPConfig(c.MCP)); err != nil {
+		if err := a.mcpClient.Configure(a.pluginMCPConfig(a.mcpClient.Configured())); err != nil {
 			return nil, fmt.Errorf("configure plugin MCP: %w", err)
 		}
 	}
