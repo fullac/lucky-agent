@@ -1,4 +1,6 @@
 .git
+go.work
+go.work.sum
 .github
 .codex
 .lh-home

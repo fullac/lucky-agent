@@ -10,10 +10,12 @@ else
 LH_CMD := go run ./cmd/la
 endif
 RUN_WITH_HOME = set "HOME=$(HOME_DIR)" &&
+MODULE_TEST_ENV = set "GOWORK=off" &&
 REMOVE_LH = if exist lh del /q lh & if exist lh.exe del /q lh.exe
 else
 LH_CMD := go run ./cmd/la
 RUN_WITH_HOME = HOME="$(HOME_DIR)"
+MODULE_TEST_ENV = GOWORK=off
 REMOVE_LH = rm -f lh lh.exe
 endif
 
@@ -24,6 +26,7 @@ install: build
 	go install ./cmd/la
 
 test:
+	cd agent && $(MODULE_TEST_ENV) go test ./...
 	go test ./...
 
 init:
