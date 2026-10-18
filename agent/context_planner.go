@@ -55,6 +55,7 @@ contextBudget 描述不同上下文类别的 token 预算。
 */
 type contextBudget struct {
 	System     int
+	Project    int
 	Memory     int
 	RAG        int
 	History    int
@@ -191,6 +192,7 @@ func newContextPlannerWithProvider(a *Agent, options contextBuildOptions, turnPr
 		cfg = a.contextWin.Config()
 	}
 	budget := computeContextBudget(cfg.MaxTokens, cfg.ReservedTokens, contextBudgetShareFor(a))
+	budget.Project = utils.MinInt(4096, utils.MaxInt(128, (cfg.MaxTokens-cfg.ReservedTokens)/3))
 	var runtime contextRuntime
 	if a != nil {
 		runtime = a
@@ -242,8 +244,9 @@ func (p *contextPlanner) BuildInput(ctx context.Context, sess *session.Session, 
 	systemPrompt := ""
 	if p.agent != nil {
 		systemPrompt = p.agent.buildSystemPromptWithOptions(sess, systemPromptOptions{
-			DisabledTools: p.options.DisabledTools,
-			turnProvider:  p.turnProvider,
+			DisabledTools:      p.options.DisabledTools,
+			OmitProjectContext: true,
+			turnProvider:       p.turnProvider,
 		})
 	}
 	systemParts := []string{p.fitTextToBudget(aOrEmpty(systemPrompt), p.budget.System)}
@@ -259,6 +262,11 @@ func (p *contextPlanner) BuildInput(ctx context.Context, sess *session.Session, 
 	systemContent := strings.TrimSpace(strings.Join(utils.FilterNonEmptyTrimmed(systemParts), "\n\n"))
 	if systemContent != "" {
 		messages = append(messages, provider.Message{Role: "system", Content: systemContent})
+	}
+	if source, ok := p.agent.(interface{ buildPinnedProjectPrompt(*session.Session) string }); ok {
+		if project := source.buildPinnedProjectPrompt(sess); project != "" {
+			messages = append(messages, provider.Message{Role: "system", Content: p.fitEvidenceToBudget(project, p.budget.Project)})
+		}
 	}
 	// Keep the append-only session history ahead of query-dependent evidence so
 	// provider prefix caches survive changes in memory and RAG retrieval.
@@ -497,7 +505,7 @@ func (p *contextPlanner) buildContextReport(messages []provider.Message) context
 	}
 
 	for _, msg := range messages {
-		tokens := p.est.Estimate(msg.Content) + 4
+		tokens := estimateProviderMessages(p.est, []provider.Message{msg})
 		report.totalTokens += tokens
 		name := classifyContextBucket(msg)
 		report.bucketTokens[name] += tokens
@@ -545,6 +553,8 @@ func classifyContextBucket(msg provider.Message) string {
 		return "history"
 	}
 	switch {
+	case strings.HasPrefix(msg.Content, "[Project Context]"):
+		return "project"
 	case strings.HasPrefix(msg.Content, "[Core Memory"),
 		strings.HasPrefix(msg.Content, "[Working Memory"),
 		strings.HasPrefix(msg.Content, "[Session History"),
@@ -555,7 +565,7 @@ func classifyContextBucket(msg provider.Message) string {
 		return "rag"
 	case strings.HasPrefix(msg.Content, "[Conversation Summary"),
 		strings.HasPrefix(msg.Content, "[Conversation Themes"),
-		strings.HasPrefix(msg.Content, "[Compact Summary"):
+		strings.HasPrefix(msg.Content, "[Compact Summary"), isContextEvidence(msg.Content):
 		return "history"
 	default:
 		return "system"
@@ -578,6 +588,9 @@ func (p *contextPlanner) cacheKey(sess *session.Session, userInput string) (uint
 
 	if soul := p.agent.Soul(); soul != nil {
 		payload["system_prompt"] = soul.SystemPrompt()
+	}
+	if source, ok := p.agent.(interface{ buildPinnedProjectPrompt(*session.Session) string }); ok {
+		payload["project_context"] = source.buildPinnedProjectPrompt(sess)
 	}
 	if p.turnProvider.valid() {
 		_, fc := p.turnProvider.provider.(provider.FunctionCallingProvider)
@@ -1200,6 +1213,7 @@ func (p *contextPlanner) buildHistoryMessages(sess *session.Session, query strin
 	}
 	_ = query // History is intentionally query-independent for prefix caching.
 	summaries, raw := p.compactBoundaryContext(all)
+	summaries = p.projectCompactSummaries(summaries)
 	messages := append([]provider.Message(nil), summaries...)
 	rawBudget := p.budget.History - estimateProviderMessages(p.est, summaries)
 	if rawBudget < 128 {

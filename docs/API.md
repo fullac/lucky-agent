@@ -678,7 +678,7 @@ Sensitive values, including API keys, are never returned.
 | `message` | Hypothetical next user message. Empty inspects the context already on hand and does not append a user turn |
 | `include_messages` | `1` copies full section text into `sections[].content`. The default returns a 160-character `preview` |
 
-`usage` is a local planner estimate, not billed provider usage. `usage.ratio` is `total_tokens / available_tokens`. Buckets are `system`, `history`, `memory`, `rag`, `tool_result`, and `user`. Inspection does not write memory, session messages, or the context cache.
+`usage` is a local planner estimate, not billed provider usage. `usage.ratio` is `total_tokens / available_tokens`. Buckets are `system`, `project`, `history`, `memory`, `rag`, `tool_result`, and `user`. Inspection does not write memory, session messages, or the context cache.
 
 Fit request body:
 
