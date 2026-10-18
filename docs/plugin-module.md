@@ -6,6 +6,9 @@ marketplace、安装快照、版本与信任。公开 Agent 的 `agent/plugin_ru
 接入 Skills、命令、Agent 子会话、MCP 和工具 Hooks；模型和权限仍由宿主管理。
 
 ```bash
+lh plugin install https://github.com/yurika0211/luckyagent-plugins.git --ref v0.1.0 --subdir examples/starter
+lh plugin list
+# 本地目录也可直接校验或安装
 lh plugin validate /path/to/luckyagent-plugins/examples/starter
 lh plugin install /path/to/luckyagent-plugins/examples/starter
 lh plugin list
