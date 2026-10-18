@@ -2,9 +2,11 @@
 
 This document describes the HTTP API registered by `lh serve`.
 
-Source of truth: `internal/server/server.go` and the handler files under
-`internal/server/`. If behavior differs from this document, verify the matching
-handler before relying on it.
+Source of truth: `luckyagent-api/routes.go` for route registration,
+`luckyagent-app/apiapp/server.go` for application bindings, and its handler files.
+If behavior differs from this document, verify the matching
+handler before relying on it. Wire contracts and HTTP policy live in
+`luckyagent-api`; the main repository retains this product guide.
 
 ## Base URL
 
@@ -54,7 +56,25 @@ Authorization: Bearer <key>
 
 Query-string API keys are not accepted.
 
-If `server.api_keys` is empty, only localhost is accepted. A key issued by `lh qr` is also accepted. That key lives in the API process memory, defaults to 24 hours, and expires immediately when the API process restarts. It is not written to `config.json`.
+If `server.api_keys` is empty, keyless access requires a loopback connection and
+loopback Host, an absent or same-origin Origin, and no forwarding headers.
+External reverse proxies must configure keys, including proxies running on the
+same machine. The `/health/live` and `/health/ready` probes and root service
+index are public for GET/HEAD; health detail follows ordinary authentication.
+
+A key issued by `lh qr` is also accepted. It lives in API process memory,
+defaults to 24 hours, and expires when the API restarts. It is not written to
+`config.json`.
+
+`server.rate_limit` is the business request quota per credential per minute;
+devices sharing one key share that quota. Authentication attempts have a
+separate per-peer admission limit, and public health probes have their own
+quota. Forwarding headers do not select the client identity. A 429 response
+includes `Retry-After: 60`.
+
+JSON bodies default to 2 MiB and must contain one complete JSON value. Multipart
+upload endpoints keep their separate limits. Unsupported explicit Content-Type
+returns 415; legacy clients omitting the header remain supported.
 
 ## Common Response Shape
 
@@ -64,6 +84,8 @@ Most successful responses are JSON. Error responses use:
 {
   "error": "message",
   "code": 400,
+  "error_code": "invalid_request",
+  "request_id": "server-generated-id",
   "details": "optional details"
 }
 ```
@@ -80,9 +102,14 @@ Common status codes:
 | `404` | Not found |
 | `405` | Method not allowed |
 | `409` | Conflict |
+| `413` | Request body too large |
+| `415` | Unsupported media type |
 | `429` | Rate limit exceeded |
 | `500` | Internal error |
 | `503` | Service not initialized |
+
+`X-Request-ID` identifies the response in logs and errors. Existing numeric
+`code`, `error` and optional `details` fields remain available.
 
 ## Models
 
@@ -112,6 +139,10 @@ the upstream model service.
 
 Streaming chat over Server-Sent Events.
 
+An omitted session ID creates a new session. An explicitly supplied session
+which does not exist returns 404 before any model or tool execution.
+`max_iterations` accepts 0 through 300; zero selects the configured default.
+
 Request body:
 
 ```json
@@ -136,9 +167,25 @@ curl -N http://127.0.0.1:9090/api/v1/chat \
   -d "{\"message\":\"hello\"}"
 ```
 
+SSE frames retain their event type and content and include `run_id`, `event_id`
+and an `id:` line. Available creation time and token usage are also forwarded.
+A failed event carries a string `error`, `error_code` and `status: "failed"`;
+it is not followed by a successful `complete`. Explicit cancellation has
+`type: "cancelled"` and `status: "cancelled"` when the connection can still be
+written. Only a completed Agent turn ends with `complete,status=completed`.
+An incomplete stream is an error. Heartbeats and disconnect cancellation remain
+enabled.
+
+SSE event IDs identify the current response; this endpoint does not replay a
+persisted SSE cursor. Reposting can execute a new turn. Use the WebSocket
+request-ID and reconnect contract for durable retryable delivery.
+
 ### `POST /api/v1/chat/sync`
 
 Synchronous chat response.
+
+Unknown explicit sessions also return 404. Successful responses use the actual
+session where the messages were saved; there is no sessionless fallback.
 
 Request body is the same as `/api/v1/chat`.
 
@@ -162,6 +209,155 @@ curl http://127.0.0.1:9090/api/v1/chat/sync \
   -H "Content-Type: application/json" \
   -d "{\"message\":\"hello\"}"
 ```
+
+An installed plugin command such as `/starter:review UI/HTTP-API.go --Keep-Case`
+runs through the normal Agent Loop. The runtime recognizes its exact namespaced
+name before the built-in slash-command router, expands the command prompt's
+`$ARGUMENTS`, and keeps the argument spelling, case, and hyphens. Expansion is a
+prompt operation; it does not evaluate shell substitutions. The chat request
+retains its session and attachments, and returns the usual `ChatResponse` above.
+The same request fields, including `max_iterations` and `auto_approve`, apply.
+
+```bash
+curl http://127.0.0.1:9090/api/v1/chat/sync \
+  -H "Content-Type: application/json" \
+  -d '{"message":"/starter:review UI/HTTP-API.go --Keep-Case","session_id":"session-id"}'
+```
+
+## Commands
+
+These routes use the normal API authentication middleware. The command catalog
+includes built-in commands and commands from enabled plugins loaded when the
+Agent starts. Install or change plugins with `lh plugin`, then restart the
+running API process to load the new installation state. See
+[the plugin module guide](plugin-module.md).
+
+### `GET /api/v1/commands`
+
+Returns `{"commands":[...],"count":N}`. Each entry has `name`, `usage`,
+`description`, and `group`. Plugin entries use `group: "plugins"` and the exact
+`plugin-name:command-name` identifier. For example, the installed starter plugin
+adds this entry:
+
+```json
+{
+  "name": "starter:review",
+  "usage": "/starter:review [arguments]",
+  "description": "Run installed plugin command",
+  "group": "plugins"
+}
+```
+
+Clients should use the returned name verbatim. Plugin command names retain their
+case and hyphens; the built-in command normalization is applied only after a
+plugin lookup has failed.
+
+### `POST /api/v1/commands`
+
+Run a catalog command. For an installed plugin command, both
+`"starter:review"` and `"/starter:review"` are accepted in `command`:
+
+```json
+{
+  "command": "starter:review",
+  "args": "UI/HTTP-API.go --Keep-Case MixedCase-v2",
+  "session_id": "optional-existing-session-id"
+}
+```
+
+Plugin command execution creates a session when `session_id` is omitted. A
+supplied session must exist, otherwise the endpoint returns `404`. It expands
+the command prompt using `args` and runs the real Agent Loop with the host's
+configured Agent limits and approval policy. The argument tail retains its
+spelling, case, and hyphens. This endpoint accepts text command arguments;
+use `/api/v1/chat/sync` when the command turn includes attachments or per-request
+chat options.
+
+Successful plugin command execution returns HTTP `200`:
+
+```json
+{
+  "command": "starter:review",
+  "ok": true,
+  "output": "assistant response",
+  "session_id": "session-id"
+}
+```
+
+The echoed command omits the optional leading slash and otherwise preserves the
+namespaced name. Loop failures return HTTP `200` with `ok: false`, the error in
+`output`, and the session id; clients must inspect `ok`. Invalid JSON returns
+`400`. Built-in commands retain their existing command-specific behavior and
+use the same `command`, `ok`, and `output` response fields.
+
+## Plugin management
+
+All plugin management routes use the existing API authentication and admission
+policy. They manage installations on the server. The running Agent keeps its
+startup snapshot until restart; these routes do not execute plugins or restart
+the service.
+
+| Method | Route | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/plugins` | Installed plugins, including disabled or damaged entries |
+| `POST` | `/api/v1/plugins` | Install from a Git repository or server directory |
+| `GET` | `/api/v1/plugins/{name}` | One installed plugin |
+| `POST` | `/api/v1/plugins/{name}/enable` | Save enabled state |
+| `POST` | `/api/v1/plugins/{name}/disable` | Save disabled state |
+| `POST` | `/api/v1/plugins/{name}/update` | Update from the recorded source |
+| `DELETE` | `/api/v1/plugins/{name}` | Remove registration, retaining immutable cache |
+
+Inventory response:
+
+```json
+{
+  "count": 1,
+  "changes_require_restart": true,
+  "plugins": [{
+    "name": "starter", "version": "1.0.0", "description": "Review helpers",
+    "source": "https://github.com/team/plugins.git", "ref": "v1.0.0",
+    "revision": "resolved-commit", "subdir": "plugins/starter",
+    "digest": "installed-sha256", "installed_at": "2026-10-18T04:00:00Z",
+    "enabled": true, "trusted": false, "requires_trust": false,
+    "skills": ["review"], "commands": ["review"], "agents": ["reviewer"],
+    "mcp_servers": [], "hook_count": 0
+  }]
+}
+```
+
+Damaged entries include `error` and remain manageable. A corrupt installation
+index fails the request rather than pretending the inventory is empty. A missing
+installation directory returns an empty inventory. Detail returns `{plugin:...}`.
+Responses omit prompt contents, scripts, MCP commands/environment and credentials;
+source URL userinfo/query/fragment are redacted.
+
+Install request, limited to 16 KiB:
+
+```json
+{"source":"https://github.com/team/plugins.git","ref":"v1.0.0","subdir":"plugins/starter","trust":false}
+```
+
+`source` is required. `ref`/`subdir` are optional. Local directories refer to the
+server filesystem, not the Android device. Update accepts `{"trust":false}`
+(4 KiB maximum), reuses the recorded source/ref/subdir, and retains a manually
+disabled state. Trust is explicit for each installation version; it is not carried
+over from previous contents. Untrusted MCP/hook plugins install disabled, while
+pure prompt plugins can be enabled without execution trust. Enable/disable take
+no request fields (clients may send `{}`). Git/copy operations have a 90 second deadline.
+
+Install returns `201`; the remaining successful mutations return `200`:
+
+```json
+{"action":"install","name":"starter","plugin":{"name":"starter","version":"1.0.0"},"runtime_restart_required":true,"message":"插件变更已保存，重启 LuckyAgent 服务后生效。"}
+```
+
+The abbreviated `plugin` above uses the complete inventory entry in actual
+responses; remove returns `plugin:null`. Names are lowercase slugs, 1–48 characters.
+Invalid requests return `400`, oversized JSON `413`, unsupported media types `415`,
+missing plugins `404`, unsupported methods `405`,
+busy/conflicting trust or digest `409`, storage failures `500`, and deadlines `504`.
+See [the plugin guide](plugin-module.md#android-插件管理) for the Android entry point
+and restart behavior. No new `config.json` keys are required.
 
 ## Sessions
 
@@ -194,6 +390,14 @@ Patch body fields are optional, but at least one is required:
 
 An empty `title` is rejected. An empty `project` clears the group. Delete returns `{"id":"...","deleted":true}`.
 
+Metadata updates persist the sidecar without loading or rewriting the full
+history. A successful delete invalidates existing session handles and cancels
+active calls owned by this Agent, including this server's HTTP and WebSocket
+work. Accepted WebSocket queue items remain bound to the original handle and
+cannot recreate it after deletion. A filesystem failure returns an error and
+does not trigger task cancellation or clear the manager's live entry. External
+work stops when its provider or tool observes cancellation.
+
 Get-session query parameters:
 
 | Parameter | Description |
@@ -204,6 +408,12 @@ Get-session query parameters:
 | `all=1` | Legacy full history helper used by some clients |
 
 Response extras: `format`, `byte_size`, `content_truncated` (true when bodies were capped).
+
+History reads and tool traces return `500` for storage/decoding failures instead
+of an empty history. A previously fetched handle invalidated by concurrent
+deletion returns `410`; an unknown session ID returns `404`. Cold segment pages
+build a bounded sparse offset index on first access and reuse it while the file
+fingerprint is unchanged. Full-history requests still load the transcript.
 
 Tool-trace query parameters:
 
@@ -284,6 +494,15 @@ Related config keys under `context`:
 
 - `session_auto_roll`, `session_max_messages`, `session_max_bytes`, `session_roll_retain_turns`
 - `history_preview_chars`
+
+New backups embed external message bodies; existing version 1 backups remain
+readable when their bodies are available. Restore forces a complete transcript
+rewrite, and GC retains references from live history, archives and backups.
+Unreadable reference sources stop GC before deletion. Readers preserve complete
+history before an incomplete uncommitted JSONL tail; missing committed messages
+and middle corruption remain errors. The next append repairs that tail.
+See [session storage reliability](session-reliability.md). No configuration keys
+were added for these guarantees.
 
 ## Tasks
 
@@ -459,7 +678,7 @@ Sensitive values, including API keys, are never returned.
 | `message` | Hypothetical next user message. Empty inspects the context already on hand and does not append a user turn |
 | `include_messages` | `1` copies full section text into `sections[].content`. The default returns a 160-character `preview` |
 
-`usage` is a local planner estimate, not billed provider usage. `usage.ratio` is `total_tokens / available_tokens`. Buckets are `system`, `history`, `memory`, `rag`, `tool_result`, and `user`. Inspection does not write memory, session messages, or the context cache.
+`usage` is a local planner estimate, not billed provider usage. `usage.ratio` is `total_tokens / available_tokens`. Buckets are `system`, `project`, `history`, `memory`, `rag`, `tool_result`, and `user`. Inspection does not write memory, session messages, or the context cache.
 
 Fit request body:
 
@@ -610,6 +829,34 @@ WebSocket URL:
 ws://127.0.0.1:9090/api/v1/ws?session=<session-id>
 ```
 
+Authenticate the upgrade with the same headers as HTTP. Choose a stable `id`
+for each chat request. Repeating the same session, ID and input returns the
+accepted run and stored output without another execution. Different input
+under that ID returns `REQUEST_CONFLICT`; failed initial persistence returns
+`PERSIST_FAILED` without queueing a run. The running-state write must also
+succeed before execution. A later event write failure reports `PERSIST_FAILED`,
+stops execution and suppresses subsequent success output. This error is sent
+without a replay cursor when the store itself is unavailable; the run is failed
+rather than classified as user cancellation.
+
+Send `type: "reconnect"` with `data.last_message_id` set to the last event
+actually received. The server uses reliable bounded replay, buffers live
+events during recovery, and deduplicates overlapping event IDs. If a client
+cannot keep up it is explicitly disconnected and can retry from its cursor.
+Clients should also deduplicate `event_id`. Recovery failures are reported as
+`RECOVERY_FAILED` rather than an empty history.
+
+`max_iterations` is applied to the actual Agent Loop and accepts 0 through 300.
+Per-request `profile_id` is explicitly unsupported; use the model profile API
+to change defaults. Partial or empty stream EOF is a failed run, not a completed
+answer. Request deduplication does not make external tool side effects
+transactional across a process crash.
+
+Run persistence uses compatible JSON snapshots plus incremental JSONL journals
+under the runtime home. Back up both. Older binaries cannot read new journal
+entries after the last snapshot. Retention remains seven days, with active
+work retained and cleanup performed on access/checkpoint.
+
 Client message `type: "lucky"` collects several chat messages for one session
 and submits them as a single turn. `data.action` is `on`, `off`, `status`, or
 `cancel`. While collection is active, ordinary `chat` messages are stored
@@ -617,10 +864,31 @@ instead of starting a run. The server replies with `type: "status"` and
 `data.state: "lucky"`. `off` enqueues one chat run built from the collected
 segments. Collection state is in memory for the current server process.
 
+On startup, durable run recovery scans session IDs and queued/running run
+metadata from snapshots and journals without retaining all stored event
+histories, including sessions with only a journal. Event replay still loads
+a session lazily through the existing reconnect path. Run fields,
+attachments, event JSON and reconnect cursors are unchanged. See
+[runtime request and recovery options](runtime-request-recovery.md).
+
 Server push `type: "task_event"` is sent to every connected client when a task
 event is stored. `data` carries `type`, `task_id`, `parent_id`, `status`,
 `mode`, `message`, `progress`, `session_id`, and `description`. A scheduled
 message delivered into a session is still `type: "stream_end"` with no run id.
+
+## gRPC embedding
+
+`lh serve` does not start a gRPC listener. The application module's
+`api/grpc.NewGRPCServer` library inherits Agent server keys and quotas and
+protects unary/streaming methods, health and reflection. Embedders can supply
+configuration and pairing validation with `NewGRPCServerWithOptions`.
+
+Chat uses real sessions and execution statistics; ChatStream forwards live
+Agent content with valid UTF-8 and one terminal Done. Errors and cancellation
+return gRPC statuses. `max_iterations` accepts 0 through 300; nonempty metadata
+is rejected because it has no defined semantics. The existing proto3 boolean
+has no presence bit, so omitted `auto_approve` means false. The protobuf stream
+continues to carry content/session/done fields rather than tool/approval events.
 
 ## Soul Templates
 

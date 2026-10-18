@@ -49,3 +49,8 @@ HOOKS_INIT_INTEGRATION.md
 PROACTIVE_CONFIG_GUIDE.md
 dist/lh.exe
 pocketbase.pid
+
+# Local cross-repository development only
+go.local.work
+go.local.work.sum
+go.work.sum

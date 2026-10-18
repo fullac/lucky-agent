@@ -1,0 +1,210 @@
+package agent
+
+import (
+	"context"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"reflect"
+	"sync/atomic"
+	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/yurika0211/luckyagent-runtime/bootstrap"
+	"github.com/yurika0211/luckyagent-runtime/config"
+	"github.com/yurika0211/luckyagent-runtime/mcpclient"
+	"github.com/yurika0211/luckyagent-runtime/tool"
+	"github.com/yurika0211/luckyagent-tools/memory"
+)
+
+func preparedTestComponents(t *testing.T, endpoint string) *bootstrap.Components {
+	t.Helper()
+	mgr, err := config.NewManagerWithDir(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := mgr.Get()
+	cfg.APIKey, cfg.LlmProvider.APIKey = "test-key", "test-key"
+	cfg.Proactive.Enabled = true
+	if endpoint != "" {
+		cfg.MCP.Servers = map[string]mcpclient.ServerConfig{"fixture": {Transport: "http", URL: endpoint, TimeoutSeconds: 1}}
+	}
+	if err := mgr.Replace(cfg); err != nil {
+		t.Fatal(err)
+	}
+	components, err := bootstrap.Open(mgr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = components.Close() })
+	return components
+}
+
+func treeNames(t *testing.T, directory string) []string {
+	t.Helper()
+	var result []string
+	err := filepath.WalkDir(directory, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		result = append(result, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestInjectedConstructionDoesNotActivateServicesOrCreateFiles(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	components := preparedTestComponents(t, server.URL)
+	before := treeNames(t, components.Config.HomeDir())
+	instance, err := NewWithDependencies(Options{ContextCacheSize: 4}, components)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	_ = instance.StartupHooks()
+	if requests.Load() != 0 || components.ProactiveRuntime.Started() || components.Support.AutonomyKit.Status().Started {
+		t.Fatal("injected construction activated an application service")
+	}
+	if after := treeNames(t, components.Config.HomeDir()); !reflect.DeepEqual(before, after) {
+		t.Fatalf("constructor created files: before=%v after=%v", before, after)
+	}
+	if instance.Sessions() != components.Sessions || instance.Provider() != components.Provider.Provider {
+		t.Fatal("injected resources were replaced")
+	}
+}
+
+type countingMemoryStore struct {
+	memory.RuntimeStore
+	closed int
+}
+
+func (s *countingMemoryStore) Close() error {
+	s.closed++
+	return s.RuntimeStore.Close()
+}
+
+func TestInjectedResourceOwnershipAndRepeatedClose(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		t.Run(map[bool]string{false: "borrowed", true: "owned"}[owned], func(t *testing.T) {
+			components := preparedTestComponents(t, "")
+			store := &countingMemoryStore{RuntimeStore: components.Memory.Store}
+			components.Memory.Store = store
+			instance, err := NewWithDependencies(Options{TakeOwnership: owned}, components)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := instance.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := instance.Close(); err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if owned {
+				want = 1
+			}
+			if store.closed != want {
+				t.Fatalf("close calls=%d want=%d", store.closed, want)
+			}
+			if err := components.Close(); err != nil || store.closed != 1 {
+				t.Fatalf("owner close=%d err=%v", store.closed, err)
+			}
+		})
+	}
+}
+
+func TestInvalidInjectionDoesNotTakeOwnership(t *testing.T) {
+	components := preparedTestComponents(t, "")
+	store := &countingMemoryStore{RuntimeStore: components.Memory.Store}
+	components.Memory.Store = store
+	components.Provider.Provider = nil
+	if _, err := NewWithDependencies(Options{TakeOwnership: true}, components); err == nil || store.closed != 0 {
+		t.Fatal("invalid constructor accepted dependencies or closed caller resources")
+	}
+}
+
+func TestInjectedPluginSnapshotWaitsForExplicitStartup(t *testing.T) {
+	var requests atomic.Int32
+	backend := mcp.NewServer(&mcp.Implementation{Name: "injected-plugin", Version: "1"}, nil)
+	backend.AddTool(&mcp.Tool{Name: "echo", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "injected-plugin-called"}}}, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return backend }, &mcp.StreamableHTTPOptions{Stateless: true})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	components := preparedTestComponents(t, "")
+	root := pluginFixture(t, map[string]string{
+		"commands/review.md": "Review $ARGUMENTS",
+		".mcp.json":          fmt.Sprintf(`{"mcpServers":{"docs":{"type":"http","url":%q}}}`, server.URL),
+	})
+	installPluginFixture(t, components.Config, root, true)
+	before := treeNames(t, components.Config.HomeDir())
+	instance, err := NewWithDependencies(Options{}, components)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	if !instance.HasPluginCommand("/fixture:review source.go") {
+		t.Fatal("injected construction omitted the plugin snapshot")
+	}
+	if requests.Load() != 0 {
+		t.Fatal("injected construction started plugin MCP")
+	}
+	if after := treeNames(t, components.Config.HomeDir()); !reflect.DeepEqual(before, after) {
+		t.Fatal("injected plugin construction created runtime files")
+	}
+	if err := components.Start(context.Background(), instance.StartupHooks()); err != nil {
+		t.Fatal(err)
+	}
+	name := tool.MCPToolName("fixture.docs", "echo")
+	output, err := instance.Tools().CallWithContext(name, nil, tool.ExecutionContext{Context: context.Background(), AutoApprove: true})
+	if err != nil || output != "injected-plugin-called" || requests.Load() == 0 {
+		t.Fatalf("explicit startup did not activate plugin MCP: output=%q err=%v", output, err)
+	}
+}
+
+func TestInjectedPluginsPreservePreparedMCPSettings(t *testing.T) {
+	components := preparedTestComponents(t, "")
+	host := mcpclient.Config{Servers: map[string]mcpclient.ServerConfig{
+		"custom":       {URL: "http://127.0.0.1:1", Disabled: true},
+		"fixture.docs": {URL: "http://127.0.0.1:2", Disabled: true},
+	}}
+	if err := components.MCP.Configure(host); err != nil {
+		t.Fatal(err)
+	}
+	root := pluginFixture(t, map[string]string{
+		".mcp.json": `{"mcpServers":{"docs":{"type":"http","url":"http://127.0.0.1:3"},"extra":{"type":"http","url":"http://127.0.0.1:4"}}}`,
+	})
+	installPluginFixture(t, components.Config, root, true)
+	instance, err := NewWithDependencies(Options{}, components)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	actual := components.MCP.Configured()
+	if len(actual.Servers) != 3 || actual.Servers["fixture.extra"].URL != "http://127.0.0.1:4" {
+		t.Fatalf("plugin MCP declarations missing: %+v", actual)
+	}
+	for name, expected := range host.Servers {
+		if !reflect.DeepEqual(actual.Servers[name], expected) {
+			t.Fatalf("plugin replaced prepared server %s: %+v", name, actual.Servers[name])
+		}
+	}
+	if len(components.MCP.Status()) != 0 {
+		t.Fatal("injected configuration activated MCP")
+	}
+}

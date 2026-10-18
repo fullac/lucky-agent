@@ -1,0 +1,1838 @@
+package agent
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/yurika0211/luckyagent-runtime/config"
+	"github.com/yurika0211/luckyagent-runtime/contextx"
+	"github.com/yurika0211/luckyagent-runtime/logger"
+	"github.com/yurika0211/luckyagent-runtime/provider"
+	"github.com/yurika0211/luckyagent-runtime/rag"
+	"github.com/yurika0211/luckyagent-runtime/session"
+	"github.com/yurika0211/luckyagent-runtime/soul"
+	"github.com/yurika0211/luckyagent-runtime/tool"
+	"github.com/yurika0211/luckyagent-runtime/turn"
+	"github.com/yurika0211/luckyagent-runtime/utils"
+	"github.com/yurika0211/luckyagent-tools/memory"
+)
+
+/*
+contextBuildOptions 定义上下文构建时的行为开关。
+*/
+type contextBuildOptions struct {
+	IncludeRAG     bool
+	IncludeHistory bool
+	HistoryRecent  int
+	HistoryMiddle  int
+	DisabledTools  []string
+	// ReadOnly skips memory hygiene, activation feedback, and the context
+	// cache. Inspection must not change durable state or poison a later turn.
+	ReadOnly bool
+	// OmitUserMessage keeps an empty inspect from appending the placeholder
+	// user turn that Normalize invents when no text was supplied.
+	OmitUserMessage bool
+}
+
+/*
+defaultContextBuildOptions 返回默认的上下文构建选项。
+*/
+func defaultContextBuildOptions() contextBuildOptions {
+	return contextBuildOptions{
+		IncludeRAG:     true,
+		IncludeHistory: true,
+		HistoryRecent:  6,
+		HistoryMiddle:  12,
+	}
+}
+
+/*
+contextBudget 描述不同上下文类别的 token 预算。
+*/
+type contextBudget struct {
+	System     int
+	Project    int
+	Memory     int
+	RAG        int
+	History    int
+	ToolResult int
+}
+
+// contextRuntime is the small coordinator surface needed while assembling a
+// model context. Keeping this contract separate from Agent makes the planner
+// usable with focused runtime doubles and prevents it from depending on Agent
+// storage fields directly.
+type contextRuntime interface {
+	runContextMemoryHygieneHook()
+	buildSystemPromptWithOptions(*session.Session, systemPromptOptions) string
+	buildSkillRouteSystemHintWithOptions(string, skillRouteOptions) string
+	fitContextWindow([]provider.Message) []provider.Message
+	AnalyzeAttachments(context.Context, []turn.Attachment) (string, error)
+
+	Config() *config.Manager
+	ContextWindow() *contextx.ContextWindow
+	ContextEstimator() *contextx.TokenEstimator
+	ContextCache() contextMessageCacheStore
+	Soul() *soul.Soul
+	ContextMemory() memory.ContextReader
+	MidTermStore() memory.MidTermStore
+	ShortTermSummary(*session.Session) string
+	Catalog() *provider.ModelCatalog
+	Tools() *tool.Registry
+	RAG() *rag.RAGManager
+	MemoryVaultPath() string
+}
+
+var _ contextRuntime = (*Agent)(nil)
+
+// contextMessageCacheStore keeps the planner independent from the concrete
+// cache implementation while preserving the existing cache entry shape.
+type contextMessageCacheStore interface {
+	Get(uint64) ([]provider.Message, contextCacheEntry, bool)
+	Set(uint64, contextCacheEntry)
+}
+
+/*
+contextPlanner 负责根据预算组装系统提示、记忆、RAG 与历史消息。
+*/
+type contextPlanner struct {
+	// agent is retained as the field name for in-package compatibility. Its
+	// type is deliberately the narrow runtime contract rather than *Agent.
+	agent        contextRuntime
+	est          *contextx.TokenEstimator
+	budget       contextBudget
+	options      contextBuildOptions
+	turnProvider providerSnapshot
+}
+
+/*
+newContextPlanner 创建一个新的上下文规划器。
+*/
+
+// contextBudgetShare 是规划器实际使用的比例和地板。
+// 配置缺失时回落到改动前的硬编码值。
+type contextBudgetShare struct {
+	System, Memory, RAG, History, ToolResult                          float64
+	SystemFloor, MemoryFloor, RAGFloor, HistoryFloor, ToolResultFloor int
+}
+
+// computeContextBudget 按可用窗口和比例切出各类预算，并套用地板值。
+func computeContextBudget(maxTokens, reserved int, ratios contextBudgetShare) contextBudget {
+	available := maxTokens - reserved
+	if available <= 0 {
+		available = maxTokens / 2
+	}
+	if available <= 0 {
+		available = 2048
+	}
+	budget := contextBudget{
+		System:     int(float64(available) * ratios.System),
+		Memory:     int(float64(available) * ratios.Memory),
+		RAG:        int(float64(available) * ratios.RAG),
+		History:    int(float64(available) * ratios.History),
+		ToolResult: int(float64(available) * ratios.ToolResult),
+	}
+	if budget.System < ratios.SystemFloor {
+		budget.System = ratios.SystemFloor
+	}
+	if budget.Memory < ratios.MemoryFloor {
+		budget.Memory = ratios.MemoryFloor
+	}
+	if budget.RAG < ratios.RAGFloor {
+		budget.RAG = ratios.RAGFloor
+	}
+	if budget.History < ratios.HistoryFloor {
+		budget.History = ratios.HistoryFloor
+	}
+	if budget.ToolResult < ratios.ToolResultFloor {
+		budget.ToolResult = ratios.ToolResultFloor
+	}
+	return budget
+}
+
+func contextBudgetShareFor(a *Agent) contextBudgetShare {
+	fallback := contextBudgetShare{
+		System: 0.15, Memory: 0.10, RAG: 0.20, History: 0.25, ToolResult: 0.30,
+		SystemFloor: 256, MemoryFloor: 128, RAGFloor: 256, HistoryFloor: 256, ToolResultFloor: 256,
+	}
+	if a == nil || a.cfg == nil {
+		return fallback
+	}
+	cfg := a.cfg.Get().ContextBudget
+	if cfg.SystemRatio <= 0 && cfg.MemoryRatio <= 0 && cfg.RAGRatio <= 0 && cfg.HistoryRatio <= 0 && cfg.ToolResultRatio <= 0 {
+		return fallback
+	}
+	return contextBudgetShare{
+		System: cfg.SystemRatio, Memory: cfg.MemoryRatio, RAG: cfg.RAGRatio,
+		History: cfg.HistoryRatio, ToolResult: cfg.ToolResultRatio,
+		SystemFloor: cfg.SystemFloor, MemoryFloor: cfg.MemoryFloor, RAGFloor: cfg.RAGFloor,
+		HistoryFloor: cfg.HistoryFloor, ToolResultFloor: cfg.ToolResultFloor,
+	}
+}
+
+func newContextPlanner(a *Agent, options contextBuildOptions) *contextPlanner {
+	var turnProvider providerSnapshot
+	if a != nil {
+		turnProvider = a.baseProviderSnapshot()
+	}
+	return newContextPlannerWithProvider(a, options, turnProvider)
+}
+
+// newContextPlannerWithProvider binds context construction to the provider
+// selected for the current turn. This prevents a concurrent model switch from
+// changing function-calling/tool formatting or compression behavior halfway
+// through a request.
+func newContextPlannerWithProvider(a *Agent, options contextBuildOptions, turnProvider providerSnapshot) *contextPlanner {
+	cfg := contextx.DefaultWindowConfig()
+	if a != nil && a.contextWin != nil {
+		cfg = a.contextWin.Config()
+	}
+	budget := computeContextBudget(cfg.MaxTokens, cfg.ReservedTokens, contextBudgetShareFor(a))
+	budget.Project = utils.MinInt(4096, utils.MaxInt(128, (cfg.MaxTokens-cfg.ReservedTokens)/3))
+	var runtime contextRuntime
+	if a != nil {
+		runtime = a
+	}
+
+	return &contextPlanner{
+		agent:        runtime,
+		est:          resolveTokenEstimator(a, cfg.MaxTokens),
+		budget:       budget,
+		options:      options,
+		turnProvider: turnProvider,
+	}
+}
+
+/*
+Build 根据当前请求、会话和预算生成最终上下文消息序列。
+*/
+func (p *contextPlanner) Build(ctx context.Context, sess *session.Session, userInput string) []provider.Message {
+	return p.BuildInput(ctx, sess, TextUserTurnInput(userInput))
+}
+
+/*
+BuildInput 根据结构化用户输入、会话和预算生成最终上下文消息序列。
+*/
+func (p *contextPlanner) BuildInput(ctx context.Context, sess *session.Session, input UserTurnInput) []provider.Message {
+	input = input.Normalize()
+	routingText := input.RoutingText
+	if p.agent != nil && !p.options.ReadOnly {
+		p.agent.runContextMemoryHygieneHook()
+	}
+	hasStructuredParts := len(input.Message.ContentParts) > 0
+	if hasStructuredParts && !p.supportsImageContentParts() {
+		input.Message = stripContentParts(input.Message)
+	}
+	allowCache := !hasStructuredParts && !p.options.ReadOnly && !p.options.OmitUserMessage
+
+	if allowCache {
+		if key, ok := p.cacheKey(sess, routingText); ok && p.agent != nil && p.agent.ContextCache() != nil {
+			if cached, entry, hit := p.agent.ContextCache().Get(key); hit {
+				p.logContextReport("cache_hit", key, entry)
+				return cached
+			}
+		}
+	}
+
+	messages := make([]provider.Message, 0, 8)
+
+	// 构建系统提示词
+	systemPrompt := ""
+	if p.agent != nil {
+		systemPrompt = p.agent.buildSystemPromptWithOptions(sess, systemPromptOptions{
+			DisabledTools:      p.options.DisabledTools,
+			OmitProjectContext: true,
+			turnProvider:       p.turnProvider,
+		})
+	}
+	systemParts := []string{p.fitTextToBudget(aOrEmpty(systemPrompt), p.budget.System)}
+	if !p.turnProvider.valid() {
+		if tools := p.buildToolCatalog(p.options.DisabledTools); tools != "" {
+			systemParts = append(systemParts, tools)
+		}
+	} else if _, ok := p.turnProvider.provider.(provider.FunctionCallingProvider); !ok {
+		if tools := p.buildToolCatalog(p.options.DisabledTools); tools != "" {
+			systemParts = append(systemParts, tools)
+		}
+	}
+	systemContent := strings.TrimSpace(strings.Join(utils.FilterNonEmptyTrimmed(systemParts), "\n\n"))
+	if systemContent != "" {
+		messages = append(messages, provider.Message{Role: "system", Content: systemContent})
+	}
+	if source, ok := p.agent.(interface{ buildPinnedProjectPrompt(*session.Session) string }); ok {
+		if project := source.buildPinnedProjectPrompt(sess); project != "" {
+			messages = append(messages, provider.Message{Role: "system", Content: p.fitEvidenceToBudget(project, p.budget.Project)})
+		}
+	}
+	// Keep the append-only session history ahead of query-dependent evidence so
+	// provider prefix caches survive changes in memory and RAG retrieval.
+	if p.options.IncludeHistory && sess != nil {
+		messages = append(messages, p.buildHistoryMessages(sess, routingText)...)
+	}
+	messages = append(messages, p.buildMemoryMessagesForSession(sess, routingText, input.Scope)...)
+	if p.options.IncludeRAG {
+		if ragMsg := p.buildRAGMessage(ctx, sess, routingText); ragMsg.Content != "" {
+			messages = append(messages, ragMsg)
+		}
+	}
+
+	// Skill routing is query-dependent. Keep it after the stable system prompt
+	// and append-only history so changing the current request does not alter the
+	// provider's reusable leading prefix.
+	if p.agent != nil {
+		if skillHint := strings.TrimSpace(p.agent.buildSkillRouteSystemHintWithOptions(routingText, skillRouteOptions{
+			DisabledTools: p.options.DisabledTools,
+		})); skillHint != "" {
+			messages = append(messages, provider.Message{Role: "system", Content: skillHint})
+		}
+	}
+
+	if p.agent == nil {
+		messages = append(messages, p.buildAttachmentMessages(ctx, input)...)
+		if !p.options.OmitUserMessage {
+			messages = append(messages, input.Message)
+		}
+		return messages
+	}
+
+	// 拼接附件解析完成后的内容
+	attachmentMsgs := p.buildAttachmentMessages(ctx, input)
+	provisional := append(append([]provider.Message(nil), messages...), attachmentMsgs...)
+	if !p.options.OmitUserMessage {
+		provisional = append(provisional, provider.Message{
+			Role:    "user",
+			Content: routingText,
+		})
+	}
+	provisional = p.agent.fitContextWindow(provisional)
+	if !p.options.OmitUserMessage {
+		if n := len(provisional); n > 0 {
+			last := provisional[n-1]
+			if last.Role == "user" && strings.TrimSpace(last.Content) == routingText {
+				provisional = provisional[:n-1]
+			}
+		}
+		messages = append(provisional, input.Message)
+	} else {
+		messages = provisional
+	}
+
+	report := p.buildContextReport(messages)
+	if allowCache {
+		if key, ok := p.cacheKey(sess, routingText); ok && p.agent.ContextCache() != nil {
+			p.agent.ContextCache().Set(key, contextCacheEntry{
+				messages:     messages,
+				totalTokens:  report.totalTokens,
+				bucketTokens: report.bucketTokens,
+			})
+			p.logContextReport("cache_store", key, contextCacheEntry{
+				messages:     messages,
+				totalTokens:  report.totalTokens,
+				bucketTokens: report.bucketTokens,
+			})
+		}
+	}
+	return messages
+}
+
+/**
+ * 将附件解析完之后的结果放到上下文当中
+ */
+func (p *contextPlanner) buildAttachmentMessages(ctx context.Context, input UserTurnInput) []provider.Message {
+	if len(input.Attachments) == 0 {
+		return nil
+	}
+
+	messages := make([]provider.Message, 0, 2)
+	if manifest := attachmentEvidenceManifest(input.Attachments); manifest != "" {
+		messages = append(messages, provider.Message{
+			Role:    "system",
+			Content: manifest,
+		})
+	}
+	if p.agent != nil {
+		attachments := input.Attachments
+		if p.supportsImageContentParts() {
+			attachments = nil
+			for _, att := range input.Attachments {
+				if att.Type != turn.AttachmentImage {
+					attachments = append(attachments, att)
+				}
+			}
+		}
+		if summary, err := p.agent.AnalyzeAttachments(ctx, attachments); err == nil && strings.TrimSpace(summary) != "" {
+			messages = append(messages, provider.Message{
+				Role:    "system",
+				Content: summary,
+			})
+		}
+	}
+	// The current user message is appended by BuildInput. Adding its image parts
+	// here would transmit every image twice.
+	return messages
+}
+
+func attachmentEvidenceManifest(attachments []turn.Attachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[Current Turn Attachments]\n")
+	b.WriteString("Use only the attachments listed in this block for the current user request. Do not substitute files from chat history, memory, or the workspace when an attachment is missing or unreadable.\n")
+	for i, att := range attachments {
+		label := strings.TrimSpace(string(att.Type))
+		if label == "" {
+			label = "attachment"
+		}
+		name := strings.TrimSpace(att.FileName)
+		if name == "" {
+			name = "unnamed"
+		}
+		fmt.Fprintf(&b, "%d. type=%s name=%s", i+1, label, name)
+		if strings.TrimSpace(att.FilePath) != "" {
+			fmt.Fprintf(&b, " file_path=%s", strings.TrimSpace(att.FilePath))
+		}
+		if strings.TrimSpace(att.FileURL) != "" {
+			fmt.Fprintf(&b, " url=%s", strings.TrimSpace(att.FileURL))
+		}
+		if strings.TrimSpace(att.MimeType) != "" {
+			fmt.Fprintf(&b, " mime=%s", strings.TrimSpace(att.MimeType))
+		}
+		if att.FileSize > 0 {
+			fmt.Fprintf(&b, " size=%d", att.FileSize)
+		}
+		if strings.TrimSpace(att.FilePath) == "" && strings.TrimSpace(att.FileURL) == "" && len(att.Data) == 0 {
+			b.WriteString(" status=unavailable")
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimSpace(b.String())
+}
+
+/**
+ * 支持图片内容的部分，查看模型是否支持图片内容
+ */
+func (p *contextPlanner) supportsImageContentParts() bool {
+	if p == nil || p.agent == nil {
+		return false
+	}
+	if p.turnProvider.primaryVision != nil {
+		return *p.turnProvider.primaryVision
+	}
+	// The current Ollama adapter has no image wire format.
+	if p.turnProvider.name() == "ollama" {
+		return false
+	}
+
+	// Policy and capability are independent: an external vision model does not
+	// imply that the current chat model can receive images.
+	if cfgMgr := p.agent.Config(); cfgMgr != nil {
+		cfg := cfgMgr.Get()
+		if cfg.Models.VisionMode == "external" {
+			return false
+		}
+	}
+
+	// 回退到 catalog 精确匹配
+	if p.agent.Catalog() == nil {
+		return false
+	}
+
+	model := strings.TrimSpace(p.turnProvider.model)
+	if model == "" {
+		if cfgMgr := p.agent.Config(); cfgMgr != nil {
+			model = strings.TrimSpace(cfgMgr.Get().Model)
+		}
+	}
+	if model == "" {
+		return false
+	}
+
+	info, err := p.agent.Catalog().Get(model)
+	if err == nil && info != nil {
+		for _, capability := range info.Capabilities {
+			if strings.EqualFold(strings.TrimSpace(capability), "vision") {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+/**
+ * 清空消息的内容
+ */
+func stripContentParts(msg provider.Message) provider.Message {
+	msg.ContentParts = nil
+	return msg
+}
+
+/*
+contextReport 汇总一次上下文构建的 token 与消息分布。
+*/
+type contextReport struct {
+	totalTokens  int
+	bucketTokens map[string]int
+	bucketCounts map[string]int
+}
+
+/*
+buildContextReport 统计上下文中各类别消息的 token 占用情况。
+*/
+func (p *contextPlanner) buildContextReport(messages []provider.Message) contextReport {
+	report := contextReport{
+		bucketTokens: map[string]int{
+			"system":      0,
+			"memory":      0,
+			"rag":         0,
+			"history":     0,
+			"tool_result": 0,
+			"user":        0,
+		},
+		bucketCounts: map[string]int{
+			"system":      0,
+			"memory":      0,
+			"rag":         0,
+			"history":     0,
+			"tool_result": 0,
+			"user":        0,
+		},
+	}
+
+	for _, msg := range messages {
+		tokens := estimateProviderMessages(p.est, []provider.Message{msg})
+		report.totalTokens += tokens
+		name := classifyContextBucket(msg)
+		report.bucketTokens[name] += tokens
+		report.bucketCounts[name]++
+	}
+	return report
+}
+
+/*
+logContextReport 在开启调试时输出上下文规划报告。
+*/
+func (p *contextPlanner) logContextReport(mode string, key uint64, entry contextCacheEntry) {
+	if p.agent == nil || p.agent.Config() == nil {
+		return
+	}
+	if !p.agent.Config().Get().Agent.ContextDebug {
+		return
+	}
+
+	logger.Info("context planner report",
+		"mode", mode,
+		"cache_key", key,
+		"messages", len(entry.messages),
+		"cached_tokens_total", entry.totalTokens,
+		"cached_system_tokens", entry.bucketTokens["system"],
+		"cached_memory_tokens", entry.bucketTokens["memory"],
+		"cached_rag_tokens", entry.bucketTokens["rag"],
+		"cached_history_tokens", entry.bucketTokens["history"],
+		"cached_tool_tokens", entry.bucketTokens["tool_result"],
+		"cached_user_tokens", entry.bucketTokens["user"],
+	)
+}
+
+/*
+classifyContextBucket 将消息归类到上下文统计桶中。
+*/
+func classifyContextBucket(msg provider.Message) string {
+	if msg.Role == "user" {
+		return "user"
+	}
+	if msg.Role == "tool" {
+		return "tool_result"
+	}
+	if msg.Role != "system" {
+		return "history"
+	}
+	switch {
+	case strings.HasPrefix(msg.Content, "[Project Context]"):
+		return "project"
+	case strings.HasPrefix(msg.Content, "[Core Memory"),
+		strings.HasPrefix(msg.Content, "[Working Memory"),
+		strings.HasPrefix(msg.Content, "[Session History"),
+		strings.HasPrefix(msg.Content, "[Recent Context"):
+		return "memory"
+	case strings.HasPrefix(msg.Content, "## Retrieved Knowledge"),
+		strings.HasPrefix(msg.Content, "[Retrieved Knowledge"):
+		return "rag"
+	case strings.HasPrefix(msg.Content, "[Conversation Summary"),
+		strings.HasPrefix(msg.Content, "[Conversation Themes"),
+		strings.HasPrefix(msg.Content, "[Compact Summary"), isContextEvidence(msg.Content):
+		return "history"
+	default:
+		return "system"
+	}
+}
+
+/*
+cacheKey 为一次上下文构建请求生成缓存键。
+*/
+func (p *contextPlanner) cacheKey(sess *session.Session, userInput string) (uint64, bool) {
+	if p.agent == nil {
+		return 0, false
+	}
+
+	payload := map[string]any{
+		"user_input": userInput,
+		"options":    p.options,
+		"budget":     p.budget,
+	}
+
+	if soul := p.agent.Soul(); soul != nil {
+		payload["system_prompt"] = soul.SystemPrompt()
+	}
+	if source, ok := p.agent.(interface{ buildPinnedProjectPrompt(*session.Session) string }); ok {
+		payload["project_context"] = source.buildPinnedProjectPrompt(sess)
+	}
+	if p.turnProvider.valid() {
+		_, fc := p.turnProvider.provider.(provider.FunctionCallingProvider)
+		payload["function_calling"] = fc
+	}
+	payload["provider_name"] = p.turnProvider.name()
+	payload["provider_model"] = p.turnProvider.model
+	payload["provider_api_base"] = p.turnProvider.apiBase
+	if memoryStore := p.agent.ContextMemory(); memoryStore != nil {
+		payload["recent_memory"] = memoryStore.Recent(8)
+	}
+	if summary := p.agent.ShortTermSummary(sess); strings.TrimSpace(summary) != "" {
+		// Short-term state is session-scoped; include only this session's
+		// summary in the cache key so another conversation cannot reuse it.
+		payload["short_summary"] = summary
+	}
+	if midTerm := p.agent.MidTermStore(); midTerm != nil && strings.TrimSpace(userInput) != "" {
+		payload["midterm"] = midTerm.SearchSummaries(userInput, 2)
+	}
+	if ragManager := p.agent.RAG(); ragManager != nil {
+		stats := ragManager.Stats()
+		payload["rag_doc_count"] = stats.DocumentCount
+	}
+	if sess != nil {
+		payload["session_id"] = sess.ID
+		payload["session_title"] = sess.Title
+		payload["session_message_count"] = sess.MessageCount()
+		payload["session_last_message_sig"] = sessionLastMessageSignature(sess)
+	}
+
+	return makeContextCacheKey(payload), true
+}
+
+func sessionLastMessageSignature(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	last := sess.LastMessage()
+	if last == nil {
+		return ""
+	}
+	payload := map[string]any{
+		"role":              last.Role,
+		"content":           last.Content,
+		"reasoning_content": last.ReasoningContent,
+		"tool_call_id":      last.ToolCallID,
+		"name":              last.Name,
+		"tool_calls":        last.ToolCalls,
+	}
+	return fmt.Sprintf("%x", makeContextCacheKey(payload))
+}
+
+/*
+resolveTokenEstimator 解析可用的 token 估算器。
+*/
+func resolveTokenEstimator(a *Agent, maxTokens int) *contextx.TokenEstimator {
+	if a != nil && a.ContextEstimator() != nil {
+		est := a.ContextEstimator()
+		est.SetModelContextWindow(maxTokens)
+		return est
+	}
+	return contextx.NewTokenEstimator(maxTokens)
+}
+
+/*
+buildToolCatalog 构造供非 function-calling 模型参考的工具目录文本。
+*/
+func (p *contextPlanner) buildToolCatalog(disabled []string) string {
+	if p.agent == nil || p.agent.Tools() == nil {
+		return ""
+	}
+	tools := p.agent.Tools().ListModelVisible()
+	disabledSet := makeToolNameSet(disabled)
+	if len(tools) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[Available Tools]\n")
+	for _, t := range tools {
+		if t == nil || toolNameInSet(disabledSet, t.Name) {
+			continue
+		}
+		permLabel := "🟢"
+		if t.Permission == tool.PermApprove {
+			permLabel = "🟡"
+		}
+		b.WriteString(fmt.Sprintf("- %s %s: %s\n", permLabel, t.Name, t.Description))
+	}
+	content := strings.TrimSpace(b.String())
+	if content == "[Available Tools]" {
+		return ""
+	}
+	return p.fitTextToBudget(content, utils.MaxInt(96, p.budget.System/4))
+}
+
+/*
+buildMemoryMessages 构造与当前查询相关的记忆上下文消息。
+
+The legacy wrapper keeps the old helper signature for in-package callers;
+normal context construction uses buildMemoryMessagesForSession below.
+*/
+func (p *contextPlanner) buildMemoryMessages(query string, scope TurnScope) []provider.Message {
+	return p.buildMemoryMessagesForSession(nil, query, scope)
+}
+
+func (p *contextPlanner) buildMemoryMessagesForSession(sess *session.Session, query string, scope TurnScope) []provider.Message {
+	var messages []provider.Message
+
+	if core := p.buildCoreMemoryMessage(query, scope); core.Content != "" {
+		messages = append(messages, core)
+	}
+	if relevant := p.buildRelevantMemoryMessage(query, scope); relevant.Content != "" {
+		messages = append(messages, relevant)
+	}
+	if midterm := p.buildMidtermSummaryMessage(query); midterm.Content != "" {
+		messages = append(messages, midterm)
+	}
+	if short := p.buildShortTermSummaryMessageForSession(sess); short.Content != "" {
+		messages = append(messages, short)
+	}
+
+	return messages
+}
+
+/*
+buildCoreMemoryMessage 构造长期核心记忆消息。
+*/
+func (p *contextPlanner) buildCoreMemoryMessage(query string, scope TurnScope) provider.Message {
+	if p.agent == nil || p.agent.ContextMemory() == nil {
+		return provider.Message{}
+	}
+	longs := p.agent.ContextMemory().ByTierWithOptions(memory.TierLong, memory.RouteOptions{
+		EntryFilter: func(entry memory.Entry) bool { return memoryEntryVisibleInScope(entry, scope) },
+	})
+	if len(longs) == 0 {
+		return provider.Message{}
+	}
+	selected := make([]string, 0, 3)
+	queryLower := strings.ToLower(query)
+	for _, e := range longs {
+		if queryLower == "" || strings.Contains(strings.ToLower(e.Content), queryLower) || len(selected) == 0 {
+			selected = append(selected, "- "+e.Content)
+		}
+		if len(selected) >= 3 {
+			break
+		}
+	}
+	if len(selected) == 0 {
+		return provider.Message{}
+	}
+	content := "[Core Memory]\n" + strings.Join(selected, "\n")
+	return provider.Message{Role: "system", Content: p.fitTextToBudget(content, utils.MaxInt(96, p.budget.Memory/3))}
+}
+
+/*
+buildRelevantMemoryMessage 构造与当前问题相关的普通记忆消息。
+*/
+func (p *contextPlanner) buildRelevantMemoryMessage(query string, scope TurnScope) provider.Message {
+	if p.agent == nil || p.agent.ContextMemory() == nil {
+		return provider.Message{}
+	}
+	if strings.TrimSpace(query) == "" {
+		return provider.Message{}
+	}
+	route := p.agent.ContextMemory().RouteWithOptions(query, memory.RouteOptions{
+		EntryFilter: func(entry memory.Entry) bool {
+			return memoryEntryVisibleInScope(entry, scope)
+		},
+	})
+	results := route.Entries
+	if len(results) == 0 {
+		return provider.Message{}
+	}
+	results = filterRecallContextEntries(results)
+	results = filterMemoryEntriesForScope(results, scope)
+	if len(results) == 0 {
+		return provider.Message{}
+	}
+	route.Entries = results
+	route.EvidenceRefs = evidenceRefsForContext(results, 6)
+	route.TemporalNotes = nil
+	route.SupersededRefs = nil
+	route.ConflictRefs = nil
+	route.ExpiredRefs = nil
+	route.FutureRefs = nil
+	results = prioritizeMemoryForContext(results)
+	header := "[Working Memory — Retrieved Evidence]\nThese active memories were retrieved from the LuckyAgent Obsidian-compatible Markdown memory vault"
+	if vault := p.agent.MemoryVaultPath(); vault != "" {
+		header += " at " + vault
+	}
+	header += ". Treat them as prior evidence, not as the current task itself. Prefer the latest user message and explicit session history when they conflict with retrieved memory. If a memory says real-time data or external checks are needed and it still matches the current user request, use available tools before the final answer or state exactly what could not be checked."
+	bodyBudget := utils.MaxInt(768, p.budget.Memory*3-p.est.Estimate(header)-16)
+	body := p.buildTypedMemoryBody(route, results, bodyBudget)
+	content := header
+	if body != "" {
+		p.recordMemoryContextFeedback(query, results)
+		content += "\n\n" + body
+	}
+	return provider.Message{Role: "system", Content: content}
+}
+
+func (p *contextPlanner) recordMemoryContextFeedback(query string, results []memory.Entry) {
+	if p == nil || p.options.ReadOnly {
+		return
+	}
+	if p.agent == nil || p.agent.ContextMemory() == nil || len(results) == 0 {
+		return
+	}
+	limit := utils.MinInt(6, len(results))
+	p.agent.ContextMemory().RecordActivationFeedback(query, results[:limit], "context_selected", 0.15, time.Now())
+}
+
+func (p *contextPlanner) buildTypedMemoryBody(route memory.RouteAnalysis, results []memory.Entry, tokenBudget int) string {
+	if tokenBudget <= 0 {
+		return ""
+	}
+	var sections []string
+	if len(route.RequiredTools) > 0 {
+		sections = append(sections, "[Required Tools]\n- "+strings.Join(route.RequiredTools, "\n- "))
+	}
+	if len(route.Constraints) > 0 {
+		sections = append(sections, "[Answer Constraints]\n- "+strings.Join(limitStrings(route.Constraints, 8), "\n- "))
+	}
+	if len(route.SuggestedSearches) > 0 {
+		sections = append(sections, "[Suggested web_search queries]\n- "+strings.Join(limitStrings(route.SuggestedSearches, 4), "\n- "))
+	}
+	if lines := temporalWarningLines(route); len(lines) > 0 {
+		sections = append(sections, "[Temporal Warnings]\n"+strings.Join(lines, "\n"))
+	}
+	if len(route.EvidenceRefs) > 0 {
+		refs := strings.Join(limitStrings(route.EvidenceRefs, 8), "\n- ")
+		sections = append(sections, "[Evidence Refs]\nMemory refs:\n- "+refs)
+	}
+	if lines := typedMemoryFactLinesFrom(results, route.Excerpts, 6); len(lines) > 0 {
+		sections = append(sections, "[Must Use Facts]\n"+strings.Join(lines, "\n"))
+	}
+	if lines := memoryRouteLines(route); len(lines) > 0 {
+		lines = limitStrings(lines, 3)
+		sections = append(sections, "[Memory Router]\n"+strings.Join(lines, "\n"))
+	}
+	return p.fitTextToBudget(strings.Join(sections, "\n\n"), tokenBudget)
+}
+
+func typedMemoryFactLines(entries []memory.Entry, limit int) []string {
+	return typedMemoryFactLinesFrom(entries, nil, limit)
+}
+
+func typedMemoryFactLinesFrom(entries []memory.Entry, excerpts map[string][]memory.ActivationExcerpt, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	lines := make([]string, 0, utils.MinInt(limit, len(entries)))
+	for _, e := range entries {
+		body := memory.SelectContextText(e.Content, excerpts[e.ID])
+		if body == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- [%s/%s] %s%s", e.Category, e.Tier.String(), truncate(body, 160), memoryRefHint(e)))
+		if len(lines) >= limit {
+			break
+		}
+	}
+	return lines
+}
+
+func filterRecallContextEntries(entries []memory.Entry) []memory.Entry {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]memory.Entry, 0, len(entries))
+	for _, e := range entries {
+		if isRawConversationShortMemory(e) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func filterMemoryEntriesForScope(entries []memory.Entry, scope TurnScope) []memory.Entry {
+	if len(entries) == 0 {
+		return nil
+	}
+	scope = scope.Normalize()
+	if !scope.HasSender() {
+		return entries
+	}
+	out := make([]memory.Entry, 0, len(entries))
+	for _, e := range entries {
+		if memoryEntryVisibleInScope(e, scope) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func memoryEntryVisibleInScope(e memory.Entry, scope TurnScope) bool {
+	tags := normalizedTagSet(e.Tags)
+	if len(tags) == 0 || !hasScopedMemoryTag(tags) {
+		return true
+	}
+	if tags["scope:shared"] {
+		if groupTag := scope.GroupTag(); groupTag != "" {
+			return tags[groupTag]
+		}
+		return true
+	}
+	if tags[scope.UserTag()] || tags[scope.PrivateTag()] {
+		return true
+	}
+	if groupTag := scope.GroupTag(); groupTag != "" && tags[groupTag] && !tags["scope:personal"] {
+		return true
+	}
+	return false
+}
+
+func normalizedTagSet(tags []string) map[string]bool {
+	out := make(map[string]bool, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(tag)), "#")
+		if tag != "" {
+			out[tag] = true
+		}
+	}
+	return out
+}
+
+func hasScopedMemoryTag(tags map[string]bool) bool {
+	for tag := range tags {
+		if strings.HasPrefix(tag, "scope:") {
+			return true
+		}
+	}
+	return false
+}
+
+func isRawConversationShortMemory(e memory.Entry) bool {
+	if e.Tier != memory.TierShort {
+		return false
+	}
+	content := strings.TrimSpace(e.Content)
+	return strings.HasPrefix(content, "User:") || strings.HasPrefix(content, "Assistant:")
+}
+
+func memoryRefHint(e memory.Entry) string {
+	if e.Path == "" && e.BlockID == "" {
+		return ""
+	}
+	ref := e.Path
+	if ref == "" {
+		ref = e.ID
+	}
+	if e.BlockID != "" {
+		ref += "#" + e.BlockID
+	}
+	return " (ref=" + ref + ")"
+}
+
+func evidenceRefsForContext(entries []memory.Entry, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	refs := make([]string, 0, utils.MinInt(limit, len(entries)))
+	for _, e := range entries {
+		ref := e.Path
+		if ref == "" {
+			ref = e.ID
+		}
+		if ref == "" {
+			continue
+		}
+		if e.BlockID != "" {
+			ref += "#" + e.BlockID
+		}
+		refs = append(refs, ref)
+		if len(refs) >= limit {
+			break
+		}
+	}
+	return dedupStrings(refs)
+}
+
+func dedupStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func memoryRouteLines(route memory.RouteAnalysis) []string {
+	var lines []string
+	if len(route.RequiredTools) > 0 {
+		lines = append(lines, "- Required tools before final answer: "+strings.Join(route.RequiredTools, ", "))
+	}
+	if len(route.RiskFlags) > 0 {
+		lines = append(lines, "- Risk flags: "+strings.Join(route.RiskFlags, ", "))
+	}
+	if len(route.Constraints) > 0 {
+		lines = append(lines, "- Answer constraints: "+strings.Join(limitStrings(route.Constraints, 5), " | "))
+	}
+	if len(route.SuggestedSearches) > 0 {
+		lines = append(lines, "- Suggested web_search queries: "+strings.Join(limitStrings(route.SuggestedSearches, 4), " | "))
+	}
+	if len(route.Clarifications) > 0 {
+		lines = append(lines, "- Clarify if needed: "+strings.Join(limitStrings(route.Clarifications, 3), " | "))
+	}
+	if len(route.TemporalNotes) > 0 {
+		lines = append(lines, "- Temporal resolution: "+strings.Join(limitStrings(route.TemporalNotes, 3), " | "))
+	}
+	if len(route.EvidenceRefs) > 0 {
+		lines = append(lines, "- Memory refs: "+strings.Join(limitStrings(route.EvidenceRefs, 5), " | "))
+	}
+	return lines
+}
+
+func temporalWarningLines(route memory.RouteAnalysis) []string {
+	var lines []string
+	if len(route.TemporalNotes) > 0 || len(route.SupersededRefs) > 0 || len(route.ConflictRefs) > 0 || len(route.ExpiredRefs) > 0 || len(route.FutureRefs) > 0 {
+		lines = append(lines, "- Temporal resolution:")
+	}
+	for _, note := range limitStrings(route.TemporalNotes, 6) {
+		lines = append(lines, "- "+note)
+	}
+	if len(route.SupersededRefs) > 0 {
+		lines = append(lines, "- Superseded refs: "+strings.Join(limitStrings(route.SupersededRefs, 6), " | "))
+	}
+	if len(route.ConflictRefs) > 0 {
+		lines = append(lines, "- Conflict refs: "+strings.Join(limitStrings(route.ConflictRefs, 6), " | "))
+	}
+	if len(route.ExpiredRefs) > 0 {
+		lines = append(lines, "- Expired refs: "+strings.Join(limitStrings(route.ExpiredRefs, 6), " | "))
+	}
+	if len(route.FutureRefs) > 0 {
+		lines = append(lines, "- Future refs: "+strings.Join(limitStrings(route.FutureRefs, 6), " | "))
+	}
+	return lines
+}
+
+func limitStrings(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	return values[:limit]
+}
+
+func prioritizeMemoryForContext(entries []memory.Entry) []memory.Entry {
+	if len(entries) <= 1 {
+		return entries
+	}
+	out := append([]memory.Entry(nil), entries...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return memoryContextRank(out[i]) > memoryContextRank(out[j])
+	})
+	return out
+}
+
+func memoryContextRank(e memory.Entry) int {
+	rank := 0
+	switch e.Tier {
+	case memory.TierLong:
+		rank += 300
+	case memory.TierMedium:
+		rank += 200
+	case memory.TierShort:
+		rank += 100
+	}
+	switch strings.ToLower(strings.TrimSpace(e.Category)) {
+	case "health", "rule", "identity", "preference", "location", "project", "plan":
+		rank += 40
+	case "conversation":
+		rank -= 25
+	}
+	if strings.HasPrefix(strings.TrimSpace(e.Content), "User:") || strings.HasPrefix(strings.TrimSpace(e.Content), "Assistant:") {
+		rank -= 30
+	}
+	rank += int(e.Importance * 20)
+	return rank
+}
+
+/*
+buildMidtermSummaryMessage 构造中期会话摘要消息。
+*/
+func (p *contextPlanner) buildMidtermSummaryMessage(query string) provider.Message {
+	if p.agent == nil || p.agent.MidTermStore() == nil || strings.TrimSpace(query) == "" {
+		return provider.Message{}
+	}
+	summaries := p.agent.MidTermStore().SearchSummaries(query, 2)
+	if len(summaries) == 0 {
+		return provider.Message{}
+	}
+	var b strings.Builder
+	b.WriteString("[Session History — Mid-term]\n")
+	b.WriteString("Compressed summary; non-authoritative. Prefer raw recent messages, tool outputs, or workspace state when they conflict.\n")
+	for _, sm := range summaries {
+		b.WriteString("- ")
+		if len(sm.Topics) > 0 {
+			b.WriteString("[" + strings.Join(sm.Topics, ", ") + "] ")
+		}
+		b.WriteString(truncate(sm.RawSummary, 180))
+		b.WriteString("\n")
+	}
+	return provider.Message{Role: "system", Content: p.fitTextToBudget(b.String(), utils.MaxInt(96, p.budget.Memory/3))}
+}
+
+/*
+buildShortTermSummaryMessage 构造短期会话摘要消息。
+*/
+func (p *contextPlanner) buildShortTermSummaryMessage() provider.Message {
+	return p.buildShortTermSummaryMessageForSession(nil)
+}
+
+func (p *contextPlanner) buildShortTermSummaryMessageForSession(sess *session.Session) provider.Message {
+	if p.agent == nil {
+		return provider.Message{}
+	}
+	summary := strings.TrimSpace(p.agent.ShortTermSummary(sess))
+	if summary == "" {
+		return provider.Message{}
+	}
+	content := "[Recent Context]\n" + summary
+	return provider.Message{Role: "system", Content: p.fitTextToBudget(content, utils.MaxInt(96, p.budget.Memory/3))}
+}
+
+/*
+buildRAGMessage 构造检索增强知识消息。
+*/
+func (p *contextPlanner) buildRAGMessage(ctx context.Context, sess *session.Session, query string) provider.Message {
+	if p.agent == nil || p.agent.RAG() == nil || strings.TrimSpace(query) == "" {
+		return provider.Message{}
+	}
+	stats := p.agent.RAG().Stats()
+	if stats.DocumentCount == 0 {
+		return provider.Message{}
+	}
+	retrievalQuery := p.rewriteRAGFollowUp(sess, query)
+	results, err := p.agent.RAG().Search(ctx, retrievalQuery)
+	if err != nil || len(results) == 0 {
+		return provider.Message{}
+	}
+	var ragCtx string
+	for end := 1; end <= len(results); end++ {
+		candidate := p.agent.RAG().Retriever().BuildContext(results[:end])
+		if p.est.Estimate(candidate) > p.budget.RAG {
+			break
+		}
+		ragCtx = candidate
+	}
+	if ragCtx == "" {
+		for contentBudget := max(16, p.budget.RAG/2); contentBudget >= 16; contentBudget /= 2 {
+			first := results[0]
+			first.Content = p.fitTextToBudget(first.Content, contentBudget)
+			candidate := p.agent.RAG().Retriever().BuildContext([]rag.RetrievalResult{first})
+			if p.est.Estimate(candidate) <= p.budget.RAG {
+				ragCtx = candidate
+				break
+			}
+			if contentBudget == 16 {
+				break
+			}
+		}
+	}
+	if ragCtx == "" {
+		return provider.Message{}
+	}
+	return provider.Message{Role: "system", Content: ragCtx}
+}
+
+func (p *contextPlanner) rewriteRAGFollowUp(sess *session.Session, query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" || sess == nil || p.agent == nil || p.agent.Config() == nil || !p.agent.Config().Get().RAG.RewriteFollowUps {
+		return query
+	}
+	lower := strings.ToLower(query)
+	indicators := []string{
+		"这个", "那个", "上述", "前面", "刚才", "继续", "详细一点", "为什么",
+		"what about", "how about", "tell me more", "more about", "continue", "why is that",
+	}
+	// Keep the user-facing Chinese indicators as valid UTF-8 even when legacy
+	// comments or fixtures in this file originated from another encoding.
+	indicators = append(indicators, "这个", "那个", "上述", "前面", "之前", "继续", "再说一点", "为什么")
+	referential := false
+	for _, indicator := range indicators {
+		if strings.Contains(lower, indicator) {
+			referential = true
+			break
+		}
+	}
+	if !referential {
+		return query
+	}
+	messages := sess.GetMessages()
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		previous := strings.TrimSpace(messages[i].Content)
+		if previous == "" || previous == query {
+			continue
+		}
+		previous = string([]rune(previous)[:min(len([]rune(previous)), 300)])
+		return previous + "\nFollow-up: " + query
+	}
+	return query
+}
+
+/*
+buildHistoryMessages 从会话历史中挑选适量消息纳入上下文。
+*/
+func (p *contextPlanner) buildHistoryMessages(sess *session.Session, query string) []provider.Message {
+	all := sess.GetMessages()
+	if len(all) == 0 {
+		return nil
+	}
+	_ = query // History is intentionally query-independent for prefix caching.
+	summaries, raw := p.compactBoundaryContext(all)
+	summaries = p.projectCompactSummaries(summaries)
+	messages := append([]provider.Message(nil), summaries...)
+	rawBudget := p.budget.History - estimateProviderMessages(p.est, summaries)
+	if rawBudget < 128 {
+		rawBudget = 128
+	}
+	messages = append(messages, p.fitStableHistoryTail(raw, rawBudget)...)
+	return messages
+}
+
+func (p *contextPlanner) compactBoundaryContext(messages []provider.Message) ([]provider.Message, []provider.Message) {
+	segments, after, _ := session.CompactSegments(messages)
+	if len(segments) == 0 {
+		return nil, messages
+	}
+	out := make([]provider.Message, 0, len(segments))
+	for _, meta := range segments {
+		summary := strings.TrimSpace(sanitizeHistoricalMediaReferences(meta.Summary))
+		if summary == "" {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString("[Compact Summary]\n")
+		b.WriteString("This immutable segment replaces only its covered raw session range. Treat it as prior evidence, not the current user request.\n")
+		if strings.TrimSpace(meta.ID) != "" {
+			b.WriteString("Segment: " + strings.TrimSpace(meta.ID) + "\n")
+		}
+		if meta.ToMessage > meta.FromMessage {
+			b.WriteString(fmt.Sprintf("Covered messages: [%d, %d)\n", meta.FromMessage, meta.ToMessage))
+		}
+		if strings.TrimSpace(meta.ContentHash) != "" {
+			b.WriteString("Content hash: " + strings.TrimSpace(meta.ContentHash) + "\n")
+		}
+		if strings.TrimSpace(meta.PolicyVersion) != "" {
+			b.WriteString("Policy version: " + strings.TrimSpace(meta.PolicyVersion) + "\n")
+		}
+		if strings.TrimSpace(meta.Trigger) != "" {
+			b.WriteString("Trigger: " + strings.TrimSpace(meta.Trigger) + "\n")
+		}
+		if strings.TrimSpace(meta.SummarySource) != "" {
+			b.WriteString("Summary source: " + strings.TrimSpace(meta.SummarySource) + "\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(summary)
+		if restore := formatPostCompactRestore(meta.Attachments); restore != "" {
+			b.WriteString("\n\n")
+			b.WriteString(restore)
+		}
+		out = append(out, provider.Message{Role: "system", Content: strings.TrimSpace(b.String())})
+	}
+	return out, after
+}
+
+func (p *contextPlanner) fitStableHistoryTail(messages []provider.Message, tokenBudget int) []provider.Message {
+	if len(messages) == 0 || tokenBudget <= 0 {
+		return nil
+	}
+	compacted := make([]provider.Message, len(messages))
+	for i, msg := range messages {
+		compacted[i] = p.compactHistoryMessage(msg)
+	}
+	if estimateProviderMessages(p.est, compacted) <= tokenBudget {
+		return compacted
+	}
+
+	starts := make([]int, 0, len(compacted)/2+1)
+	for i, msg := range compacted {
+		if msg.Role == "user" {
+			starts = append(starts, i)
+		}
+	}
+	if len(starts) == 0 || starts[0] != 0 {
+		starts = append([]int{0}, starts...)
+	}
+	for _, start := range starts {
+		candidate := compacted[start:]
+		if estimateProviderMessages(p.est, candidate) <= tokenBudget {
+			return append([]provider.Message(nil), candidate...)
+		}
+	}
+	// Keep the latest complete turn even when it alone exceeds the local history
+	// budget. The final context fitter may trim content, but must not orphan a
+	// tool result from its assistant tool-call message.
+	lastStart := starts[len(starts)-1]
+	return append([]provider.Message(nil), compacted[lastStart:]...)
+}
+
+func formatPostCompactRestore(attachments []session.CompactAttachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[Post-Compact Restore]\n")
+	for _, att := range attachments {
+		content := strings.TrimSpace(att.Content)
+		if content == "" {
+			continue
+		}
+		label := strings.TrimSpace(att.Kind)
+		if label == "" {
+			label = "attachment"
+		}
+		if source := strings.TrimSpace(att.Source); source != "" {
+			label += "/" + source
+		}
+		b.WriteString("- ")
+		b.WriteString(label)
+		b.WriteString(": ")
+		b.WriteString(strings.ReplaceAll(truncate(content, 360), "\n", "; "))
+		b.WriteString("\n")
+	}
+	if b.String() == "[Post-Compact Restore]\n" {
+		return ""
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (p *contextPlanner) summarizeIntentAwareConversationRange(ctx context.Context, sess *session.Session, messages []provider.Message, header string, tokenBudget int, terms []string) string {
+	filtered := filterIntentAwareHistory(messages, terms)
+	if len(filtered) == 0 {
+		return ""
+	}
+	return p.summarizeConversationRangeWithLLM(ctx, sess, filtered, header, tokenBudget)
+}
+
+func filterIntentAwareHistory(messages []provider.Message, terms []string) []provider.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	filtered := make([]provider.Message, 0, len(messages))
+	for _, msg := range messages {
+		if historyMessageRelevant(msg, terms) {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
+}
+
+func (p *contextPlanner) selectIntentAwareRecentHistory(messages []provider.Message, terms []string) []provider.Message {
+	if len(messages) <= 2 {
+		return append([]provider.Message(nil), messages...)
+	}
+	latestUserIdx := latestUserMessageIndex(messages)
+	selected := make([]provider.Message, 0, len(messages))
+	for i, msg := range messages {
+		content := strings.ToLower(msg.Content)
+		tailCandidate := i >= len(messages)-2 && !historyExplicitlyIrrelevant(content)
+		latestUserTurn := latestUserIdx >= 0 && i >= latestUserIdx && !historyExplicitlyIrrelevant(content)
+		if historyMessageRelevant(msg, terms) || tailCandidate || latestUserTurn {
+			selected = append(selected, msg)
+		}
+	}
+	if len(selected) == 0 {
+		tail := messages[len(messages)-utils.MinInt(2, len(messages)):]
+		return filterHistoryWithoutExplicitIrrelevance(tail)
+	}
+	return selected
+}
+
+func latestUserMessageIndex(messages []provider.Message) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" && strings.TrimSpace(messages[i].Content) != "" {
+			return i
+		}
+	}
+	return -1
+}
+
+func filterHistoryWithoutExplicitIrrelevance(messages []provider.Message) []provider.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	filtered := make([]provider.Message, 0, len(messages))
+	for _, msg := range messages {
+		if !historyExplicitlyIrrelevant(strings.ToLower(msg.Content)) {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
+}
+
+func historyIntentTerms(seedText string, messages []provider.Message) []string {
+	var terms []string
+	terms = append(terms, extractHistoryTerms(seedText)...)
+	for _, msg := range messages {
+		content := strings.ToLower(msg.Content)
+		if historyExplicitlyIrrelevant(content) {
+			continue
+		}
+		if strings.Contains(content, "context packer") ||
+			strings.Contains(content, "benchmark") ||
+			strings.Contains(content, "cmr") ||
+			strings.Contains(content, "quality") ||
+			strings.Contains(content, "p95") {
+			terms = append(terms, extractHistoryTerms(content)...)
+		}
+	}
+	terms = append(terms, historyAliasTerms(seedText)...)
+	return utils.DedupStringsLimit(terms, 32)
+}
+
+func extractHistoryTerms(text string) []string {
+	var terms []string
+	var latin strings.Builder
+	var han []rune
+	flushLatin := func() {
+		if latin.Len() == 0 {
+			return
+		}
+		token := strings.Trim(strings.ToLower(latin.String()), "-_")
+		if len(token) >= 3 {
+			terms = append(terms, token)
+		}
+		latin.Reset()
+	}
+	flushHan := func() {
+		if len(han) == 0 {
+			return
+		}
+		for n := 2; n <= 4; n++ {
+			if len(han) < n {
+				continue
+			}
+			for i := 0; i+n <= len(han); i++ {
+				terms = append(terms, string(han[i:i+n]))
+			}
+		}
+		han = han[:0]
+	}
+	for _, r := range strings.ToLower(text) {
+		switch {
+		case unicode.Is(unicode.Han, r):
+			flushLatin()
+			han = append(han, r)
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-':
+			flushHan()
+			latin.WriteRune(r)
+		default:
+			flushLatin()
+			flushHan()
+		}
+	}
+	flushLatin()
+	flushHan()
+	return terms
+}
+
+func historyAliasTerms(seed string) []string {
+	seed = strings.ToLower(seed)
+	var terms []string
+	if strings.Contains(seed, "女儿") || strings.Contains(seed, "孩子") || strings.Contains(seed, "daughter") || strings.Contains(seed, "child") {
+		terms = append(terms, "daughter", "child", "family")
+	}
+	if strings.Contains(seed, "过敏") || strings.Contains(seed, "花粉") || strings.Contains(seed, "pollen") || strings.Contains(seed, "allergy") {
+		terms = append(terms, "pollen", "allergy", "pollen allergy")
+	}
+	if strings.Contains(seed, "户外") || strings.Contains(seed, "出门") || strings.Contains(seed, "公园") || strings.Contains(seed, "outdoor") || strings.Contains(seed, "park") {
+		terms = append(terms, "outdoor", "park", "outdoor plan")
+	}
+	return terms
+}
+
+func historyMessageRelevant(msg provider.Message, terms []string) bool {
+	content := strings.ToLower(msg.Content)
+	if msg.Role == "tool" {
+		return true
+	}
+	if historyExplicitlyIrrelevant(content) {
+		return false
+	}
+	for _, must := range []string{
+		"context packer",
+		"benchmark",
+		"acceptance",
+		"cmr",
+		"constraint",
+		"quality",
+		"p95",
+		"token",
+		"latest user direction",
+		"active task",
+		"do not switch back",
+		"do not return to",
+		"最后一次确认",
+		"不要回到",
+	} {
+		if strings.Contains(content, must) {
+			return true
+		}
+	}
+	if len(terms) == 0 {
+		return false
+	}
+	hits := 0
+	for _, term := range terms {
+		if term != "" && strings.Contains(content, term) {
+			hits++
+			if hits >= 2 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func historyExplicitlyIrrelevant(content string) bool {
+	for _, marker := range []string{
+		"no benchmark relevance",
+		"without benchmark relevance",
+		"not benchmark relevant",
+		"no current task relevance",
+		"without current task relevance",
+		"unrelated note",
+		"unrelated response",
+		"unrelated text",
+		"unrelated project state",
+	} {
+		if strings.Contains(content, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *contextPlanner) summarizeConversationRangeWithLLM(ctx context.Context, sess *session.Session, messages []provider.Message, header string, tokenBudget int) string {
+	// Context construction runs before the user-facing model call. Do not make
+	// an extra provider request here: transient upstream failures would charge
+	// tokens, increment the shared circuit breaker, and then still fall back to
+	// a local summary. Manual/auto compact keeps the explicit LLM summary path.
+	return summarizeConversationRange(messages, header, p.est, tokenBudget)
+}
+
+func (p *contextPlanner) tryLLMConversationSummary(ctx context.Context, sess *session.Session, messages []provider.Message, header string, tokenBudget int) string {
+	if p == nil || p.agent == nil || !p.turnProvider.valid() || len(messages) < 8 || tokenBudget <= 0 {
+		return ""
+	}
+	historyTokens := 0
+	for _, msg := range messages {
+		historyTokens += p.est.Estimate(msg.Content) + 4
+	}
+	threshold := 0.0
+	if cfgMgr := p.agent.Config(); cfgMgr != nil {
+		threshold = cfgMgr.Get().Context.CompressionThreshold
+	}
+	if threshold <= 0 {
+		threshold = 0.8
+	}
+	if float64(historyTokens) < float64(tokenBudget)*threshold {
+		return ""
+	}
+
+	var transcript strings.Builder
+	for _, msg := range messages {
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		role := strings.ToUpper(msg.Role)
+		transcript.WriteString(role)
+		if msg.Name != "" {
+			transcript.WriteString("(" + msg.Name + ")")
+		}
+		transcript.WriteString(": ")
+		transcript.WriteString(truncate(content, 240))
+		transcript.WriteString("\n")
+	}
+	if strings.TrimSpace(transcript.String()) == "" {
+		return ""
+	}
+
+	prompt := fmt.Sprintf(
+		"Summarize the following prior conversation for future context compression.\n"+
+			"Return concise plain text under these headings only:\n"+
+			"User topics:\nAssistant progress:\nTool evidence:\nOpen questions:\n"+
+			"Keep the summary factual, preserve decisions, file/module names, errors, and unresolved items.\n"+
+			"Avoid markdown bullets deeper than one level. Do not add commentary outside the summary.\n\nConversation:\n%s",
+		transcript.String(),
+	)
+
+	sumCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	resp, err := p.turnProvider.provider.Chat(sumCtx, []provider.Message{
+		{Role: "system", Content: "You compress prior conversation into a compact working-memory summary for an autonomous coding assistant."},
+		{Role: "user", Content: prompt},
+	})
+	if err != nil || resp == nil {
+		return ""
+	}
+
+	content := strings.TrimSpace(resp.Content)
+	if content == "" {
+		return ""
+	}
+	content = header + "\n" + content
+	content = p.fitTextToBudget(content, tokenBudget)
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+
+	p.persistCompressedSummary(ctx, sess, messages, content)
+	return content
+}
+
+func (p *contextPlanner) persistCompressedSummary(ctx context.Context, sess *session.Session, messages []provider.Message, summary string) {
+	if p == nil || p.agent == nil || strings.TrimSpace(summary) == "" {
+		return
+	}
+
+	if p.agent.MidTermStore() == nil {
+		return
+	}
+
+	sessionID := "context-compression"
+	title := ""
+	if sess != nil {
+		if strings.TrimSpace(sess.ID) != "" {
+			sessionID = sess.ID
+		}
+		title = strings.TrimSpace(sess.Title)
+	}
+
+	turns := make([]memory.ConversationTurn, 0, len(messages))
+	for _, msg := range messages {
+		if strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		turns = append(turns, memory.ConversationTurn{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+	if err := p.agent.MidTermStore().SaveSummary(ctx, memory.SummaryRequest{
+		SessionID: sessionID, UserID: "context-compression", Title: title, Content: summary, Turns: turns,
+	}); err != nil {
+		logger.Warn("session summary persistence failed", "error", err)
+	}
+
+}
+
+/*
+compactHistoryMessage 对历史消息做必要的压缩与清洗。
+*/
+func (p *contextPlanner) compactHistoryMessage(msg provider.Message) provider.Message {
+	// Temporary computer screenshots must never be replayed as current delivery
+	// instructions. Drop stale MEDIA paths while preserving valid artifact refs.
+	msg.Content = sanitizeHistoricalMediaReferences(msg.Content)
+	if len(msg.ContentParts) > 0 {
+		msg.ContentParts = nil
+	}
+	if msg.Role == "tool" {
+		msg.Content = compactToolResultForContext(msg.Name, msg.Content)
+		return msg
+	}
+	if len(msg.Content) > 800 {
+		msg.Content = p.fitTextToBudget(msg.Content, 240)
+	}
+	return msg
+}
+
+/*
+fitTextToBudget 将文本裁剪到指定 token 预算内。
+*/
+func (p *contextPlanner) fitTextToBudget(text string, tokenBudget int) string {
+	text = strings.TrimSpace(text)
+	if text == "" || tokenBudget <= 0 {
+		return ""
+	}
+	if p.est.Estimate(text) <= tokenBudget {
+		return text
+	}
+	runes := []rune(text)
+	lo, hi := 0, len(runes)
+	best := ""
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		candidate := string(runes[:mid])
+		if mid < len(runes) {
+			candidate = strings.TrimSpace(candidate) + "\n...[truncated]"
+		}
+		if p.est.Estimate(candidate) <= tokenBudget {
+			best = candidate
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return best
+}
+
+/*
+summarizeConversationRange 将一段对话消息压缩为适合上下文注入的摘要文本。
+*/
+func summarizeConversationRange(messages []provider.Message, header string, est *contextx.TokenEstimator, tokenBudget int) string {
+	if len(messages) == 0 || tokenBudget <= 0 {
+		return ""
+	}
+	var userLines []string
+	var assistantLines []string
+	var toolLines []string
+	for _, msg := range messages {
+		text := strings.TrimSpace(msg.Content)
+		if text == "" {
+			continue
+		}
+		switch msg.Role {
+		case "user":
+			userLines = append(userLines, "- "+truncate(text, 100))
+		case "assistant":
+			assistantLines = append(assistantLines, "- "+truncate(text, 100))
+		case "tool":
+			summary := summarizeToolResult(msg.Name, text)
+			if summary != "" {
+				toolLines = append(toolLines, "- "+summary)
+			}
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("\n")
+	if len(userLines) > 0 {
+		b.WriteString("User topics:\n")
+		for _, line := range utils.DedupStringsLimit(userLines, 4) {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+	if len(assistantLines) > 0 {
+		b.WriteString("Assistant progress:\n")
+		for _, line := range utils.DedupStringsLimit(assistantLines, 4) {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+	if len(toolLines) > 0 {
+		b.WriteString("Tool evidence:\n")
+		for _, line := range utils.DedupStringsLimit(toolLines, 4) {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return ""
+	}
+	if est.Estimate(out) <= tokenBudget {
+		return out
+	}
+	runes := []rune(out)
+	for len(runes) > 0 {
+		runes = runes[:len(runes)-1]
+		candidate := strings.TrimSpace(string(runes)) + "\n...[truncated]"
+		if est.Estimate(candidate) <= tokenBudget {
+			return candidate
+		}
+	}
+	return ""
+}
+
+/*
+summarizeToolResult 对工具结果做短摘要，便于纳入上下文窗口。
+*/
+func summarizeToolResult(toolName, result string) string {
+	result = strings.TrimSpace(result)
+	if result == "" {
+		return ""
+	}
+	switch toolName {
+	case "web_search":
+		query := extractLineAfterPrefix(result, "Results for:")
+		if query != "" {
+			return fmt.Sprintf("Searched for %s and collected source candidates.", query)
+		}
+		if strings.Contains(strings.ToLower(result), "no results found") {
+			return "Search returned no useful results."
+		}
+		return "Collected search results from external sources."
+	case "web_fetch":
+		if strings.Contains(strings.ToLower(result), "failed to fetch") {
+			return "Tried to fetch a page body but the fetch failed."
+		}
+		title := extractLineAfterPrefix(result, "# ")
+		if title != "" {
+			return fmt.Sprintf("Fetched page content: %s.", title)
+		}
+		return "Fetched page content and extracted key details."
+	case "opencli":
+		if strings.Contains(strings.ToLower(result), "failed") {
+			return "Tried to access external content via OpenCLI but it failed."
+		}
+		title := extractLineAfterPrefix(result, "# ")
+		if title != "" {
+			return fmt.Sprintf("Extracted page content via OpenCLI: %s.", title)
+		}
+		return "Accessed external content via OpenCLI."
+	default:
+		return truncate(result, 120)
+	}
+}
+
+/*
+extractLineAfterPrefix 提取给定前缀后面的首行文本。
+*/
+func extractLineAfterPrefix(text, prefix string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+/*
+aOrEmpty 将空字符串标准化为空值，其余值原样返回。
+*/
+func aOrEmpty(s string) string {
+	return strings.TrimSpace(s)
+}

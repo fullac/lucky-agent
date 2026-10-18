@@ -4,7 +4,7 @@
 
 # LuckyAgent
 
-LuckyAgent 是一个用 Go 构建的长期运行 Agent runtime。它把 Agent loop、模型路由、工具和技能、长期记忆、RAG、HTTP API 以及消息网关放在同一个运行时里，支持从本地调试逐步走向容器和线上部署。
+LuckyAgent 主仓库维护公开的 Agent 核心库，并保留构建完整 `lh` 程序的薄入口。模型、会话、记忆、RAG 和应用入口来自独立 Go 模块，在同一个进程内组装运行。
 
 它不是只提供一个聊天窗口，而是提供一套可以观察、配置和持续运行的 Agent 基础设施。
 
@@ -50,12 +50,15 @@ go run ./examples/embed_minimal
 ## 核心能力
 
 - **统一运行时**：CLI、HTTP API 和消息网关共享同一个 Agent 核心。
+- **会话存储**：并发保存、备份恢复和删除使用同一生命周期保护；冷元数据更新不加载正文，大历史分页复用偏移索引。见[会话存储可靠性](docs/session-reliability.md)。
 - **长期记忆**：用 Obsidian-compatible Markdown vault 保存用户画像、事实、规则、决策和会话轨迹。
 - **RAG 知识库**：索引项目文档、个人笔记和运维资料，并在 Agent 运行时检索。
 - **工具与技能**：支持内置工具、技能加载、技能安装、MCP 和 OpenCLI。
+- **独立插件**：安装和管理包含 Skills、命令、Agent 预设、MCP 与工具 Hooks 的插件包，支持显式 marketplace。见[插件接入说明](docs/plugin-module.md)。
 - **多平台入口**：支持 Telegram、QQ Official、NapCat、飞书、微信和 OpenClaw Weixin。
-- **外部客户端**：会话、工具轨迹、Memory Graph、技能和网关通过 HTTP API 提供。手机工作区在独立仓库 `luckyagent-android`。
+- **外部客户端**：会话、工具轨迹、Memory Graph、技能、插件管理和网关通过 HTTP API 提供。安卓“资源与连接 → 插件”支持查看、安装、更新、启停及卸载，变更重启服务后生效。手机工作区在独立仓库 `luckyagent-android`。
 - **多 Agent 能力**：提供协作、委派和实验/benchmark 相关运行能力。
+- **长任务上下文**：有界历史投影、完整工具轮次裁剪、当前会话证据读回和执行账本。见[行为与限制](docs/long-task-context.md)。
 
 ## 快速开始
 
@@ -182,6 +185,13 @@ lh rag search "deployment"
 - [特色功能](docs/wiki/特色功能.md)：记忆、RAG、工具、自动化和多 Agent
 - [使用场景](docs/wiki/使用场景.md)：本地调试、知识库问答、机器人和团队 API
 - [HTTP API](docs/API.md)
+- [消息网关与服务接口的模块边界](docs/edge-modules.md)
+- [独立工具模块与宿主适配](docs/tool-module.md)
+- [独立插件模块与安装使用](docs/plugin-module.md)
+- [Agent 核心与可执行入口](docs/core-modules.md)
+- [共享应用服务及宿主适配](docs/application-services.md)
+- [多仓库协作与进度同步](docs/multi-repo-workflow.md)
+- [运行时请求与恢复选项](docs/runtime-request-recovery.md)：WebSocket 恢复、可选缓存 key 与 X11 截图回退
 - [Codex App Server 集成](docs/codex-app-server.md)
 - [Grok agent 集成](docs/grok-agent.md)
 - [记忆系统](docs/memory_system.md)
@@ -199,6 +209,7 @@ lh rag search "deployment"
 ├── sessions/
 ├── memory/
 ├── skills/
+├── plugins/
 ├── rag/
 ├── logs/
 ├── runtime/
@@ -223,28 +234,35 @@ HOME="$PWD/.lh-home" go run ./cmd/la chat "Test the local runtime"
 ## 项目结构
 
 ```text
-cmd/la                   CLI 入口
-internal/agent           Agent 核心运行时和 Agent loop
-internal/config          配置加载、默认值和运行目录
-internal/memory          Markdown 记忆 vault 和召回
-internal/rag             RAG 索引、检索和持久化
-internal/tool            工具、技能、MCP 和 OpenCLI
-internal/server           HTTP API、SSE 和 WebSocket
-internal/gateway          Telegram、QQ、飞书、微信等消息网关
-docker-compose.yml       开发环境 Compose
-docker-compose.prod.yml  生产环境 Compose
-config.example.json      配置模板
+agent/                   公开 Agent 核心与测试（独立 Go module）
+cmd/la/main.go           薄可执行入口
+luckyagent-app           CLI、API/渠道产品逻辑、SDK、评测（外部模块）
+luckyagent-runtime       模型、配置、会话、记忆、RAG 等组件（外部模块）
+luckyagent-tools         通用工具与执行能力（外部模块）
+luckyagent-plugins       插件格式、安装快照、marketplace 与信任状态（外部模块）
+luckyagent-api           HTTP/WS/gRPC 传输（外部模块）
+luckyagent-gateway       平台协议与连接（外部模块）
+config.example.json      产品配置模板
+docs/                    使用文档与模块边界
 ```
 
 ## 开发
 
-运行 Go 测试：
+运行 Agent 模块和薄入口模块的测试：
 
 ```bash
-go test ./...
+make test
 ```
 
-如果需要修改 API、记忆、RAG、技能或消息网关，建议先阅读对应 package 和 `docs/` 下的专题文档，再运行相关 focused tests。
+`agent` 有自己的 `go.mod`，父目录的 `go test ./...` 不会遍历它。仓库自带的 `go.work` 只包含本仓库两个模块，普通编译和 Docker 都会使用当前 `agent/` 源码：
+
+```bash
+go build -o lh ./cmd/la
+# 另行验证已发布依赖，确保不需要其他仓库的本地源码
+GOWORK=off go build -o lh ./cmd/la
+```
+
+Agent 核心修改在 `agent/`；CLI、API 和渠道产品逻辑在 `luckyagent-app`；后端组件在 `luckyagent-runtime`。新嵌入代码使用 `github.com/yurika0211/lucky-agent/agent`，完整应用 SDK 使用 `github.com/yurika0211/luckyagent-app/sdk`。
 
 ## License
 

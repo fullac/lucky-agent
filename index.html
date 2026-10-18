@@ -1081,12 +1081,12 @@
               '小白用户可直接打开下载页选择系统安装包：./download.html。',
               '核心入口包括 lh chat、lh serve、lh msg-gateway start。',
               '部署路径包括源码运行、开发 Compose、生产 Compose 和镜像直跑。',
-              '服务健康检查固定为 GET /api/v1/health。',
+              '存活与就绪检查为 GET /api/v1/health/live 和 /api/v1/health/ready。',
               '运行时行为尽量以 config.json 为准，环境变量只做局部覆盖。'
             ],
             related: ['install-cli', 'config', 'runtime', 'source', 'dev-docker', 'prod-docker'],
             commands: [
-              { label: '最短验证链路', body: 'lh init\nlh config set provider openai\nlh config set api_key sk-your-api-key\nlh config set model gpt-5.4-mini\nlh chat "Hello"\nlh serve\ncurl http://127.0.0.1:9090/api/v1/health' }
+              { label: '最短验证链路', body: 'lh init\nlh config set provider openai\nlh config set api_key sk-your-api-key\nlh config set model gpt-5.4-mini\nlh chat "Hello"\nlh serve\ncurl http://127.0.0.1:9090/api/v1/health/live' }
             ]
           },
           {
@@ -1174,6 +1174,7 @@
                   { field: 'models.endpoints.<kind>.api_base', example: 'https://api.openai.com/v1', description: 'API 根地址。使用代理或兼容服务时填写该服务的地址，通常不要重复拼接具体接口路径。' },
                   { field: 'models.endpoints.<kind>.protocol', example: 'chat_completions', description: '对话模型协议，可填 chat_completions 或 responses；其他用途通常留空。' },
                   { field: 'models.endpoints.<kind>.reasoning_summary', example: 'detailed', description: 'Responses 协议的推理摘要级别，可填 auto、concise 或 detailed。' },
+                  { field: 'models.endpoints.chat.prompt_cache_key', example: '""', description: '可选的提示词缓存命名空间，留空时不发送。仅在端点支持该字段时填写；Chat Completions 和 Responses 均使用它，不保证缓存命中。' },
                   { field: 'models.endpoints.<kind>.extra_headers', example: '{ "User-Agent": "luckyagent" }', description: '发送给该模型端点的额外 HTTP 请求头，键和值都必须是字符串。' },
                   { field: 'models.profiles.<name>', example: '{}', description: '命名模型组合，只保存各用途的模型 ID，不保存密钥。通过模型配置中心或 API 应用。' }
                 ]
@@ -1219,12 +1220,13 @@
                 description: '控制身份文件、上下文窗口、采样温度和降级链。',
                 fields: [
                   { field: 'soul_path', example: '""', description: 'SOUL.md 路径；留空时使用 ${HOME}/.luckyagent/memory/prompts/SOUL.md。' },
-                  { field: 'max_tokens', example: '4096', description: '上下文窗口预算，不是单次回答最大输出 token 数。' },
+                  { field: 'max_tokens', example: '4096', description: '旧版上下文预算。JSON 未显式设置 context.max_context_tokens 时迁移使用；旧 config set max_tokens 会同步两者。新配置优先设置 context.max_context_tokens。' },
                   { field: 'temperature', example: '0.7', description: '主对话模型采样温度；越高越发散，越低越稳定。' },
                   { field: 'stream_mode', example: 'native', description: '流式模式；native 使用原生流式，simulated 使用非流式结果模拟推送。' },
                   { field: 'fallbacks[]', example: '[]', description: '主模型失败后的降级提供商数组。每个新请求从最高优先级的可用节点开始；主模型冷却结束后会自动恢复探测，404 或 model_not_found 会禁用对应节点直到配置重载或进程重启。' },
                   { field: 'fallbacks[].provider / api_key / api_base / model', example: 'openai / sk-... / https://... / gpt-4.1-mini', description: '降级节点的提供商、密钥、地址和模型。每个节点至少要能组成一条可用调用链。' },
-                  { field: 'fallbacks[].protocol / reasoning_summary', example: 'chat_completions / auto', description: '降级节点的协议和 Responses 推理摘要设置，可留空使用默认值。' }
+                  { field: 'fallbacks[].protocol / reasoning_summary', example: 'chat_completions / auto', description: '降级节点的协议和 Responses 推理摘要设置，可留空使用默认值。' },
+                  { field: 'fallbacks[].prompt_cache_key', example: '""', description: '该降级节点独立的缓存命名空间；留空不发送，也不继承主节点的 key。仅适用于支持该选项的 OpenAI 兼容端点。' }
                 ]
               },
               {
@@ -1246,6 +1248,20 @@
                 ]
               },
               {
+                id: 'mcp',
+                title: 'mcp · 外部服务连接',
+                description: '独立 MCP 客户端支持 stdio 和 Streamable HTTP。配置的服务在启动时连接；修改配置需要重启运行时。通过 /mcp status、connect、refresh、disconnect 管理，也可使用 /api/v1/mcp/servers。',
+                fields: [
+                  { field: 'mcp.servers', example: '{}', description: '服务名到配置对象的映射；默认空对象。每个运行时使用自己的连接与凭据。' },
+                  { field: 'mcp.servers.<name>.transport', example: 'stdio / http', description: 'stdio 启动本地子进程；http 连接 Streamable HTTP 端点。省略时有 URL 使用 http，否则使用 stdio。' },
+                  { field: 'mcp.servers.<name>.command', example: 'your-mcp-server', description: 'stdio 可执行文件；args 为参数数组，env 为环境变量对象，cwd 为工作目录。不会交给 shell 解析。' },
+                  { field: 'mcp.servers.<name>.url', example: 'https://example.com/mcp', description: 'HTTP MCP 端点，不能同时配置进程字段；不跟随重定向。旧版独立 SSE 端点暂不支持。' },
+                  { field: 'mcp.servers.<name>.credential_ref', example: 'mcp-token', description: 'HTTP Bearer 凭据在本地凭据库中的 ID；每次请求读取，配置不存明文 API Key。stdio 服务可通过其环境或自身凭据管理认证。' },
+                  { field: 'mcp.servers.<name>.timeout_seconds', example: '30', description: '连接、发现和单次调用超时，0 使用 30 秒，最大 3600 秒。取消调用不会自动重试有副作用的操作。' },
+                  { field: 'mcp.servers.<name>.disabled', example: 'false', description: 'true 时不启动服务。config.example.json 中的两个示例默认关闭。工具列表变更后使用 /mcp refresh <名称> 更新目录。' }
+                ]
+              },
+              {
                 id: 'grok',
                 title: 'grok · 本地编码代理',
                 description: '通过 grok agent stdio 把编码任务交给本机 Grok。默认关闭，开启后才注册 grok.* 工具。',
@@ -1262,7 +1278,7 @@
               {
                 id: 'memory',
                 title: 'memory / rag · 记忆和检索',
-                description: 'memory 管理持久记忆，rag 管理文档检索；两者不要混作同一类数据。',
+                description: 'memory 基于 Aestus 管理运行时 home/memory 中的 Markdown 记忆；自动摘要保留作用域与过期时间，会话摘要单独保存。rag 负责文档检索。',
                 fields: [
                   { field: 'memory.short_term_max_turns', example: '10', description: '短期会话记忆保留的最大轮数。' },
                   { field: 'memory.midterm_expire_days', example: '365', description: '中期摘要的过期天数。' },
@@ -1293,7 +1309,7 @@
                   { field: 'model_router.local_model', example: 'qwen2.5-coder-32b', description: '中等任务优先使用的本地模型 ID。' },
                   { field: 'model_router.local_base_url', example: 'http://127.0.0.1:11434/v1', description: '本地模型的 OpenAI 兼容 API 地址。' },
                   { field: 'model_router.token_threshold', example: '500', description: '超过该 token 估算值时视为复杂任务。' },
-                  { field: 'limits.max_tokens', example: '4096', description: '单次模型回答的最大输出 token 数；与顶层 max_tokens 的上下文预算不同。' },
+                  { field: 'limits.max_tokens', example: '4096', description: '单次模型回答的最大输出 token 数；上下文窗口使用 context.max_context_tokens。' },
                   { field: 'limits.timeout_seconds', example: '60', description: '默认请求超时时间。' },
                   { field: 'limits.max_timeout_seconds', example: '600', description: '允许的最大请求超时时间。' },
                   { field: 'limits.max_tool_calls', example: '5', description: '单轮最多执行的工具调用数量。' },
@@ -1304,16 +1320,17 @@
               {
                 id: 'context-agent',
                 title: 'context / agent · 上下文和 Agent 循环',
-                description: '控制历史消息、自动压缩、工具循环和调试行为。',
+                description: '控制历史消息、自动压缩、工具循环和调试行为。长任务保留有界归档摘要及完整工具轮次，可用 context_history_read 读回当前会话证据；执行账本与独立验收区分计划和实际进展。',
                 fields: [
                   { field: 'context.max_history_turns', example: '50', description: '最多带入的历史对话轮数。' },
-                  { field: 'context.max_context_tokens', example: '8000', description: '上下文规划器使用的最大 token 预算。' },
+                  { field: 'context.max_context_tokens', example: '8000', description: '统一上下文上限，供规划、自动压缩、持久任务继续执行及验收使用；扣除 reserved_ratio 后才是输入预算。文本计数是估算，不含完整工具 schema/图片费用。' },
+                  { field: 'context_budget.reserved_ratio', example: '0.25', description: '从统一上下文上限为回复预留的比例。默认 8000 预留 2000，可用输入约 6000 token。' },
                   { field: 'context.compression_threshold', example: '0.8', description: '历史上下文达到预算比例后触发压缩判断。' },
                   { field: 'context.auto_compact', example: 'true', description: '是否自动压缩过长的对话上下文。' },
                   { field: 'context.auto_compact_threshold', example: '0.82', description: '自动压缩的触发比例。' },
                   { field: 'context.auto_compact_target_ratio', example: '0.5', description: '压缩后希望占用的预算比例。' },
-                  { field: 'context.auto_compact_min_messages', example: '24', description: '至少积累多少条消息后才允许自动压缩。' },
-                  { field: 'context.auto_compact_cooldown_turns', example: '8', description: '两次自动压缩之间至少间隔的轮数。' },
+                  { field: 'context.auto_compact_min_messages', example: '24', description: '常规自动压缩的最少消息数；启用自动压缩后，实际输入超窗可越过此门槛。' },
+                  { field: 'context.auto_compact_cooldown_turns', example: '8', description: '常规自动压缩的冷却轮数；实际输入超窗可越过此门槛。' },
                   { field: 'context.auto_compact_retain_turns', example: '6', description: '压缩时始终保留最近的对话轮数。' },
                   { field: 'context.auto_compact_reserved_summary_tokens', example: '1200', description: '给压缩摘要预留的 token 数。' },
                   { field: 'context.compact_model', example: 'gpt-4.1-mini', description: '仅用于 session compact 的模型 ID；空则用当前对话模型。' },
@@ -1364,10 +1381,10 @@
                 description: 'server 提供 HTTP API 和 WebSocket。',
                 fields: [
                   { field: 'server.addr', example: '127.0.0.1:9090', description: 'HTTP API 监听地址；容器对外提供服务时通常填 0.0.0.0:9090。' },
-                  { field: 'server.api_keys', example: '[]', description: '访问 API 时允许的密钥数组；公网部署建议配置。' },
+                  { field: 'server.api_keys', example: '[]', description: '访问 API 的密钥数组；对外访问和反代必须配置。无密钥仅允许本机连接、loopback Host、同源 Origin 且无转发头。扫码临时 key 仍可使用。' },
                   { field: 'server.enable_cors', example: 'true', description: '是否启用跨域响应。' },
                   { field: 'server.cors_origins', example: '["*"]', description: '允许跨域的来源列表；生产环境不建议长期使用 *。' },
-                  { field: 'server.rate_limit', example: '60', description: 'HTTP API 每分钟请求上限。' },
+                  { field: 'server.rate_limit', example: '60', description: '每把凭据的每分钟业务请求额度；共用 key 的设备共用额度。认证尝试和公开健康探针使用独立额度。' },
                   { field: 'server.metrics_addr', example: '""', description: 'Prometheus 指标监听地址；留空表示不单独监听。' },
                   { field: 'server.log_level / log_format', example: 'info / text', description: '日志级别和格式，可按部署环境调整。' }
                 ]
@@ -1472,7 +1489,7 @@
               {
                 id: 'hooks-skills',
                 title: 'hooks / skills · 扩展边界',
-                description: 'hooks 保护工具执行边界，skills 控制技能加载和安装限制。',
+                description: 'hooks 保护工具执行边界，skills 控制技能加载和安装限制。独立插件可通过 lh plugin 或安卓“资源与连接 → 插件”查看、安装、更新、启停和卸载；HTTP 接口为 /api/v1/plugins 及其名称子路径，沿用 API 鉴权。索引在 runtimeHome/plugins/index.json，不新增 config.json 键；变更重启后生效，执行组件需要显式信任，每次更新重新授权。',
                 fields: [
                   { field: 'hooks.enabled', example: 'false', description: '是否启用 PreToolUse 和 PostToolUse hook。' },
                   { field: 'hooks.timeout_seconds', example: '30', description: '单个 hook 的执行超时时间。' },
@@ -1616,16 +1633,22 @@
             kind: 'core',
             x: 50,
             y: 48,
-            summary: 'lh serve 启动 HTTP API 服务。lh qr 会同时签发一把 24 小时临时 key，并在终端显示手机扫码用的二维码。API 重启后这把 key 立即失效。部署是否成功，先看 /api/v1/health。',
+            summary: 'lh serve 提供 HTTP、SSE 和 WebSocket。lh qr 签发的临时 key 默认 24 小时有效，API 重启后失效。部署先检查 /api/v1/health/live 和 /api/v1/health/ready。',
             points: [
               '本机调试可监听 127.0.0.1:9090。',
-              '容器或外部访问通常要监听 0.0.0.0:9090。',
-              'Docker healthcheck 走容器内部 http://127.0.0.1:9090/api/v1/health。',
+              '容器或外部访问通常监听 0.0.0.0:9090，并配置 server.api_keys；同机反代同样需要密钥。',
+              'JSON 请求默认限 2 MiB；超额返回 413，不支持的 Content-Type 返回 415。',
+              'WebSocket 相同会话和请求 ID 的重试复用原任务；不同输入报冲突。补发按已收到的 event_id 恢复。',
+              'WebSocket 写入失败会明确报错并停止该任务，后续不再报告成功；修复存储后再检查任务状态。',
+              'SSE 区分 completed、failed、cancelled；错误不再跟随成功结束事件。SSE 本身不提供持久游标补发。',
+              '会话改名和置顶只写元数据；大历史分页复用偏移索引。删除成功会取消本 Agent 的在途任务，旧句柄和排队请求不能写回已删历史。',
+              '新备份包含外置正文，恢复后完整重写历史；正文清理保留备份引用。未完成的 JSONL 尾记录保留此前完整历史，中间损坏明确报错，无新增配置字段。',
+              'Docker healthcheck 走容器内部 http://127.0.0.1:9090/api/v1/health/live；detail 需要普通鉴权。',
               'Bot 已启动但外部访问不到 API 时，优先检查 server.addr。'
             ],
             related: ['source', 'dev-docker', 'prod-docker', 'telegram', 'napcat'],
             commands: [
-              { label: '启动和验证', body: 'lh serve --addr 127.0.0.1:9090\ncurl http://127.0.0.1:9090/api/v1/health' }
+              { label: '启动和验证', body: 'lh serve --addr 127.0.0.1:9090\ncurl http://127.0.0.1:9090/api/v1/health/live\ncurl http://127.0.0.1:9090/api/v1/health/ready' }
             ]
           },
           {
@@ -1775,7 +1798,7 @@
             ],
             related: ['troubleshooting', 'commands', 'telegram', 'napcat'],
             commands: [
-              { label: '常用检查命令', body: 'lh config list\ncurl http://127.0.0.1:9090/api/v1/health\ndocker compose logs -f luckyagent\ndocker compose logs -f luckyagent-napcat' }
+              { label: '常用检查命令', body: 'lh config list\ncurl http://127.0.0.1:9090/api/v1/health/live\ndocker compose logs -f luckyagent\ndocker compose logs -f luckyagent-napcat' }
             ]
           },
           {
