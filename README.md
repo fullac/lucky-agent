@@ -53,6 +53,7 @@ go run ./examples/embed_minimal
 - **长期记忆**：用 Obsidian-compatible Markdown vault 保存用户画像、事实、规则、决策和会话轨迹。
 - **RAG 知识库**：索引项目文档、个人笔记和运维资料，并在 Agent 运行时检索。
 - **工具与技能**：支持内置工具、技能加载、技能安装、MCP 和 OpenCLI。
+- **独立插件**：安装和管理包含 Skills、命令、Agent 预设、MCP 与工具 Hooks 的插件包，支持显式 marketplace。见[插件接入说明](docs/plugin-module.md)。
 - **多平台入口**：支持 Telegram、QQ Official、NapCat、飞书、微信和 OpenClaw Weixin。
 - **外部客户端**：会话、工具轨迹、Memory Graph、技能和网关通过 HTTP API 提供。手机工作区在独立仓库 `luckyagent-android`。
 - **多 Agent 能力**：提供协作、委派和实验/benchmark 相关运行能力。
@@ -184,6 +185,7 @@ lh rag search "deployment"
 - [HTTP API](docs/API.md)
 - [消息网关与服务接口的模块边界](docs/edge-modules.md)
 - [独立工具模块与宿主适配](docs/tool-module.md)
+- [独立插件模块与安装使用](docs/plugin-module.md)
 - [Agent 核心与可执行入口](docs/core-modules.md)
 - [共享应用服务及宿主适配](docs/application-services.md)
 - [运行时请求与恢复选项](docs/runtime-request-recovery.md)：WebSocket 恢复、可选缓存 key 与 X11 截图回退
@@ -204,6 +206,7 @@ lh rag search "deployment"
 ├── sessions/
 ├── memory/
 ├── skills/
+├── plugins/
 ├── rag/
 ├── logs/
 ├── runtime/
@@ -233,6 +236,7 @@ cmd/la/main.go           薄可执行入口
 luckyagent-app           CLI、API/渠道产品逻辑、SDK、评测（外部模块）
 luckyagent-runtime       模型、配置、会话、记忆、RAG 等组件（外部模块）
 luckyagent-tools         通用工具与执行能力（外部模块）
+luckyagent-plugins       插件格式、安装快照、marketplace 与信任状态（外部模块）
 luckyagent-api           HTTP/WS/gRPC 传输（外部模块）
 luckyagent-gateway       平台协议与连接（外部模块）
 config.example.json      产品配置模板

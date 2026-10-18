@@ -2,8 +2,9 @@
 
 This document describes the HTTP API registered by `lh serve`.
 
-Source of truth: `internal/server/server.go` and the handler files under
-`internal/server/`. If behavior differs from this document, verify the matching
+Source of truth: `luckyagent-api/routes.go` for route registration,
+`luckyagent-app/apiapp/server.go` for application bindings, and its handler files.
+If behavior differs from this document, verify the matching
 handler before relying on it.
 
 ## Base URL
@@ -162,6 +163,86 @@ curl http://127.0.0.1:9090/api/v1/chat/sync \
   -H "Content-Type: application/json" \
   -d "{\"message\":\"hello\"}"
 ```
+
+An installed plugin command such as `/starter:review UI/HTTP-API.go --Keep-Case`
+runs through the normal Agent Loop. The runtime recognizes its exact namespaced
+name before the built-in slash-command router, expands the command prompt's
+`$ARGUMENTS`, and keeps the argument spelling, case, and hyphens. Expansion is a
+prompt operation; it does not evaluate shell substitutions. The chat request
+retains its session and attachments, and returns the usual `ChatResponse` above.
+The same request fields, including `max_iterations` and `auto_approve`, apply.
+
+```bash
+curl http://127.0.0.1:9090/api/v1/chat/sync \
+  -H "Content-Type: application/json" \
+  -d '{"message":"/starter:review UI/HTTP-API.go --Keep-Case","session_id":"session-id"}'
+```
+
+## Commands
+
+These routes use the normal API authentication middleware. The command catalog
+includes built-in commands and commands from enabled plugins loaded when the
+Agent starts. Install or change plugins with `lh plugin`, then restart the
+running API process to load the new installation state. See
+[the plugin module guide](plugin-module.md).
+
+### `GET /api/v1/commands`
+
+Returns `{"commands":[...],"count":N}`. Each entry has `name`, `usage`,
+`description`, and `group`. Plugin entries use `group: "plugins"` and the exact
+`plugin-name:command-name` identifier. For example, the installed starter plugin
+adds this entry:
+
+```json
+{
+  "name": "starter:review",
+  "usage": "/starter:review [arguments]",
+  "description": "Run installed plugin command",
+  "group": "plugins"
+}
+```
+
+Clients should use the returned name verbatim. Plugin command names retain their
+case and hyphens; the built-in command normalization is applied only after a
+plugin lookup has failed.
+
+### `POST /api/v1/commands`
+
+Run a catalog command. For an installed plugin command, both
+`"starter:review"` and `"/starter:review"` are accepted in `command`:
+
+```json
+{
+  "command": "starter:review",
+  "args": "UI/HTTP-API.go --Keep-Case MixedCase-v2",
+  "session_id": "optional-existing-session-id"
+}
+```
+
+Plugin command execution creates a session when `session_id` is omitted. A
+supplied session must exist, otherwise the endpoint returns `404`. It expands
+the command prompt using `args` and runs the real Agent Loop with the host's
+configured Agent limits and approval policy. The argument tail retains its
+spelling, case, and hyphens. This endpoint accepts text command arguments;
+use `/api/v1/chat/sync` when the command turn includes attachments or per-request
+chat options.
+
+Successful plugin command execution returns HTTP `200`:
+
+```json
+{
+  "command": "starter:review",
+  "ok": true,
+  "output": "assistant response",
+  "session_id": "session-id"
+}
+```
+
+The echoed command omits the optional leading slash and otherwise preserves the
+namespaced name. Loop failures return HTTP `200` with `ok: false`, the error in
+`output`, and the session id; clients must inspect `ok`. Invalid JSON returns
+`400`. Built-in commands retain their existing command-specific behavior and
+use the same `command`, `ok`, and `output` response fields.
 
 ## Sessions
 

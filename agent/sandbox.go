@@ -7,6 +7,7 @@ import (
 
 	"github.com/yurika0211/luckyagent-runtime/sandbox"
 	"github.com/yurika0211/luckyagent-runtime/session"
+	"github.com/yurika0211/luckyagent-runtime/tool"
 )
 
 // SandboxMode returns the persisted global execution mode.
@@ -72,6 +73,9 @@ func (a *Agent) applySandboxToolPolicy(cfg *LoopConfig, snapshot *sandbox.Snapsh
 				continue
 			}
 			name := item.Name
+			if item.Category == tool.CatMCP || (item.Category == pluginCategory && name != "plugin_info" && name != "plugin_agent") {
+				disabled = append(disabled, name)
+			}
 			if strings.HasPrefix(name, "skill_") && strings.HasSuffix(name, "_run") {
 				disabled = append(disabled, name)
 			}

@@ -325,6 +325,20 @@ func (a *Agent) executeToolCallsOrdered(
 	allowMixedParallel bool,
 	sourceOpt ...string,
 ) []executedToolCall {
+	return a.executeToolCallsOrderedContext(context.Background(), toolCalls, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, allowMixedParallel, sourceOpt...)
+}
+
+func (a *Agent) executeToolCallsOrderedContext(
+	ctx context.Context,
+	toolCalls []provider.ToolCall,
+	autoApprove bool,
+	sess *session.Session,
+	toolURLRepeatCount map[string]int,
+	toolURLLastResult map[string]string,
+	duplicateFetchLimit int,
+	allowMixedParallel bool,
+	sourceOpt ...string,
+) []executedToolCall {
 	source := "cli"
 	if len(sourceOpt) > 0 && strings.TrimSpace(sourceOpt[0]) != "" {
 		source = strings.TrimSpace(sourceOpt[0])
@@ -337,7 +351,7 @@ func (a *Agent) executeToolCallsOrdered(
 
 	runOne := func(idx int, tc provider.ToolCall) {
 		start := time.Now()
-		toolResult, err := a.executeToolMaybeDedupDetailed(tc.Name, tc.Arguments, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, executionOpts...)
+		toolResult, err := a.executeToolMaybeDedupDetailedContext(ctx, tc.Name, tc.Arguments, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, executionOpts...)
 		resultText := toolResult.Output
 		if err != nil {
 			resultText = fmt.Sprintf("Error: %v", err)
@@ -607,13 +621,28 @@ func (a *Agent) executeToolCallsOrderedGuarded(
 	guard *toolExecutionGuard,
 	sourceOpt ...string,
 ) []executedToolCall {
+	return a.executeToolCallsOrderedGuardedContext(context.Background(), toolCalls, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, allowMixedParallel, guard, sourceOpt...)
+}
+
+func (a *Agent) executeToolCallsOrderedGuardedContext(
+	ctx context.Context,
+	toolCalls []provider.ToolCall,
+	autoApprove bool,
+	sess *session.Session,
+	toolURLRepeatCount map[string]int,
+	toolURLLastResult map[string]string,
+	duplicateFetchLimit int,
+	allowMixedParallel bool,
+	guard *toolExecutionGuard,
+	sourceOpt ...string,
+) []executedToolCall {
 	source := "cli"
 	if len(sourceOpt) > 0 && strings.TrimSpace(sourceOpt[0]) != "" {
 		source = strings.TrimSpace(sourceOpt[0])
 	}
 	hooksActive := a.hooks.Enabled()
 	if (guard == nil && !hooksActive) || len(toolCalls) == 0 {
-		return a.executeToolCallsOrdered(toolCalls, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, allowMixedParallel, sourceOpt...)
+		return a.executeToolCallsOrderedContext(ctx, toolCalls, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, allowMixedParallel, sourceOpt...)
 	}
 
 	sessionID := ""
@@ -647,6 +676,13 @@ func (a *Agent) executeToolCallsOrderedGuarded(
 				continue
 			}
 			tc.Arguments = finalArgs
+			guardCall.Arguments = finalArgs
+			if msg, blocked := guard.blockMessage(guardCall); blocked {
+				result := executedToolCall{Index: idx, ToolCall: tc, Result: msg}
+				blockedResults[idx] = result
+				a.recordProactiveToolEvent(sess, result, true)
+				continue
+			}
 		}
 		allowed = append(allowed, tc)
 	}
@@ -665,11 +701,11 @@ func (a *Agent) executeToolCallsOrderedGuarded(
 		// represented one desktop-dependent plan, and running its survivors in
 		// parallel would make the blocked/approved ordering nondeterministic.
 		for _, tc := range allowed {
-			one := a.executeToolCallsOrdered([]provider.ToolCall{tc}, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, false, sourceOpt...)
+			one := a.executeToolCallsOrderedContext(ctx, []provider.ToolCall{tc}, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, false, sourceOpt...)
 			executed = append(executed, one...)
 		}
 	} else {
-		executed = a.executeToolCallsOrdered(allowed, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, allowMixedParallel, sourceOpt...)
+		executed = a.executeToolCallsOrderedContext(ctx, allowed, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, allowMixedParallel, sourceOpt...)
 	}
 	results := make([]executedToolCall, 0, len(toolCalls))
 	next := 0

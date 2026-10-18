@@ -383,7 +383,7 @@ func (a *Agent) RunLoopWithSession(ctx context.Context, sess *session.Session, u
 
 // RunLoopWithSessionInput 执行 Agent Loop（带结构化多模态输入）。
 func (a *Agent) RunLoopWithSessionInput(ctx context.Context, sess *session.Session, turnInput UserTurnInput, loopCfg LoopConfig) (result *LoopResult, err error) {
-	turnInput = turnInput.Normalize()
+	turnInput = a.expandPluginCommand(turnInput)
 	return a.runLoopWithProviderSnapshot(ctx, sess, turnInput, loopCfg, a.providerSnapshotForTurn(turnInput.RoutingText))
 }
 
@@ -481,6 +481,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	}
 	l.runtime.applyIntentToolGating(&loopCfg, routingText)
 	l.runtime.applyVisionToolPolicy(&loopCfg, turnProvider)
+	loopCfg.eventContext = withPluginCallPolicy(ctx, loopCfg, turnInput.Scope, routingText)
 
 	if l.options.EnsureAutonomy != nil {
 		if startErr := l.options.EnsureAutonomy(ctx); startErr != nil {
@@ -1013,7 +1014,8 @@ func (a *Agent) processToolCallBatch(
 		})
 	}
 
-	executed := a.executeToolCallsOrderedGuarded(
+	executed := a.executeToolCallsOrderedGuardedContext(
+		loopCfg.eventContext,
 		resp.ToolCalls,
 		loopCfg.AutoApprove,
 		sess,
