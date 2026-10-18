@@ -134,6 +134,7 @@ func buildDelegateChildLoopConfig(delegateCfg tool.DelegateConfig, allowRecursiv
 	if !allowRecursive {
 		loopCfg.DisabledTools = append(loopCfg.DisabledTools,
 			"subagent",
+			"autonomy",
 			"delegate_parallel",
 			"delegate_to_skill",
 			"delegate_to_mcp",
@@ -1467,7 +1468,7 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 			duplicateFetchLimit:    loopCfg.DuplicateFetchLimit,
 			disabledTools:          append([]string(nil), loopCfg.DisabledTools...),
 			memoryGate:             a.buildMemoryToolGate(routingText, input.Scope, loopCfg.DisabledTools),
-			toolExecutionGuard:     newTurnToolGuard(routingText, loopCfg.DisabledTools, loopCfg.BlockedActions, snapshotMode(loopCfg.Sandbox)),
+			toolExecutionGuard:     configuredTurnToolGuard(routingText, loopCfg),
 			iterationTimeout:       loopCfg.Timeout,
 			artifactGuard:          newArtifactFinalizationGuard(routingText),
 		}
@@ -1926,6 +1927,14 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 		sessionID = sess.ID
 	}
 	callOpts = a.appendEphemeralToolSchemas(callOpts, sessionID)
+	policy := LoopConfig{DisabledTools: state.disabledTools}
+	if guard := state.toolExecutionGuard; guard != nil {
+		policy.RestrictTools = guard.restrictTools
+		for name := range guard.allowedTools {
+			policy.AllowedTools = append(policy.AllowedTools, name)
+		}
+	}
+	callOpts = applyToolAllowlist(callOpts, policy)
 	if remaining <= 0 {
 		if message, blocked := state.pendingDelegateWaitMessage(); blocked {
 			a.finalizeStreamWithState(events, sess, turnInput, message, state)
@@ -2877,7 +2886,8 @@ func (a *Agent) startAutonomy(ctx context.Context, force bool) error {
 	}
 
 	// Create executor adapter that bridges Agent to AgentExecutor interface
-	executor := &agentExecutorAdapter{loop: a.loopRunner(), sessions: a.sessions}
+	delegateCfg := a.delegate.Config()
+	executor := &agentExecutorAdapter{loop: a.loopRunner(), sessions: a.sessions, delegateConfig: &delegateCfg}
 	a.autonomy.SetExecutor(executor)
 
 	if a.autonomy.Status().Started {
@@ -2901,8 +2911,9 @@ func (a *Agent) startAutonomy(ctx context.Context, force bool) error {
 agentExecutorAdapter 将 Agent 适配为 autonomy 所需的执行器接口。
 */
 type agentExecutorAdapter struct {
-	loop     *Loop
-	sessions *session.Manager
+	loop           *Loop
+	sessions       *session.Manager
+	delegateConfig *tool.DelegateConfig
 }
 
 /*
@@ -2936,6 +2947,20 @@ func (a *agentExecutorAdapter) RunLoopWithSession(ctx context.Context, sessionID
 		ToolOnlyIterationLimit: cfg.ToolOnlyIterationLimit,
 		DuplicateFetchLimit:    cfg.DuplicateFetchLimit,
 		DisabledTools:          append([]string(nil), cfg.DisabledTools...),
+	}
+	if cfg.Execution != nil && a.delegateConfig != nil {
+		task, err := cfg.Execution.Snapshot()
+		if err != nil {
+			return nil, err
+		}
+		if task.Metadata["delegate_task_id"] != "" {
+			child := buildDelegateChildLoopConfig(*a.delegateConfig, task.Metadata["delegate_allow_recursive"] == "true" && a.delegateConfig.ChildAllowRecursive)
+			child.Execution, child.Source = execution, "autonomy"
+			loopCfg = child
+			if cwd := task.Metadata["delegate_workspace"]; cwd != "" {
+				sess.SetCwd(cwd)
+			}
+		}
 	}
 
 	result, err := a.loop.Run(ctx, sess, TextUserTurnInput(userInput), loopCfg)

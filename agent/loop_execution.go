@@ -23,7 +23,22 @@ func (a *Agent) buildLoopCallOptions(userInput string, loopCfg LoopConfig) provi
 	modelTools := fcMgr.BuildTools()
 	opts := a.buildFunctionCallOptionsForInput(userInput, modelTools)
 	opts = a.appendEphemeralToolSchemas(opts, loopCfg.SessionID)
-	opts.Tools = filterFunctionTools(opts.Tools, loopCfg.DisabledTools)
+	return applyToolAllowlist(opts, loopCfg)
+}
+
+func applyToolAllowlist(opts provider.CallOptions, cfg LoopConfig) provider.CallOptions {
+	// Reapply the denylist as generated tools may be appended between iterations.
+	opts.Tools = filterFunctionTools(opts.Tools, cfg.DisabledTools)
+	if cfg.RestrictTools {
+		allowed := makeToolNameSet(cfg.AllowedTools)
+		filtered := make([]map[string]any, 0, len(opts.Tools))
+		for _, schema := range opts.Tools {
+			if toolNameInSet(allowed, functionToolNameFromSchema(schema)) {
+				filtered = append(filtered, schema)
+			}
+		}
+		opts.Tools = filtered
+	}
 	opts.ToolChoice = normalizeToolChoiceForTools(opts.ToolChoice, opts.Tools)
 	if len(opts.Tools) == 0 {
 		opts.ToolChoice = "none"

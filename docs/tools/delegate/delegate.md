@@ -29,12 +29,12 @@
 
 | 配置项 | 默认值 | 说明 |
 | --- | ---: | --- |
-| `delegate.max_concurrent` | `3` | 同时运行的委派任务数。 |
+| `delegate.max_concurrent` | `3` | 原子预留的 pending/running 委派名额，以及所有委派/HTTP 协作执行器共享的并发上限。 |
 | `delegate.timeout_seconds` | `120` | 单个委派任务的默认外层超时。 |
 | `delegate.min_timeout_seconds` | `5` | 单次 `timeout` 的最小值。 |
 | `delegate.max_timeout_seconds` | `1800` | 单次 `timeout` 的最大值。 |
 | `delegate.max_result_bytes_inline` | `4000` | `task_status` 内联结果上限。 |
-| `delegate.max_children` | `3` | `auto` 规划允许的最大子任务数。 |
+| `delegate.max_children` | `3` | 每次协作允许的最大子任务数。 |
 | `delegate.child.max_iterations` | `5` | 子 Agent Loop 最大迭代次数。 |
 | `delegate.child.timeout_seconds` | `60` | 子 Agent Loop 单轮超时。 |
 | `delegate.child.auto_approve` | `false` | 子 Agent 是否自动批准工具调用，建议保持关闭。 |
@@ -75,16 +75,18 @@ lh cfg s delegate.child.disabled_tools terminal,file_delete
 | `description` | 是 | 无 | 要委派的任务描述。 |
 | `context` | 否 | 空字符串 | 额外上下文或子代理指令。 |
 | `timeout` | 否 | `120` | 超时时间，单位秒；当前会限制在 5-1800 秒之间。 |
+| `mode` | 否 | `single` | `single`、`auto`、`parallel`、`pipeline`、`debate` 或 `autonomy_queue`。 |
+| `max_children` | 否 | 全局配置 | 进一步收紧本次协作的子任务数量。 |
 
 执行流程：
 
 1. 校验 `description`。
 2. 读取可选 `context` 和 `timeout`。
-3. 检查当前 running 任务数是否达到 `DelegateConfig.MaxConcurrent`。
-4. 生成 `task-<n>` ID。
+3. 在同一把锁内检查并预留 pending/running 名额，同一会话请求重试复用已有任务。
+4. 生成带时间戳的任务 ID，避免重启后复用会话。
 5. 调用 `prepareDelegateExecutionContext` 准备 workspace 和增强上下文。
 6. 将任务记录到 manager 内存 map。
-7. 启动 goroutine 异步执行。
+7. 启动 goroutine，按实际模式执行单个子代理、协作流程或后台队列。
 8. 返回 task id、running 状态、workspace 和实际 timeout。
 
 成功输出：
@@ -99,11 +101,11 @@ lh cfg s delegate.child.disabled_tools terminal,file_delete
 }
 ```
 
-如果没有配置 `agentExecutor`，任务会降级为占位完成：
+没有执行器时任务失败，不再生成占位成功结果。协作模式为各子任务创建独立会话与职责；流水线保留原始请求并传递上一步输出；并行保留各项结果；辩论只接受有效 Agent ID 的多数票，无法形成多数时报告失败。
 
-```text
-Sub-agent task completed (no executor): <description>
-```
+`autonomy_queue` 实际写入后台持久队列，返回的任务记录会关联 `autonomy_task_id` 和后台执行会话。它沿用子代理限制，等待后台验收完成；取消委派也会阻止关联队列任务继续执行。前台任务文件与后台队列仍分开保存。
+
+普通委派和协作任务在启动时回载历史。中断的直接执行标为失败，保留已有结果和子会话供检查，不自动重放有副作用的操作。后台队列仍使用自身的 checkpoint/恢复规则。
 
 ## task_status
 

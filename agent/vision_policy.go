@@ -23,3 +23,9 @@ func newTurnToolGuard(text string, disabled []string, blocked map[string][]strin
 	opts.RelaxReadOnly = len(mode) > 0 && mode[0] == sandbox.ModeDev
 	return &toolExecutionGuard{core: execpolicy.New(text, opts)}
 }
+
+func configuredTurnToolGuard(text string, cfg LoopConfig) *toolExecutionGuard {
+	guard := newTurnToolGuard(text, cfg.DisabledTools, cfg.BlockedActions, snapshotMode(cfg.Sandbox))
+	guard.restrictTools, guard.allowedTools = cfg.RestrictTools, makeToolNameSet(cfg.AllowedTools)
+	return guard
+}
