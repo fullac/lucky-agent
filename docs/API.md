@@ -658,8 +658,12 @@ ws://127.0.0.1:9090/api/v1/ws?session=<session-id>
 Authenticate the upgrade with the same headers as HTTP. Choose a stable `id`
 for each chat request. Repeating the same session, ID and input returns the
 accepted run and stored output without another execution. Different input
-under that ID returns `REQUEST_CONFLICT`; failed persistence returns
-`PERSIST_FAILED` before a run is queued.
+under that ID returns `REQUEST_CONFLICT`; failed initial persistence returns
+`PERSIST_FAILED` without queueing a run. The running-state write must also
+succeed before execution. A later event write failure reports `PERSIST_FAILED`,
+stops execution and suppresses subsequent success output. This error is sent
+without a replay cursor when the store itself is unavailable; the run is failed
+rather than classified as user cancellation.
 
 Send `type: "reconnect"` with `data.last_message_id` set to the last event
 actually received. The server uses reliable bounded replay, buffers live
@@ -685,6 +689,13 @@ and submits them as a single turn. `data.action` is `on`, `off`, `status`, or
 instead of starting a run. The server replies with `type: "status"` and
 `data.state: "lucky"`. `off` enqueues one chat run built from the collected
 segments. Collection state is in memory for the current server process.
+
+On startup, durable run recovery scans session IDs and queued/running run
+metadata from snapshots and journals without retaining all stored event
+histories, including sessions with only a journal. Event replay still loads
+a session lazily through the existing reconnect path. Run fields,
+attachments, event JSON and reconnect cursors are unchanged. See
+[runtime request and recovery options](runtime-request-recovery.md).
 
 Server push `type: "task_event"` is sent to every connected client when a task
 event is stored. `data` carries `type`, `task_id`, `parent_id`, `status`,
