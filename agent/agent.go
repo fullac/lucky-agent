@@ -90,6 +90,8 @@ type Agent struct {
 	skills        []*tool.SkillInfo // 已加载的 skill 列表
 	skillRegistry *tool.SkillRegistry
 	skillsDir     string
+	pluginSkills  []*tool.SkillInfo // immutable namespaced plugin workflows
+	plugins       *pluginRuntime    // constructed before New returns; changes require restart
 	// skillLoadMu serializes whole LoadSkills bodies so two concurrent reloads
 	// cannot interleave "retire the previous generation" with "register the new
 	// one" and leave the tool Registry holding a mix of both.
@@ -149,7 +151,7 @@ func (a *Agent) ReloadHooks(c *config.Config) {
 	if a == nil || a.hooks == nil {
 		return
 	}
-	a.hooks.Reload(buildHookRuntimeConfig(c))
+	a.hooks.Reload(a.pluginHookConfig(c))
 }
 
 // StartConfigWatch polls the agent's config file and live-applies the changes
@@ -466,7 +468,7 @@ Non-negotiable constraints:
 }
 
 func (a *Agent) chatWithSessionInput(ctx context.Context, sess *session.Session, input UserTurnInput) (string, error) {
-	input = input.Normalize()
+	input = a.expandPluginCommand(input)
 	routingText := input.RoutingText
 	turnProvider := a.providerSnapshotForTurn(routingText)
 
@@ -1390,7 +1392,7 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 	if !ok {
 		return nil, fmt.Errorf("session not found: %s", sessionID)
 	}
-	input = input.Normalize()
+	input = a.expandPluginCommand(input)
 	routingText := input.RoutingText
 	turnProvider := a.providerSnapshotForTurn(routingText)
 	if !turnProvider.valid() {
@@ -1430,6 +1432,7 @@ func (a *Agent) ChatWithSessionStreamInputWithLoopConfig(ctx context.Context, se
 		ctx = withHITLEmitter(ctx, func(event ChatEvent) {
 			sendForegroundEvent(ctx, events, event)
 		})
+		ctx = withPluginCallPolicy(ctx, loopCfg, input.Scope, routingText)
 		logger.Info("agent stream loop started",
 			"session_id", sessionID,
 			"provider", turnProvider.name(),
@@ -1761,7 +1764,8 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 			}
 
 			emitChatToolCallEvents(events, toolCalls)
-			executed := a.executeToolCallsOrderedGuarded(
+			executed := a.executeToolCallsOrderedGuardedContext(
+				ctx,
 				toolCalls,
 				state.autoApprove,
 				sess,
@@ -2024,7 +2028,8 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 		}
 
 		emitChatToolCallEvents(events, resp.ToolCalls)
-		executed := a.executeToolCallsOrderedGuarded(
+		executed := a.executeToolCallsOrderedGuardedContext(
+			ctx,
 			resp.ToolCalls,
 			state.autoApprove,
 			sess,
@@ -3081,7 +3086,10 @@ func (a *Agent) LoadSkills(skillsDir string) (int, error) {
 	// skill_read closes over the slice handed to NewSkillToolService, so it must
 	// be rebuilt against the new generation. Registry.Register overwrites by name,
 	// so the previous service instance simply becomes garbage.
-	tool.NewSkillToolService(skills).RegisterReadTool(a.tools)
+	a.skillMu.RLock()
+	readableSkills := append(append([]*tool.SkillInfo(nil), skills...), a.pluginSkills...)
+	a.skillMu.RUnlock()
+	tool.NewSkillToolService(readableSkills).RegisterReadTool(a.tools)
 
 	a.skillMu.Lock()
 	a.skillRegistry = skillRegistry
@@ -3215,7 +3223,7 @@ func (a *Agent) snapshotSkills() []*tool.SkillInfo {
 	}
 	a.skillMu.RLock()
 	defer a.skillMu.RUnlock()
-	return a.skills
+	return append(append([]*tool.SkillInfo(nil), a.skills...), a.pluginSkills...)
 }
 
 // SkillsDir returns the directory the agent last loaded skills from.

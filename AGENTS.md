@@ -18,6 +18,10 @@ launcher. Application commands and runtime backends live in independent modules.
   components. It does not import the core or application.
 - Existing tools/API/gateway modules retain generic execution and wire/platform
   implementation. The Agent leaf module must never import luckyagent-app.
+- `github.com/yurika0211/luckyagent-plugins` owns declarative packages,
+  marketplace, snapshots and trust state. `agent/plugin_runtime.go` binds a
+  startup snapshot to execution policy; app owns `lh plugin` and HTTP/channel
+  command routing. Management changes require restart. See `docs/plugin-module.md`.
 
 The Agent leaf module and root launcher have separate manifests to avoid a
 module dependency cycle: launcher -> app -> Agent -> runtime/tools. Use actual
@@ -32,6 +36,10 @@ components without backend construction, network startup or file writes.
 use `luckyagent-app/bootstrap.New`; legacy core New/NewWithMemory remain
 compatibility constructors. Shared config.Manager and public runtime storage
 contracts retain their existing schema and semantics.
+
+Injected construction reads installed plugins without creating their directories
+or connecting MCP. It configures the prepared MCP manager before explicit Start;
+plugin tools and child sessions keep parent approval, scope and cancellation.
 
 ## Context rules
 

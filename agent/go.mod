@@ -4,9 +4,11 @@ go 1.25.0
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/yurika0211/luckyagent-plugins v0.1.0
 	github.com/yurika0211/luckyagent-runtime v0.0.0-20261018035537-9e627943ed44
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -28,7 +30,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 require (

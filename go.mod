@@ -51,9 +51,10 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/goldmark v1.3.5 // indirect
 	github.com/yurika0211/aestus v0.0.0-20261017093339-9361afb4f42d // indirect
-	github.com/yurika0211/lucky-agent/agent v0.0.0-20261018015821-0a2f4ae3d6fa // indirect
-	github.com/yurika0211/luckyagent-api v0.2.2-0.20261018035620-3b836eb908c6 // indirect
+	github.com/yurika0211/lucky-agent/agent v0.0.0-20261018035450-0ed5255a5b86 // indirect
+	github.com/yurika0211/luckyagent-api v0.2.2-0.20261018041303-09b380cc8af9 // indirect
 	github.com/yurika0211/luckyagent-gateway v0.2.2 // indirect
+	github.com/yurika0211/luckyagent-plugins v0.1.0 // indirect
 	github.com/yurika0211/luckyagent-runtime v0.0.0-20261018035537-9e627943ed44 // indirect
 	github.com/yurika0211/luckyagent-tools v0.2.3-0.20261018034717-bd3557ec03fa // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect

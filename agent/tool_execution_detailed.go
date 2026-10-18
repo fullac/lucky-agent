@@ -41,13 +41,26 @@ func (a *Agent) executeToolMaybeDedupDetailed(
 	duplicateFetchLimit int,
 	sourceOpt ...string,
 ) (detailedToolExecutionResult, error) {
+	return a.executeToolMaybeDedupDetailedContext(context.Background(), name, arguments, autoApprove, sess, toolURLRepeatCount, toolURLLastResult, duplicateFetchLimit, sourceOpt...)
+}
+
+func (a *Agent) executeToolMaybeDedupDetailedContext(
+	ctx context.Context,
+	name, arguments string,
+	autoApprove bool,
+	sess *session.Session,
+	toolURLRepeatCount map[string]int,
+	toolURLLastResult map[string]string,
+	duplicateFetchLimit int,
+	sourceOpt ...string,
+) (detailedToolExecutionResult, error) {
 	if key := normalizedToolTarget(name, arguments); key != "" && toolURLRepeatCount[key] > duplicateFetchLimit {
 		if cached := stringsTrimSpace(toolURLLastResult[key]); cached != "" {
 			return detailedToolExecutionResult{Output: "Skipped duplicate " + name + " for " + key + ". Reuse previous fetched content.\n\n" + cached}, nil
 		}
 		return detailedToolExecutionResult{Output: "Skipped duplicate " + name + " for " + key + ". Reuse earlier fetched content."}, nil
 	}
-	return a.executeToolWithSessionDetailed(name, arguments, autoApprove, sess, sourceOpt...)
+	return a.executeToolWithSessionDetailedContext(ctx, name, arguments, autoApprove, sess, sourceOpt...)
 }
 
 func (a *Agent) executeToolWithSessionDetailed(name, arguments string, autoApprove bool, sess *session.Session, sourceOpt ...string) (out detailedToolExecutionResult, err error) {
@@ -65,6 +78,11 @@ func (a *Agent) executeToolWithSessionDetailedContext(ctx context.Context, name,
 	sessionID := ""
 	if sess != nil {
 		sessionID = sess.ID
+	}
+	if snapshot := sandbox.SnapshotFromContext(ctx); snapshot != nil && snapshot.Isolated() && a.tools != nil {
+		if registered, ok := a.tools.Get(name); ok && (registered.Category == tool.CatMCP || (registered.Category == pluginCategory && registered.Name != "plugin_info" && registered.Name != "plugin_agent")) {
+			return detailedToolExecutionResult{}, fmt.Errorf("tool %s is disabled in iso sandbox", name)
+		}
 	}
 
 	var args map[string]any
@@ -165,7 +183,7 @@ func (a *Agent) executeToolWithSessionDetailedContext(ctx context.Context, name,
 		a.updateShellContext(sess, arguments, output)
 	}
 	if a.hooks.Enabled() {
-		output = a.hooks.RunPost(a.canonicalToolName(name), arguments, "", sessionID, output, nil)
+		output = a.hooks.RunPost(a.canonicalToolName(name), arguments, source, sessionID, output, nil)
 	}
 	return detailedToolExecutionResult{Output: output, Metadata: result.Metadata, Observations: result.Observations}, nil
 }
@@ -180,7 +198,12 @@ func (a *Agent) gateToolApproval(ctx context.Context, sessionID, name string, ar
 	if autoApprove && !requiresCredentialToolApproval(canonical) {
 		return true, nil, nil
 	}
-	if !requiresInteractiveApproval(canonical, args) {
+	pluginApproval := false
+	if registered, ok := a.tools.Get(canonical); ok && (registered.Category == pluginCategory || registered.Category == tool.CatMCP) {
+		permission, permErr := a.tools.CheckPermission(canonical)
+		pluginApproval = permErr == nil && permission == tool.PermApprove
+	}
+	if !pluginApproval && !requiresInteractiveApproval(canonical, args) {
 		return true, nil, nil
 	}
 	reason := toolApprovalReason(canonical, args)
