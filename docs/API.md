@@ -290,6 +290,75 @@ namespaced name. Loop failures return HTTP `200` with `ok: false`, the error in
 `400`. Built-in commands retain their existing command-specific behavior and
 use the same `command`, `ok`, and `output` response fields.
 
+## Plugin management
+
+All plugin management routes use the existing API authentication and admission
+policy. They manage installations on the server. The running Agent keeps its
+startup snapshot until restart; these routes do not execute plugins or restart
+the service.
+
+| Method | Route | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/plugins` | Installed plugins, including disabled or damaged entries |
+| `POST` | `/api/v1/plugins` | Install from a Git repository or server directory |
+| `GET` | `/api/v1/plugins/{name}` | One installed plugin |
+| `POST` | `/api/v1/plugins/{name}/enable` | Save enabled state |
+| `POST` | `/api/v1/plugins/{name}/disable` | Save disabled state |
+| `POST` | `/api/v1/plugins/{name}/update` | Update from the recorded source |
+| `DELETE` | `/api/v1/plugins/{name}` | Remove registration, retaining immutable cache |
+
+Inventory response:
+
+```json
+{
+  "count": 1,
+  "changes_require_restart": true,
+  "plugins": [{
+    "name": "starter", "version": "1.0.0", "description": "Review helpers",
+    "source": "https://github.com/team/plugins.git", "ref": "v1.0.0",
+    "revision": "resolved-commit", "subdir": "plugins/starter",
+    "digest": "installed-sha256", "installed_at": "2026-10-18T04:00:00Z",
+    "enabled": true, "trusted": false, "requires_trust": false,
+    "skills": ["review"], "commands": ["review"], "agents": ["reviewer"],
+    "mcp_servers": [], "hook_count": 0
+  }]
+}
+```
+
+Damaged entries include `error` and remain manageable. A corrupt installation
+index fails the request rather than pretending the inventory is empty. A missing
+installation directory returns an empty inventory. Detail returns `{plugin:...}`.
+Responses omit prompt contents, scripts, MCP commands/environment and credentials;
+source URL userinfo/query/fragment are redacted.
+
+Install request, limited to 16 KiB:
+
+```json
+{"source":"https://github.com/team/plugins.git","ref":"v1.0.0","subdir":"plugins/starter","trust":false}
+```
+
+`source` is required. `ref`/`subdir` are optional. Local directories refer to the
+server filesystem, not the Android device. Update accepts `{"trust":false}`
+(4 KiB maximum), reuses the recorded source/ref/subdir, and retains a manually
+disabled state. Trust is explicit for each installation version; it is not carried
+over from previous contents. Untrusted MCP/hook plugins install disabled, while
+pure prompt plugins can be enabled without execution trust. Enable/disable take
+no request fields (clients may send `{}`). Git/copy operations have a 90 second deadline.
+
+Install returns `201`; the remaining successful mutations return `200`:
+
+```json
+{"action":"install","name":"starter","plugin":{"name":"starter","version":"1.0.0"},"runtime_restart_required":true,"message":"插件变更已保存，重启 LuckyAgent 服务后生效。"}
+```
+
+The abbreviated `plugin` above uses the complete inventory entry in actual
+responses; remove returns `plugin:null`. Names are lowercase slugs, 1–48 characters.
+Invalid requests return `400`, oversized JSON `413`, unsupported media types `415`,
+missing plugins `404`, unsupported methods `405`,
+busy/conflicting trust or digest `409`, storage failures `500`, and deadlines `504`.
+See [the plugin guide](plugin-module.md#android-插件管理) for the Android entry point
+and restart behavior. No new `config.json` keys are required.
+
 ## Sessions
 
 | Method | Path | Description |
