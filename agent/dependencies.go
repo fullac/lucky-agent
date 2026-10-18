@@ -201,7 +201,14 @@ func NewWithDependencies(opts Options, deps *Dependencies) (*Agent, error) {
 	})
 
 	// v0.38.0: 将 executor 注入到已注册工具所绑定的 autonomy 实例，避免启动时替换实例。
-	a.autonomy.SetExecutor(&agentExecutorAdapter{loop: loop, sessions: sessions})
+	a.autonomy.SetExecutor(&agentExecutorAdapter{loop: loop, sessions: sessions, delegateConfig: &delegateCfg})
+	a.delegate.SetTaskPlanner(a.planCollaboration)
+	a.delegate.SetResultVerifier(a.verifyCollaborationSubTask)
+	a.delegate.SetQueueExecutor(a.executeQueuedDelegate)
+	if a.collabMgr != nil {
+		a.collabMgr.SetHandler(collaborationHandler{agent: a})
+		a.collabMgr.SetTaskPlanner(a.planCollaboration)
+	}
 
 	return a, nil
 }

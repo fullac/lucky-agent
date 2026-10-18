@@ -120,6 +120,8 @@ type LoopConfig struct {
 	ToolOnlyIterationLimit int                   // 连续纯工具轮次上限
 	DuplicateFetchLimit    int                   // 同一 URL 抓取上限
 	DisabledTools          []string              // 本轮对模型隐藏的工具名
+	RestrictTools          bool                  // enforce a positive per-turn allowlist
+	AllowedTools           []string              // canonical tool names; empty denies every tool
 	BlockedActions         map[string][]string   // 工具名到本轮禁止的 action
 	Ephemeral              bool                  // 临时后台执行，不写会话外持久化上下文
 	Source                 string                // 调用入口，例如 cli、tui、http、telegram
@@ -559,7 +561,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	finalizer := newLoopFinalizer(l.runtime, l.options.AppendRunningTaskNotice, result, sess, loopCfg, sessionID, routingText)
 	loopState := newLoopRuntimeState()
 	loopState.provider = turnProvider
-	loopState.toolExecutionGuard = newTurnToolGuard(routingText, loopCfg.DisabledTools, loopCfg.BlockedActions, snapshotMode(loopCfg.Sandbox))
+	loopState.toolExecutionGuard = configuredTurnToolGuard(routingText, loopCfg)
 	loopState.artifactGuard = newArtifactFinalizationGuard(routingText)
 	memoryGate := l.runtime.buildMemoryToolGate(routingText, turnInput.Scope, loopCfg.DisabledTools)
 
@@ -583,6 +585,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 
 	for i := 0; i < loopCfg.MaxIterations; i++ {
 		callOpts = l.runtime.appendEphemeralToolSchemas(callOpts, loopCfg.SessionID)
+		callOpts = applyToolAllowlist(callOpts, loopCfg)
 		result.Iterations = i + 1
 		result.State = StateReason
 		logger.Debug("agent loop iteration started",

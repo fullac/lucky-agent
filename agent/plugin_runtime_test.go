@@ -365,6 +365,8 @@ func TestPluginAgentInheritsParentPolicyAndScope(t *testing.T) {
 	parentCfg.MaxIterations = 2
 	parentCfg.Timeout = time.Second
 	parentCfg.DisabledTools = []string{"terminal"}
+	parentCfg.RestrictTools = true
+	parentCfg.AllowedTools = []string{"file_read"}
 	parentCfg.BlockedActions = map[string][]string{"file_write": {"write"}}
 	scope := TurnScope{Platform: "telegram", ChatType: "private", SenderID: "user-a", ChatID: "room-a"}
 	ctx := withPluginCallPolicy(context.Background(), parentCfg, scope, "Inspect only; do not modify files")
@@ -381,6 +383,14 @@ func TestPluginAgentInheritsParentPolicyAndScope(t *testing.T) {
 	}
 	if recorder.policy.Depth != 1 {
 		t.Fatal("child lost recursion guard")
+	}
+	if !recorder.policy.Config.RestrictTools || len(recorder.policy.Config.AllowedTools) != 1 || recorder.policy.Config.AllowedTools[0] != "file_read" {
+		t.Fatal("plugin child lost the parent role tool allowlist")
+	}
+	for _, schema := range recorder.options.Tools {
+		if functionToolNameFromSchema(schema) != "file_read" {
+			t.Fatalf("plugin child offered a tool outside its parent allowlist: %s", functionToolNameFromSchema(schema))
+		}
 	}
 	joined := ""
 	for _, m := range recorder.messages {

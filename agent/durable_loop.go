@@ -109,7 +109,7 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 	if err := save(); err != nil {
 		return result, err
 	}
-	guard := newTurnToolGuard(input.RoutingText, cfg.DisabledTools, cfg.BlockedActions, snapshotMode(cfg.Sandbox))
+	guard := configuredTurnToolGuard(input.RoutingText, cfg)
 	memoryGate := a.buildMemoryToolGate(input.RoutingText, input.Scope, cfg.DisabledTools)
 	artifactGuard := newArtifactFinalizationGuard(input.RoutingText)
 	for _, op := range task.Operations {
