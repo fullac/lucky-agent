@@ -15,9 +15,59 @@ import (
 	"github.com/yurika0211/luckyagent-runtime/bootstrap"
 	"github.com/yurika0211/luckyagent-runtime/config"
 	"github.com/yurika0211/luckyagent-runtime/mcpclient"
+	"github.com/yurika0211/luckyagent-runtime/provider"
+	"github.com/yurika0211/luckyagent-runtime/session"
 	"github.com/yurika0211/luckyagent-runtime/tool"
 	"github.com/yurika0211/luckyagent-tools/memory"
 )
+
+func TestInjectedMinimalToolLoopNeedsNoMemoryOrSchedulers(t *testing.T) {
+	root := t.TempDir()
+	cfg, err := config.NewManagerWithDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := session.NewManager(filepath.Join(root, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := tool.NewRegistry()
+	calls := 0
+	registry.Register(&tool.Tool{Name: "fixture_echo", Permission: tool.PermAuto, Enabled: true, Handler: func(map[string]any) (string, error) { calls++; return "ECHO_CONFIRMED", nil }})
+	p := &requestCaptureProvider{chat: func(messages []provider.Message, opts provider.CallOptions) (*provider.Response, error) {
+		if len(opts.Tools) == 0 {
+			return &provider.Response{Content: verifiedAssessment}, nil
+		}
+		for _, m := range messages {
+			if m.Role == "tool" && m.Content == "ECHO_CONFIRMED" {
+				return &provider.Response{Content: "ECHO_CONFIRMED"}, nil
+			}
+		}
+		return &provider.Response{ToolCalls: []provider.ToolCall{{ID: "echo-1", Name: "fixture_echo", Arguments: "{}"}}}, nil
+	}}
+	deps := &Dependencies{Config: cfg, Sessions: sessions, Provider: bootstrap.ProviderRuntime{Provider: p}, Support: bootstrap.SupportRuntime{Tools: registry}}
+	before := treeNames(t, root)
+	a, err := NewWithDependencies(Options{TakeOwnership: true}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if after := treeNames(t, root); !reflect.DeepEqual(before, after) {
+		t.Fatal("minimal binding created files")
+	}
+	if a.memory != nil || a.delegate != nil || a.autonomy != nil || a.toolServices != nil {
+		t.Fatal("constructor created optional backends")
+	}
+	for _, name := range []string{"subagent", "autonomy", "cron"} {
+		if _, ok := registry.Get(name); ok {
+			t.Fatalf("unavailable capability %s registered", name)
+		}
+	}
+	result, err := a.Chat(context.Background(), "Please call fixture_echo once and report its result")
+	if err != nil || result != "ECHO_CONFIRMED" || calls != 1 {
+		t.Fatalf("minimal tool loop failed: response=%q calls=%d err=%v", result, calls, err)
+	}
+}
 
 func preparedTestComponents(t *testing.T, endpoint string) *bootstrap.Components {
 	t.Helper()

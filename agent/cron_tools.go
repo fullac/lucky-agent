@@ -335,10 +335,10 @@ func (a *Agent) formatCronNotification(payload cronNotificationPayload) string {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	resp, err := turnProvider.provider.Chat(ctx, []provider.Message{
+	resp, err := a.chatLoopIteration(ctx, []provider.Message{
 		{Role: "system", Content: getCronNotificationSystemPrompt()},
 		{Role: "user", Content: userPrompt.String()},
-	})
+	}, provider.CallOptions{}, true, turnProvider)
 	if err != nil || resp == nil || strings.TrimSpace(resp.Content) == "" {
 		return fallback
 	}

@@ -1,13 +1,12 @@
 package agent
 
 import (
-	"context"
 	"fmt"
-	"os"
 
 	"github.com/yurika0211/luckyagent-runtime/bootstrap"
+	"github.com/yurika0211/luckyagent-runtime/contextx"
 	"github.com/yurika0211/luckyagent-runtime/hook"
-	"github.com/yurika0211/luckyagent-runtime/session"
+	"github.com/yurika0211/luckyagent-runtime/metrics"
 	"github.com/yurika0211/luckyagent-runtime/tool"
 )
 
@@ -33,13 +32,7 @@ func validateDependencies(deps *bootstrap.Components) error {
 		{"configuration", deps.Config == nil},
 		{"provider", deps.Provider.Provider == nil},
 		{"sessions", deps.Sessions == nil},
-		{"memory store", deps.Memory.Store == nil},
-		{"session memory", deps.Memory.ShortTerm == nil},
-		{"memory summaries", deps.Memory.Summaries == nil},
 		{"tools", deps.Support.Tools == nil},
-		{"tool services", deps.Support.ToolServices == nil},
-		{"delegate runtime", deps.Support.DelegateMgr == nil},
-		{"autonomy runtime", deps.Support.AutonomyKit == nil},
 	}
 	for _, check := range checks {
 		if check.missing {
@@ -125,6 +118,20 @@ func NewWithDependencies(opts Options, deps *Dependencies) (*Agent, error) {
 		activeModel:         c.Model,
 		activeAPIBase:       c.APIBase,
 	}
+	if a.gateway == nil {
+		a.gateway = tool.NewGateway(a.tools)
+	}
+	if a.contextWin == nil {
+		a.contextWin = contextx.NewContextWindow(contextx.WindowConfig{
+			MaxTokens: bootstrap.ContextTokensFor(c), ReservedTokens: bootstrap.ReservedTokensFor(c), Strategy: contextx.TrimLowPriority,
+		})
+	}
+	if a.contextEst == nil {
+		a.contextEst = contextx.NewTokenEstimator(a.contextWin.Config().MaxTokens)
+	}
+	if a.metrics == nil {
+		a.metrics = metrics.NewMetrics()
+	}
 
 	if err := a.preparePlugins(); err != nil {
 		return nil, fmt.Errorf("prepare plugins: %w", err)
@@ -136,80 +143,13 @@ func NewWithDependencies(opts Options, deps *Dependencies) (*Agent, error) {
 		}
 	}
 
-	supportRT.ToolServices.Cron = tool.NewCronToolService(
-		supportRT.CronEngine,
-		a.saveCronJobs,
-		func(id, mode, command string, metadata map[string]string) func() error {
-			return a.buildCronTask(id, cronTaskMode(mode), command, metadata)
-		},
-	)
-	supportRT.ToolServices.Autonomy = tool.NewAutonomyToolService(supportRT.AutonomyKit, func() error {
-		return a.StartAutonomyNow(context.Background())
-	})
-	supportRT.ToolServices.Heartbeat = tool.NewHeartbeatToolService(a.handleHeartbeatTrigger, a.handleHeartbeatStatus)
-	supportRT.ToolServices.RegisterCoreTools(supportRT.Tools)
+	a.bindOptionalToolServices()
 	a.registerContextHistoryTool()
 	if err := a.registerPluginTools(); err != nil {
 		return nil, fmt.Errorf("register plugin tools: %w", err)
 	}
 
-	// v0.38.0: 设置 delegate 的 Agent 执行器，让 delegate_task 真正走 Agent Loop
-	delegateCfg := supportRT.DelegateMgr.Config()
-	supportRT.DelegateMgr.SetSessionInitializer(func(task *tool.DelegateTask) error {
-		sess := sessionManager.Ensure(task.ExecutionSessionID)
-		sess.SetTitle("delegate-task")
-		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
-		if task.Workspace != "" {
-			sess.SetCwd(task.Workspace)
-		}
-		return sess.Save()
-	})
-	loop := a.loopRunner()
-	sessions := sessionManager
-	delegateMgr := supportRT.DelegateMgr
-	supportRT.DelegateMgr.SetAgentExecutorWithOptions(func(ctx context.Context, description, contextStr string, options tool.AgentExecutorOptions) (string, error) {
-		sessionID := tool.DelegateExecutionSessionID(ctx)
-		var sess *session.Session
-		if sessionID != "" {
-			sess = sessions.Ensure(sessionID)
-			sess.SetTitle("delegate-task")
-		} else {
-			sess = sessions.NewWithTitle("delegate-task")
-		}
-		sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
-		if workspace := tool.ExtractDelegateWorkspace(contextStr); workspace != "" {
-			if err := os.MkdirAll(workspace, 0o755); err == nil {
-				sess.SetCwd(workspace)
-			}
-		}
-		prompt := description
-		if contextStr != "" {
-			prompt = fmt.Sprintf("%s\n\nContext: %s", description, contextStr)
-		}
-		loopCfg := buildDelegateChildLoopConfig(delegateCfg, options.AllowRecursiveDelegate)
-		result, err := loop.Run(ctx, sess, TextUserTurnInput(prompt), loopCfg)
-		if result != nil {
-			lastTool := ""
-			if n := len(result.ToolCalls); n > 0 {
-				lastTool = result.ToolCalls[n-1].Name
-			}
-			delegateMgr.RecordExecutionMetrics(tool.DelegateTaskID(ctx), len(result.ToolCalls), lastTool)
-		}
-		if err != nil {
-			return "", err
-		}
-		return result.Response, nil
-	})
-
-	// v0.38.0: 将 executor 注入到已注册工具所绑定的 autonomy 实例，避免启动时替换实例。
-	a.autonomy.SetExecutor(&agentExecutorAdapter{loop: loop, sessions: sessions, delegateConfig: &delegateCfg})
-	a.delegate.SetTaskPlanner(a.planCollaboration)
-	a.delegate.SetResultVerifier(a.verifyCollaborationSubTask)
-	a.delegate.SetQueueExecutor(a.executeQueuedDelegate)
-	if a.collabMgr != nil {
-		a.collabMgr.SetHandler(collaborationHandler{agent: a})
-		a.collabMgr.SetTaskPlanner(a.planCollaboration)
-	}
+	a.bindOptionalExecutionServices()
 
 	return a, nil
 }

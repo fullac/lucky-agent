@@ -179,7 +179,7 @@ func (a *Agent) collaborationProvider(role collab.AgentRuntimeProfile) (provider
 	if p == nil {
 		return providerSnapshot{}, fmt.Errorf("role provider is unavailable")
 	}
-	return providerSnapshot{provider: wrapProviderWithMiddleware(p, c), model: model, apiBase: endpoint.APIBase}, nil
+	return providerSnapshot{provider: wrapProviderWithMiddleware(p, c), model: model, apiBase: endpoint.APIBase, budget: a.requestBudget()}, nil
 }
 
 // planCollaboration creates concrete responsibilities using a tool-free model
@@ -243,7 +243,7 @@ func (a *Agent) collaborationModelCall(ctx context.Context, instruction, input s
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	response, err := snapshot.provider.Chat(ctx, []provider.Message{{Role: "system", Content: instruction}, {Role: "user", Content: input}})
+	response, err := a.chatLoopIteration(ctx, []provider.Message{{Role: "system", Content: instruction}, {Role: "user", Content: input}}, provider.CallOptions{}, true, snapshot)
 	if err != nil {
 		return "", err
 	}

@@ -1,0 +1,92 @@
+package agent
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/yurika0211/luckyagent-runtime/session"
+	"github.com/yurika0211/luckyagent-runtime/tool"
+)
+
+// Product schedulers and child-task engines are optional capabilities. A tool
+// loop can be embedded without preparing memory, cron, delegate, or autonomy.
+func (a *Agent) bindOptionalToolServices() {
+	if a.toolServices == nil {
+		return
+	}
+	if a.cronEngine != nil {
+		a.toolServices.Cron = tool.NewCronToolService(a.cronEngine, a.saveCronJobs,
+			func(id, mode, command string, metadata map[string]string) func() error {
+				return a.buildCronTask(id, cronTaskMode(mode), command, metadata)
+			})
+	}
+	if a.autonomy != nil {
+		a.toolServices.Autonomy = tool.NewAutonomyToolService(a.autonomy, func() error {
+			return a.StartAutonomyNow(context.Background())
+		})
+	}
+	a.toolServices.Heartbeat = tool.NewHeartbeatToolService(a.handleHeartbeatTrigger, a.handleHeartbeatStatus)
+	a.toolServices.RegisterCoreTools(a.tools)
+}
+
+func (a *Agent) bindOptionalExecutionServices() {
+	loop, sessions := a.loopRunner(), a.sessions
+	delegateCfg := tool.DefaultDelegateConfig()
+	if a.delegate != nil {
+		delegateCfg = a.delegate.Config()
+		delegateMgr := a.delegate
+		delegateMgr.SetSessionInitializer(func(task *tool.DelegateTask) error {
+			sess := sessions.Ensure(task.ExecutionSessionID)
+			sess.SetTitle("delegate-task")
+			sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
+			if task.Workspace != "" {
+				sess.SetCwd(task.Workspace)
+			}
+			return sess.Save()
+		})
+		delegateMgr.SetAgentExecutorWithOptions(func(ctx context.Context, description, contextStr string, options tool.AgentExecutorOptions) (string, error) {
+			sessionID := tool.DelegateExecutionSessionID(ctx)
+			var sess *session.Session
+			if sessionID != "" {
+				sess = sessions.Ensure(sessionID)
+				sess.SetTitle("delegate-task")
+			} else {
+				sess = sessions.NewWithTitle("delegate-task")
+			}
+			sess.SetAgentProfile("subagent", delegatedSubagentSystemPrompt())
+			if workspace := tool.ExtractDelegateWorkspace(contextStr); workspace != "" {
+				if err := os.MkdirAll(workspace, 0o755); err == nil {
+					sess.SetCwd(workspace)
+				}
+			}
+			prompt := description
+			if contextStr != "" {
+				prompt = fmt.Sprintf("%s\n\nContext: %s", description, contextStr)
+			}
+			cfg := buildDelegateChildLoopConfig(delegateCfg, options.AllowRecursiveDelegate)
+			result, err := loop.Run(ctx, sess, TextUserTurnInput(prompt), cfg)
+			if result != nil {
+				lastTool := ""
+				if n := len(result.ToolCalls); n > 0 {
+					lastTool = result.ToolCalls[n-1].Name
+				}
+				delegateMgr.RecordExecutionMetrics(tool.DelegateTaskID(ctx), len(result.ToolCalls), lastTool)
+			}
+			if err != nil {
+				return "", err
+			}
+			return result.Response, nil
+		})
+		delegateMgr.SetTaskPlanner(a.planCollaboration)
+		delegateMgr.SetResultVerifier(a.verifyCollaborationSubTask)
+		delegateMgr.SetQueueExecutor(a.executeQueuedDelegate)
+	}
+	if a.autonomy != nil {
+		a.autonomy.SetExecutor(&agentExecutorAdapter{loop: loop, sessions: sessions, delegateConfig: &delegateCfg})
+	}
+	if a.collabMgr != nil {
+		a.collabMgr.SetHandler(collaborationHandler{agent: a})
+		a.collabMgr.SetTaskPlanner(a.planCollaboration)
+	}
+}

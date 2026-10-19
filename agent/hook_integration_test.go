@@ -212,6 +212,12 @@ func TestDurablePreModifyCannotRestoreBlockedAction(t *testing.T) {
 		Command: `echo '{"decision":"modify","modified_arguments":"{\"action\":\"write\"}"}'`,
 	}}})
 	cfg.BlockedActions = map[string][]string{"perform_operation": {"write"}}
+	a.provider = &durableScriptProvider{chat: func(_ context.Context, messages []provider.Message) (*provider.Response, error) {
+		if strings.HasPrefix(messages[0].Content, "Review whether") {
+			return &provider.Response{Content: `{"status":"complete","reason":"The forbidden write was prevented","evidence":["The blocked action did not run"],"failures":[{"operation_id":"step-1-1","status":"irrelevant","reason":"The modified write was forbidden and is not required for the inspection goal"}]}`}, nil
+		}
+		return &provider.Response{Content: "The forbidden write was prevented."}, nil
+	}}
 	if _, err := a.RunLoopWithSession(context.Background(), sess, "inspect", cfg); err != nil {
 		t.Fatal(err)
 	}

@@ -59,6 +59,7 @@ go run ./examples/embed_minimal
 - **外部客户端**：会话、工具轨迹、Memory Graph、技能、插件管理和网关通过 HTTP API 提供。安卓“资源与连接 → 插件”支持查看、安装、更新、启停及卸载，变更重启服务后生效。手机工作区在独立仓库 `luckyagent-android`。
 - **多 Agent 能力**：提供协作、委派和实验/benchmark 相关运行能力。
 - **长任务上下文**：有界历史投影、完整工具轮次裁剪、当前会话证据读回和执行账本。见[行为与限制](docs/long-task-context.md)。
+- **Agent 执行保障**：完整请求预算、早期失败账本、逐项验收证据和发布依赖一致性检查。见[核心加固说明](docs/agent-hardening.md)。
 
 ## 快速开始
 

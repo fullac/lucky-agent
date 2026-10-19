@@ -27,6 +27,30 @@ jobs:
           go-version: '1.25'
       - name: Download dependencies
         run: go mod download
+      - name: Verify Agent graph audit
+        env:
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          python3 -m unittest discover -s scripts -p test_agent_graph_parity.py
+          if [[ "$EVENT_REF" == refs/tags/* ]]; then
+            python3 scripts/verify-agent-graph.py --output ci-agent-graph.json
+          else
+            python3 scripts/verify-agent-graph.py --report-only --output ci-agent-graph.json
+          fi
+      - name: Retain selected Agent graph evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-graph-parity
+          path: ci-agent-graph.json
+          if-no-files-found: error
+      - name: Agent request and completion contracts
+        run: python3 scripts/run-agent-contracts.py leaf
+      - name: Launcher-selected graph contracts
+        run: python3 scripts/run-agent-contracts.py workspace
+      - name: Published graph release contracts
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 scripts/run-agent-contracts.py published
       - name: Test Agent module
         working-directory: agent
         env:

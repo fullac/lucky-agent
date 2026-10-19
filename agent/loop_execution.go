@@ -198,10 +198,11 @@ func (a *Agent) chatLoopIteration(ctx context.Context, messages []provider.Messa
 	if !turnProvider.valid() {
 		return nil, fmt.Errorf("provider not initialized")
 	}
-	if err := a.ensureContextFits(messages); err != nil {
+	opts := prepareLoopCallOptions(messages, base, forceSearchSynthesis)
+	messages, opts, err := a.prepareModelRequest(messages, opts, turnProvider)
+	if err != nil {
 		return nil, err
 	}
-	opts := prepareLoopCallOptions(messages, base, forceSearchSynthesis)
 	if fcProvider, ok := turnProvider.provider.(provider.FunctionCallingProvider); ok && len(opts.Tools) > 0 {
 		return fcProvider.ChatWithOptions(ctx, messages, opts)
 	}
@@ -272,10 +273,11 @@ func (a *Agent) streamLoopIteration(ctx context.Context, messages []provider.Mes
 	if !turnProvider.valid() {
 		return nil, fmt.Errorf("provider not initialized")
 	}
-	if err := a.ensureContextFits(messages); err != nil {
+	opts := prepareLoopCallOptions(messages, base, forceSearchSynthesis)
+	messages, opts, err := a.prepareModelRequest(messages, opts, turnProvider)
+	if err != nil {
 		return nil, err
 	}
-	opts := prepareLoopCallOptions(messages, base, forceSearchSynthesis)
 	if fcProvider, ok := turnProvider.provider.(provider.FunctionCallingProvider); ok && len(opts.Tools) > 0 {
 		return fcProvider.ChatStreamWithOptions(ctx, messages, opts)
 	}
