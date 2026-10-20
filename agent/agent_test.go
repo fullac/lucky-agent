@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1135,9 +1136,8 @@ func TestAgent_GettersNil(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 这些 getter 在 Agent 未初始化时返回 nil 是预期的
-			if tt.got != nil {
-				t.Logf("%s() = %v (may be non-nil if initialized)", tt.name, tt.got)
+			if !isNilGetter(tt.got) {
+				t.Errorf("%s() = %#v, want nil before initialization", tt.name, tt.got)
 			}
 		})
 	}
@@ -1186,10 +1186,17 @@ func TestAgent_SwitchModel(t *testing.T) {
 	}
 	defer a.Close()
 
-	// 尝试切换到一个不存在的模型
+	before, ok := a.CurrentModel(config.ModelKindChat)
+	if !ok || before.ID != "gpt-3.5-turbo" {
+		t.Fatalf("CurrentModel() before switch = %#v, ok=%t", before, ok)
+	}
 	err = a.SwitchModel("nonexistent-model")
 	if err == nil {
-		t.Log("SwitchModel() should return error for nonexistent model")
+		t.Fatal("SwitchModel(nonexistent-model) succeeded, want catalog rejection")
+	}
+	after, ok := a.CurrentModel(config.ModelKindChat)
+	if !ok || after.ID != before.ID {
+		t.Fatalf("rejected switch changed chat model from %q to %#v", before.ID, after)
 	}
 }
 
@@ -2266,8 +2273,10 @@ func TestAgent_DecayMemory(t *testing.T) {
 	}
 	defer a.Close()
 
-	// DecayMemory should not panic
-	a.DecayMemory(0.5)
+	removed := a.DecayMemory(0.5)
+	if removed != 0 {
+		t.Fatalf("DecayMemory() on an empty store = %d, want 0", removed)
+	}
 }
 
 func TestAgent_PromoteMemory(t *testing.T) {
@@ -2283,10 +2292,9 @@ func TestAgent_PromoteMemory(t *testing.T) {
 	}
 	defer a.Close()
 
-	// PromoteMemory with invalid ID should return error
 	err = a.PromoteMemory("nonexistent-id")
 	if err == nil {
-		t.Log("PromoteMemory() should return error for nonexistent ID")
+		t.Fatal("PromoteMemory(nonexistent-id) succeeded, want missing-entry error")
 	}
 }
 
@@ -2303,10 +2311,12 @@ func TestAgent_Remember(t *testing.T) {
 	}
 	defer a.Close()
 
-	// Remember should not panic
-	err = a.Remember("test content", "default")
-	if err != nil {
-		t.Logf("Remember() error: %v", err)
+	const remembered = "quality-probe medium fact"
+	if err := a.Remember(remembered, "default"); err != nil {
+		t.Fatalf("Remember() error = %v", err)
+	}
+	if !recentMemoryHas(a, remembered, "default") {
+		t.Fatalf("Remember() did not store %q in category default", remembered)
 	}
 }
 
@@ -2323,10 +2333,12 @@ func TestAgent_RememberLongTerm(t *testing.T) {
 	}
 	defer a.Close()
 
-	// RememberLongTerm should not panic
-	err = a.RememberLongTerm("test long-term content", "default")
-	if err != nil {
-		t.Logf("RememberLongTerm() error: %v", err)
+	const remembered = "quality-probe long fact"
+	if err := a.RememberLongTerm(remembered, "default"); err != nil {
+		t.Fatalf("RememberLongTerm() error = %v", err)
+	}
+	if !recentMemoryHas(a, remembered, "default") {
+		t.Fatalf("RememberLongTerm() did not store %q in category default", remembered)
 	}
 }
 
@@ -2626,15 +2638,20 @@ func TestAgentSwitchModel(t *testing.T) {
 	}
 	defer a.Close()
 
-	// Switch to a different model
-	err = a.SwitchModel("gpt-5.4-mini")
-	if err != nil {
-		t.Errorf("SwitchModel() error = %v", err)
+	if err := a.SwitchModel("gpt-5.4-mini"); err != nil {
+		t.Fatalf("SwitchModel() error = %v", err)
 	}
-
-	// SwitchModel updates the provider, verification is complex
-	// Just ensure the call doesn't crash
-	t.Logf("SwitchModel() completed")
+	if got := a.baseProviderSnapshot().model; got != "gpt-5.4-mini" {
+		t.Fatalf("active chat model = %q, want gpt-5.4-mini", got)
+	}
+	reloaded, err := config.NewManagerWithDir(tmpDir)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	saved, ok := reloaded.Get().ModelSelection(config.ModelKindChat)
+	if !ok || saved.ID != "gpt-5.4-mini" {
+		t.Fatalf("persisted chat selection = %#v, ok=%t", saved, ok)
+	}
 }
 
 func TestAgentMemoryStats(t *testing.T) {
@@ -2690,8 +2707,15 @@ func TestAgentAutoSummarize(t *testing.T) {
 	}
 	defer a.Close()
 
-	// AutoSummarize should not panic
+	if err := a.Remember("quality-probe summary source", "default"); err != nil {
+		t.Fatalf("Remember() error = %v", err)
+	}
+	before := len(a.Memory().Recent(10))
 	a.autoSummarize()
+	after := a.Memory().Recent(10)
+	if len(after) != before {
+		t.Fatalf("autoSummarize() changed stored memories from %d to %d", before, len(after))
+	}
 }
 
 func TestAgentStartAutonomy(t *testing.T) {
@@ -2980,8 +3004,28 @@ func TestAgentLoadSkills(t *testing.T) {
 	}
 	defer a.Close()
 
-	// LoadSkills with empty directory should not panic
-	a.LoadSkills(filepath.Join(tmpDir, "skills"))
+	missingDir := filepath.Join(tmpDir, "skills")
+	if _, err := a.LoadSkills(missingDir); err == nil {
+		t.Fatal("LoadSkills(missing dir) succeeded, want a directory read error")
+	}
+	if got := len(a.Skills()); got != 0 {
+		t.Fatalf("failed LoadSkills published %d skills", got)
+	}
+
+	skillDir := filepath.Join(missingDir, "probe-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# probe-skill\n\nProbe.\n\n## Tools\n\n- `echo`: Echo\n"), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	loaded, err := a.LoadSkills(missingDir)
+	if err != nil {
+		t.Fatalf("LoadSkills(probe) error = %v", err)
+	}
+	if loaded != 1 || len(a.Skills()) != 1 || a.Skills()[0].Name != "probe-skill" {
+		t.Fatalf("LoadSkills(probe) = %d, skills %#v", loaded, a.Skills())
+	}
 }
 
 func TestAgentLoadSkillsUsesRegistryLifecycle(t *testing.T) {
@@ -3452,18 +3496,47 @@ func TestResolveTTSConfigPrefersDedicatedConfig(t *testing.T) {
 	}
 }
 
+func isNilGetter(got any) bool {
+	if got == nil {
+		return true
+	}
+	value := reflect.ValueOf(got)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func recentMemoryHas(a *Agent, content, category string) bool {
+	if a == nil || a.Memory() == nil {
+		return false
+	}
+	for _, entry := range a.Memory().Recent(10) {
+		if entry.Content == content && entry.Category == category {
+			return true
+		}
+	}
+	return false
+}
+
 func TestAgent_SwitchModel_NoProvider(t *testing.T) {
-	// SwitchModel requires a fully initialized Agent with config manager
-	// Testing with nil config should not panic
 	a := &Agent{
 		catalog:  provider.NewModelCatalog(),
 		registry: provider.NewRegistry(),
 		cfg:      nil,
 	}
-	// Catalog is empty, ResolveProvider behavior depends on implementation
-	// Just verify no panic occurs
-	_ = a.catalog
-	_ = a.registry
+	err := a.SwitchModel("gpt-5.4-mini")
+	if err == nil {
+		t.Fatal("SwitchModel() succeeded without configuration")
+	}
+	if !strings.Contains(err.Error(), "agent configuration is unavailable") {
+		t.Fatalf("SwitchModel() error = %v", err)
+	}
+	if got := a.Provider(); got != nil {
+		t.Fatalf("SwitchModel() installed provider %#v without configuration", got)
+	}
 }
 
 func TestAgent_Config(t *testing.T) {
