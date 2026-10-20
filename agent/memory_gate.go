@@ -316,24 +316,14 @@ func (a *Agent) executeMemoryGateForLoop(
 			Duration:  execResult.Duration,
 		}
 		result.ToolCalls = append(result.ToolCalls, tcLog)
-		contextToolMsg := provider.Message{
-			Role:       "tool",
-			Content:    buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &loopState.successfulSearchEvidence, &loopState.detailedSearchEvidence),
-			ToolCallID: execResult.ToolCall.ID,
-			Name:       execResult.ToolCall.Name,
-		}
+		contextToolMsg := observedToolMessage(loopCfg.RunID, execResult, buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &loopState.successfulSearchEvidence, &loopState.detailedSearchEvidence))
 		loopState.toolCallLastResult[toolCallSignature(tcLog.Name, tcLog.Arguments)] = tcLog.Result
 		if key := normalizedToolTarget(tcLog.Name, tcLog.Arguments); key != "" {
 			loopState.toolURLLastResult[key] = tcLog.Result
 		}
 		messages = append(messages, contextToolMsg)
 		if sess != nil {
-			if err := sess.AddProviderMessageWithError(provider.Message{
-				Role:       "tool",
-				Content:    execResult.Result,
-				ToolCallID: execResult.ToolCall.ID,
-				Name:       execResult.ToolCall.Name,
-			}); err != nil {
+			if err := sess.AddProviderMessageWithError(observedToolMessage(loopCfg.RunID, execResult, execResult.Result)); err != nil {
 				loopState.sessionErr = err
 				return messages, true
 			}
@@ -385,19 +375,10 @@ func (a *Agent) continueAfterStreamMemoryGate(
 	}
 	for _, execResult := range executed {
 		emitChatToolResultEvent(events, execResult.ToolCall.Name, execResult.Result, execResult.Metadata)
-		messages = append(messages, provider.Message{
-			Role:       "tool",
-			Content:    buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &state.successfulSearchEvidence, &state.detailedSearchEvidence),
-			ToolCallID: execResult.ToolCall.ID,
-			Name:       execResult.ToolCall.Name,
-		})
+		stored := observedToolMessage(state.runID, execResult, execResult.Result)
+		messages = append(messages, observedToolMessage(state.runID, execResult, buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &state.successfulSearchEvidence, &state.detailedSearchEvidence)))
 		if sess != nil {
-			if !appendStreamSessionMessage(events, sess, provider.Message{
-				Role:       "tool",
-				Content:    execResult.Result,
-				ToolCallID: execResult.ToolCall.ID,
-				Name:       execResult.ToolCall.Name,
-			}) {
+			if !appendStreamSessionMessage(events, sess, stored) {
 				return true
 			}
 		}

@@ -127,6 +127,7 @@ type LoopConfig struct {
 	Source                 string                // 调用入口，例如 cli、tui、http、telegram
 	SessionID              string                // 当前回合的会话作用域（临时工具使用）
 	Sandbox                *sandbox.Snapshot     // task-scoped execution boundary
+	RunID                  string                // one user turn, shared by its tool results
 }
 
 // loopRuntime is the narrow set of services used by one ordinary turn. The
@@ -190,6 +191,9 @@ func (l *Loop) Run(ctx context.Context, sess *session.Session, input UserTurnInp
 		return nil, fmt.Errorf("loop runtime not initialized")
 	}
 	input = input.Normalize()
+	if strings.TrimSpace(cfg.RunID) == "" {
+		cfg.RunID = fmt.Sprintf("run-%d", time.Now().UnixNano())
+	}
 	return l.RunWithProviderSnapshot(ctx, sess, input, cfg, l.runtime.providerSnapshotForTurn(input.RoutingText))
 }
 
@@ -1067,12 +1071,7 @@ func (a *Agent) processToolCallBatch(
 			loopState.artifactGuard.recordToolResult(execResult.ToolCall.Name, execResult.ToolCall.Arguments, execResult.Result)
 		}
 
-		contextToolMsg := provider.Message{
-			Role:       "tool",
-			Content:    buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &loopState.successfulSearchEvidence, &loopState.detailedSearchEvidence),
-			ToolCallID: execResult.ToolCall.ID,
-			Name:       execResult.ToolCall.Name,
-		}
+		contextToolMsg := observedToolMessage(loopCfg.RunID, execResult, buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &loopState.successfulSearchEvidence, &loopState.detailedSearchEvidence))
 		if contextToolMsg.Content != execResult.Result {
 			contextToolMsg.Content += "\n[Full result: context_history_read action=result tool_call_id=" + execResult.ToolCall.ID + "]"
 		}
@@ -1087,12 +1086,7 @@ func (a *Agent) processToolCallBatch(
 		messages = append(messages, contextToolMsg)
 		loopState.noteExplorationResult(execResult.ToolCall.Name, len(execResult.Result))
 		if sess != nil {
-			if err := sess.AddProviderMessageWithError(provider.Message{
-				Role:       "tool",
-				Content:    execResult.Result,
-				ToolCallID: execResult.ToolCall.ID,
-				Name:       execResult.ToolCall.Name,
-			}); err != nil {
+			if err := sess.AddProviderMessageWithError(observedToolMessage(loopCfg.RunID, execResult, execResult.Result)); err != nil {
 				loopState.sessionErr = err
 				return messages, false, ""
 			}

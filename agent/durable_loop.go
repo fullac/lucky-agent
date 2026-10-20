@@ -489,7 +489,12 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 				return fmt.Errorf("%w: persist tool result: %v", autonomy.ErrBlocked, err)
 			}
 		}
-		msg := provider.Message{Role: "tool", Name: pending.Call.Name, ToolCallID: pending.Call.ID, Content: executed.Output}
+		observed := executedToolCall{
+			ToolCall: pending.Call,
+			Result:   executed.Output,
+			Duration: executed.Duration,
+		}
+		msg := observedToolMessage(cfg.RunID, observed, executed.Output)
 		cp.Messages = append(cp.Messages, msg)
 		cp.Messages = appendLatestComputerObservation(cp.Messages, []executedToolCall{{ToolCall: pending.Call, Observations: executed.Observations}})
 		if sess != nil {

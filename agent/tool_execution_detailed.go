@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/yurika0211/luckyagent-runtime/sandbox"
 	"github.com/yurika0211/luckyagent-runtime/session"
@@ -16,6 +17,7 @@ type detailedToolExecutionResult struct {
 	Output       string
 	Metadata     map[string]any
 	Observations []tool.Observation
+	Duration     time.Duration
 }
 
 // canonicalToolName converts a model-facing OpenAI-compatible name back to
@@ -68,6 +70,12 @@ func (a *Agent) executeToolWithSessionDetailed(name, arguments string, autoAppro
 }
 
 func (a *Agent) executeToolWithSessionDetailedContext(ctx context.Context, name, arguments string, autoApprove bool, sess *session.Session, sourceOpt ...string) (out detailedToolExecutionResult, err error) {
+	started := time.Now()
+	defer func() {
+		if out.Duration <= 0 {
+			out.Duration = time.Since(started)
+		}
+	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}

@@ -1054,6 +1054,7 @@ type streamConvergenceState struct {
 	artifactGuard                  *artifactFinalizationGuard
 	pendingDelegateTaskIDs         map[string]struct{}
 	usage                          *provider.TokenUsage
+	runID                          string
 }
 
 func (s *streamConvergenceState) addUsage(details *provider.UsageDetails, model string) {
@@ -1450,6 +1451,9 @@ func (a *Agent) ChatWithSessionStreamForSession(ctx context.Context, sess *sessi
 		defer snapshot.Close()
 
 		sanitizeLoopConfig(&loopCfg)
+		if strings.TrimSpace(loopCfg.RunID) == "" {
+			loopCfg.RunID = fmt.Sprintf("run-%d", time.Now().UnixNano())
+		}
 		a.applySandboxToolPolicy(&loopCfg, snapshot)
 		// Stream path always exposes emit so auto-compact progress reaches clients.
 		loopCfg.emit = func(eventCtx context.Context, event ChatEvent) { sendForegroundEvent(eventCtx, events, event) }
@@ -1513,6 +1517,7 @@ func (a *Agent) ChatWithSessionStreamForSession(ctx context.Context, sess *sessi
 			toolExecutionGuard:     configuredTurnToolGuard(routingText, loopCfg),
 			iterationTimeout:       loopCfg.Timeout,
 			artifactGuard:          newArtifactFinalizationGuard(routingText),
+			runID:                  loopCfg.RunID,
 		}
 		logger.Debug("agent stream context prepared",
 			"session_id", sessionID,
@@ -1826,19 +1831,9 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 				}
 				emitChatToolResultEvent(events, execResult.ToolCall.Name, execResult.Result, execResult.Metadata)
 				emitChatObservationEvents(events, execResult)
-				messages = append(messages, provider.Message{
-					Role:       "tool",
-					Content:    buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &state.successfulSearchEvidence, &state.detailedSearchEvidence),
-					ToolCallID: execResult.ToolCall.ID,
-					Name:       execResult.ToolCall.Name,
-				})
+				messages = append(messages, observedToolMessage(state.runID, execResult, buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &state.successfulSearchEvidence, &state.detailedSearchEvidence)))
 				if sess != nil {
-					if !appendStreamSessionMessage(events, sess, provider.Message{
-						Role:       "tool",
-						Content:    execResult.Result,
-						ToolCallID: execResult.ToolCall.ID,
-						Name:       execResult.ToolCall.Name,
-					}) {
+					if !appendStreamSessionMessage(events, sess, observedToolMessage(state.runID, execResult, execResult.Result)) {
 						return
 					}
 				}
@@ -2105,19 +2100,9 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 			}
 			emitChatToolResultEvent(events, execResult.ToolCall.Name, execResult.Result, execResult.Metadata)
 			emitChatObservationEvents(events, execResult)
-			messages = append(messages, provider.Message{
-				Role:       "tool",
-				Content:    buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &state.successfulSearchEvidence, &state.detailedSearchEvidence),
-				ToolCallID: execResult.ToolCall.ID,
-				Name:       execResult.ToolCall.Name,
-			})
+			messages = append(messages, observedToolMessage(state.runID, execResult, buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &state.successfulSearchEvidence, &state.detailedSearchEvidence)))
 			if sess != nil {
-				if !appendStreamSessionMessage(events, sess, provider.Message{
-					Role:       "tool",
-					Content:    execResult.Result,
-					ToolCallID: execResult.ToolCall.ID,
-					Name:       execResult.ToolCall.Name,
-				}) {
+				if !appendStreamSessionMessage(events, sess, observedToolMessage(state.runID, execResult, execResult.Result)) {
 					return
 				}
 			}
