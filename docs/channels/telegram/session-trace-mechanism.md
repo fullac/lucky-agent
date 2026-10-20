@@ -190,7 +190,7 @@ Reasoning Trace 的用户可见卡片由这些函数渲染：
 
 agent 在 native stream 中会累积 provider chunk 的 `ReasoningContent`，在 direct response 路径中会读取 `resp.ReasoningContent`。这些内容会写入 provider message，并通过 `session.AddProviderMessage()` 保存到 session。
 
-`session.AddProviderMessage()` 保留 `ReasoningContent`、`ToolCalls`、`ToolCallID`、`Name` 等结构化字段。相关测试也覆盖了 reasoning 和 tool call 字段的往返保留。
+`session.AddProviderMessage()` 保留 `ReasoningContent`、`ToolCalls`、`ToolCallID`、`Name` 等结构化字段。工具结果还会带上同一轮的 `run_id`，以及 `started_at`、`duration_ms`、`status`（`ok`、`error`、`timeout`、`sandbox`、`missing`、`sudo`）。这些字段只留在会话记录里，发给模型的请求不包含它们。旧记录没有这些字段时按缺失处理。进行中的工具要等结果写入后才有耗时。相关测试也覆盖了 reasoning、tool call 和观测字段的往返保留。
 
 但是 `ChatEvent` 结构没有 `ReasoningContent` 字段，Telegram handler 也没有把原始 `ReasoningContent` 直接发送给用户。
 
