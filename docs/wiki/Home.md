@@ -16,7 +16,7 @@ LuckyAgent 是一个面向长期运行的 Agent runtime。它把 CLI、HTTP API�
    - RAG 知识库
    - 多平台消息网关
    - Cron、Autonomy 和工具系统
-   - 多 Agent / benchmark 能力
+   - 多 Agent；评测命令在 luckyagent-app
 
 3. [[使用场景]]
    - 本地 Agent 开发调试

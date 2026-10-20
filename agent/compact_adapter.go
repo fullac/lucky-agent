@@ -1,37 +1,22 @@
 package agent
 
 import (
+	compactpkg "github.com/yurika0211/lucky-agent/agent/compact"
 	"github.com/yurika0211/luckyagent-runtime/contextx"
 	"github.com/yurika0211/luckyagent-runtime/provider"
-	"github.com/yurika0211/luckyagent-runtime/session"
 	compactlib "github.com/yurika0211/luckyagent-tools/compact"
 )
 
-const compactSummaryTimeout = compactlib.SummaryTimeout
+const compactSummaryTimeout = compactpkg.SummaryTimeout
 
 func toCompactMessages(messages []provider.Message) []compactlib.Message {
-	out := make([]compactlib.Message, len(messages))
-	for i, message := range messages {
-		calls := make([]compactlib.ToolCall, len(message.ToolCalls))
-		for j, call := range message.ToolCalls {
-			calls[j] = compactlib.ToolCall{Name: call.Name}
-		}
-		out[i] = compactlib.Message{Role: message.Role, Content: message.Content, ReasoningContent: message.ReasoningContent, Name: message.Name, ToolCalls: calls, CompactBoundary: session.IsCompactBoundary(message)}
-	}
-	return out
+	return compactpkg.Messages(messages)
 }
 
 func compactEstimator(est *contextx.TokenEstimator) compactlib.Estimator {
-	if est == nil {
-		return nil
-	}
-	return est
+	return compactpkg.Estimator(est)
 }
 
 func compactTextOptions() compactlib.TextOptions {
-	return compactlib.TextOptions{
-		SummarizeTool:     summarizeToolResult,
-		FallbackGoal:      "Continue the current LuckyAgent session from the available prior messages.",
-		MergeFallbackGoal: "Continue the current LuckyAgent session from prior segment summaries.",
-	}
+	return compactpkg.TextOptions(summarizeToolResult)
 }

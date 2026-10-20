@@ -1,10 +1,12 @@
-package agent
+package artifact
 
 import (
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/yurika0211/luckyagent-tools/execpolicy"
 )
 
 var (
@@ -16,33 +18,33 @@ var (
 	artifactPathPattern = regexp.MustCompile("(?i)(?:sandbox:)?(?:~[/\\\\]\\.luckyagent[/\\\\](?:workspace|uploads)[/\\\\][^\\s`\"'<>]+|/(?:[^\\s`\"'<>/]+/)+\\.luckyagent/(?:workspace|uploads)/[^\\s`\"'<>]+)")
 )
 
-type artifactFinalizationGuard struct {
+type Guard struct {
 	required bool
-	paths    map[string]struct{}
+	Paths    map[string]struct{}
 }
 
-func newArtifactFinalizationGuard(userInput string) *artifactFinalizationGuard {
-	if !hasArtifactIntent(userInput) {
+func NewGuard(userInput string) *Guard {
+	if !HasIntent(userInput) {
 		return nil
 	}
-	return &artifactFinalizationGuard{
+	return &Guard{
 		required: true,
-		paths:    make(map[string]struct{}),
+		Paths:    make(map[string]struct{}),
 	}
 }
 
-func hasArtifactIntent(text string) bool {
+func HasIntent(text string) bool {
 	text = strings.ToLower(strings.TrimSpace(stripArtifactDeliveryGuidance(text)))
 	if text == "" {
 		return false
 	}
-	if intentTextContainsAny(text, "保存到记忆", "保存记忆", "记住", "remember this") {
+	if execpolicy.ContainsAny(text, "保存到记忆", "保存记忆", "记住", "remember this") {
 		return false
 	}
-	if intentTextContainsAny(text, "不保存", "不要保存", "不用保存", "无需保存", "不需要保存", "只贴内容", "直接贴出来") {
+	if execpolicy.ContainsAny(text, "不保存", "不要保存", "不用保存", "无需保存", "不需要保存", "只贴内容", "直接贴出来") {
 		return false
 	}
-	return intentTextContainsAny(text,
+	return execpolicy.ContainsAny(text,
 		"保存为", "保存成", "保存到", "保存文件", "保存md", "保存 md", "保存markdown", "保存 markdown",
 		"创建文件", "写入文件", "生成文件", "生成文档", "导出", "发给我", "发送附件",
 		"media:/", "tg://document", "tg://photo",
@@ -58,7 +60,7 @@ func stripArtifactDeliveryGuidance(text string) string {
 	return text
 }
 
-func (g *artifactFinalizationGuard) recordToolResult(name, arguments, result string) {
+func (g *Guard) RecordToolResult(name, arguments, result string) {
 	if g == nil || !g.required {
 		return
 	}
@@ -71,20 +73,20 @@ func (g *artifactFinalizationGuard) recordToolResult(name, arguments, result str
 	}
 	for _, path := range fileWritePaths(arguments, result) {
 		if pathExists(path) {
-			g.paths[path] = struct{}{}
+			g.Paths[path] = struct{}{}
 		}
 	}
 }
 
-func (g *artifactFinalizationGuard) blockMessage(finalResponse string) (string, bool) {
+func (g *Guard) BlockMessage(finalResponse string) (string, bool) {
 	if g == nil || !g.required {
 		return "", false
 	}
-	missing := missingMediaPaths(finalResponse)
+	missing := MissingMediaPaths(finalResponse)
 	if len(missing) > 0 {
 		return fmt.Sprintf("Artifact finalization guard blocked the final answer: it references missing media file(s): %s. Create the file with file_write or remove the MEDIA line and explain the failure.", strings.Join(missing, ", ")), true
 	}
-	if len(g.paths) == 0 {
+	if len(g.Paths) == 0 {
 		return "Artifact finalization guard blocked the final answer: the user requested a saved file or artifact, but no successful file_write result was observed. Call file_write to create the requested file, then verify the path exists before finalizing. Do not claim the file is saved until the write succeeds.", true
 	}
 	return "", false
@@ -99,14 +101,14 @@ func fileWritePaths(arguments, result string) []string {
 			}
 		}
 	}
-	args := parseToolCallArgs(arguments)
-	if raw := strings.TrimSpace(guardStringArg(args, "path")); raw != "" {
+	args := execpolicy.ParseArgs(arguments)
+	if raw := strings.TrimSpace(execpolicy.StringArg(args, "path")); raw != "" {
 		paths = append(paths, cleanArtifactPath(raw))
 	}
 	return uniqueNonEmptyStrings(paths)
 }
 
-func missingMediaPaths(text string) []string {
+func MissingMediaPaths(text string) []string {
 	var missing []string
 	for _, match := range mediaPathPattern.FindAllStringSubmatch(text, -1) {
 		if len(match) < 2 {
@@ -184,7 +186,7 @@ func mediaReferenceFromLine(line string) (string, bool) {
 // point at files which no longer exist. Session history can outlive temporary
 // screenshots; retaining those old paths makes a later, unrelated turn
 // repeat the stale directive and causes a Telegram upload failure.
-func sanitizeHistoricalMediaReferences(text string) string {
+func SanitizeHistory(text string) string {
 	if strings.TrimSpace(text) == "" {
 		return text
 	}

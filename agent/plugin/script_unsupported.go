@@ -1,6 +1,6 @@
 //go:build !aix && !darwin && !dragonfly && !freebsd && !linux && !netbsd && !openbsd && !solaris
 
-package agent
+package plugin
 
 import (
 	"fmt"
@@ -8,6 +8,6 @@ import (
 	"runtime"
 )
 
-func preparePluginScriptProcess(*exec.Cmd) (func(), error) {
+func PrepareProcess(*exec.Cmd) (func(), error) {
 	return nil, fmt.Errorf("plugin script execution is not supported on %s until process-tree cancellation is implemented", runtime.GOOS)
 }

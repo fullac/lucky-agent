@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yurika0211/lucky-agent/agent/artifact"
+	"github.com/yurika0211/lucky-agent/agent/textcall"
 	"github.com/yurika0211/luckyagent-runtime/contextx"
 	"github.com/yurika0211/luckyagent-runtime/provider"
 	"github.com/yurika0211/luckyagent-runtime/session"
@@ -114,14 +116,14 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 	}
 	guard := configuredTurnToolGuard(input.RoutingText, cfg)
 	memoryGate := a.buildMemoryToolGate(input.RoutingText, input.Scope, cfg.DisabledTools)
-	artifactGuard := newArtifactFinalizationGuard(input.RoutingText)
+	artifactGuard := artifact.NewGuard(input.RoutingText)
 	for _, op := range task.Operations {
 		if op.State == "completed" {
 			memoryGate.markExecuted(op.Name, op.Output)
 			result.ToolCalls = append(result.ToolCalls, toolCallLog{Name: op.Name, Arguments: op.Arguments, Result: op.Output})
 		}
 		if op.State == "completed" && !op.Failed {
-			artifactGuard.recordToolResult(op.Name, op.Arguments, op.Output)
+			artifactGuard.RecordToolResult(op.Name, op.Arguments, op.Output)
 		}
 	}
 	if memoryGate != nil {
@@ -144,7 +146,7 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 		if len(cp.Pending) != 0 {
 			return result, fmt.Errorf("%w: pending tools prevent completion", autonomy.ErrBlocked)
 		}
-		if message, blocked := artifactGuard.blockMessage(cp.Candidate); blocked {
+		if message, blocked := artifactGuard.BlockMessage(cp.Candidate); blocked {
 			return result, fmt.Errorf("%w: %s", autonomy.ErrBlocked, message)
 		}
 		result.Response = a.appendNaturalCitationsIfEnabled(cp.Candidate, result.ToolCalls)
@@ -314,7 +316,7 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 			}
 			result.Usage.AddResponse(resp)
 		}
-		applyTextToolCallsToResponse(resp, cfg.DisabledTools)
+		textcall.ApplyToResponse(resp, cfg.DisabledTools)
 		if computerObserveOnlyBatch(resp.ToolCalls) {
 			cp.ObserveOnlyBatches++
 		} else {
@@ -354,7 +356,7 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 			if answer == "" {
 				cp.NoProgress++
 				cp.Messages = append(cp.Messages, provider.Message{Role: "user", Content: emptyResponseRecoveryPrompt})
-			} else if msg, blocked := artifactGuard.blockMessage(answer); blocked {
+			} else if msg, blocked := artifactGuard.BlockMessage(answer); blocked {
 				cp.Messages = append(cp.Messages, provider.Message{Role: "assistant", Content: answer},
 					provider.Message{Role: "user", Content: msg})
 				cp.NoProgress++
@@ -389,7 +391,7 @@ func durableProviderError(ctx context.Context, err error) error {
 	return err
 }
 
-func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session, input UserTurnInput, cfg LoopConfig, cp *durableCheckpoint, guard *toolExecutionGuard, artifacts *artifactFinalizationGuard, save func() error) error {
+func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session, input UserTurnInput, cfg LoopConfig, cp *durableCheckpoint, guard *toolExecutionGuard, artifacts *artifact.Guard, save func() error) error {
 	for len(cp.Pending) > 0 {
 		if err := ctx.Err(); err != nil {
 			return durableProviderError(ctx, err)
@@ -502,7 +504,7 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 				return sessionError(err)
 			}
 		}
-		artifacts.recordToolResult(pending.Call.Name, executeArgs, executed.Output)
+		artifacts.RecordToolResult(pending.Call.Name, executeArgs, executed.Output)
 		sig := toolCallSignature(pending.Call.Name, pending.Call.Arguments)
 		digest := durableResultDigest(executed.Output)
 		if previous, ok := cp.LastResultDigests[sig]; ok && previous == digest {

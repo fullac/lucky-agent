@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yurika0211/lucky-agent/agent/artifact"
+	"github.com/yurika0211/lucky-agent/agent/textcall"
 	"github.com/yurika0211/luckyagent-runtime/logger"
 	"github.com/yurika0211/luckyagent-runtime/provider"
 	"github.com/yurika0211/luckyagent-runtime/sandbox"
@@ -141,7 +143,7 @@ type streamConvergenceState struct {
 	memoryGate                     *memoryToolGate
 	citationToolCalls              []toolCallLog
 	iterationTimeout               time.Duration
-	artifactGuard                  *artifactFinalizationGuard
+	artifactGuard                  *artifact.Guard
 	pendingDelegateTaskIDs         map[string]struct{}
 	usage                          *provider.TokenUsage
 	runID                          string
@@ -390,7 +392,7 @@ func (s *streamConvergenceState) rememberToolCallResult(name, arguments, result 
 		Duration:  duration,
 	})
 	if s.artifactGuard != nil {
-		s.artifactGuard.recordToolResult(name, arguments, result)
+		s.artifactGuard.RecordToolResult(name, arguments, result)
 	}
 	s.recordDelegateTaskToolResult(name, arguments, result)
 }
@@ -606,7 +608,7 @@ func (a *Agent) ChatWithSessionStreamForSession(ctx context.Context, sess *sessi
 			memoryGate:             a.buildMemoryToolGate(routingText, input.Scope, loopCfg.DisabledTools),
 			toolExecutionGuard:     configuredTurnToolGuard(routingText, loopCfg),
 			iterationTimeout:       loopCfg.Timeout,
-			artifactGuard:          newArtifactFinalizationGuard(routingText),
+			artifactGuard:          artifact.NewGuard(routingText),
 			runID:                  loopCfg.RunID,
 		}
 		logger.Debug("agent stream context prepared",
@@ -762,7 +764,7 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 			}
 			full := content.String()
 			pending := full[emittedContentBytes:]
-			if shouldHoldPotentialTextToolCallStream(full) || shouldHoldPotentialTextToolCallStream(pending) {
+			if textcall.ShouldHoldStream(full) || textcall.ShouldHoldStream(pending) {
 				continue
 			}
 			if len(full) > emittedContentBytes {
@@ -826,9 +828,9 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 	recordIterationUsage()
 
 	response := content.String()
-	assistantContent, textToolCalls := extractTextToolCalls(response)
+	assistantContent, textToolCalls := textcall.Extract(response)
 	hadTextToolCalls := len(textToolCalls) > 0
-	textToolCalls = filterProviderToolCalls(textToolCalls, state.disabledTools)
+	textToolCalls = textcall.FilterDisabled(textToolCalls, state.disabledTools)
 	logger.Debug("agent stream native provider response",
 		"session_id", sessionID,
 		"round", round,
@@ -1033,7 +1035,7 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 		finalResponse = strings.TrimSpace(state.continuedResponse.String())
 		finalReasoning = strings.TrimSpace(state.continuedReasoning.String())
 	}
-	if msg, blocked := state.artifactGuard.blockMessage(finalResponse); blocked {
+	if msg, blocked := state.artifactGuard.BlockMessage(finalResponse); blocked {
 		if remaining > 1 {
 			messages = append(messages, provider.Message{Role: "assistant", Content: response, ReasoningContent: reasoning.String()})
 			messages = append(messages, provider.Message{Role: "user", Content: msg})
@@ -1121,7 +1123,7 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 		return
 	}
 	state.addResponseUsage(resp)
-	applyTextToolCallsToResponse(resp, state.disabledTools)
+	textcall.ApplyToResponse(resp, state.disabledTools)
 	logger.Debug("agent stream simulated provider response",
 		"session_id", sessionID,
 		"round", round,
@@ -1298,7 +1300,7 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 		finalResponse = strings.TrimSpace(state.continuedResponse.String())
 		finalReasoning = strings.TrimSpace(state.continuedReasoning.String())
 	}
-	if msg, blocked := state.artifactGuard.blockMessage(finalResponse); blocked {
+	if msg, blocked := state.artifactGuard.BlockMessage(finalResponse); blocked {
 		if remaining > 1 {
 			messages = append(messages, provider.Message{Role: "assistant", Content: response, ReasoningContent: resp.ReasoningContent})
 			messages = append(messages, provider.Message{Role: "user", Content: msg})
