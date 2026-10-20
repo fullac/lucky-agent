@@ -39,13 +39,18 @@ LuckyAgent 主仓库维护公开的 Agent 核心库，并保留构建完整 `lh`
 
 ## Embed SDK（进程内）
 
-把 LuckyAgent 当作 Go library 嵌入宿主进程，无需先起 `lh serve`：
+把 LuckyAgent 当作 Go library 嵌入宿主进程，无需先起 `lh serve`。SDK 在 `luckyagent-app`，导入 `github.com/yurika0211/luckyagent-app/sdk`。
 
-```bash
-go run ./examples/embed_minimal
+```go
+agent, err := sdk.New(sdk.Config{
+    HomeDir:  "/var/lib/myapp/luckyagent",
+    Provider: "openai",
+    Model:    "gpt-5.4-mini",
+    APIKey:   os.Getenv("OPENAI_API_KEY"),
+})
 ```
 
-详情见 [`sdk/README.md`](sdk/README.md)。稳定面（v0）：`New` / `Chat*`（含多模态 Input） / Sessions（含 Compact） / Memory / RAG / Tools / Models / Skills。
+说明见 [luckyagent-app/sdk/README.md](https://github.com/yurika0211/luckyagent-app/blob/main/sdk/README.md)。稳定面（v0）：`New` / `Chat*`（含多模态 Input） / Sessions（含 Compact） / Memory / RAG / Tools / Models / Skills。Agent 循环本身是 `github.com/yurika0211/lucky-agent/agent`，完整应用组装走 SDK。
 
 ## 核心能力
 

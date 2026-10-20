@@ -14,6 +14,8 @@ LuckyAgent 当前已经具备三层 multi-agent 能力，但它们还不是同�
 
 ### 模型可见委派工具
 
+> 本节路径写于拆仓前。委派引擎现位于 `luckyagent-orchestrator`，工具合同在 `luckyagent-tools`，Agent 注入在 `agent/agent.go`。
+
 相关文件：
 
 - `internal/tool/delegate.go`

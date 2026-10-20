@@ -1,5 +1,7 @@
 # 模型发现与切换调研（2026-09-18）
 
+> 历史审计。文中 `internal/agent`、`internal/provider`、`internal/gateway`、`internal/server`、`internal/cli` 是当天的单仓路径。当前对应 `agent/`、`luckyagent-runtime/provider`、`luckyagent-gateway`、`luckyagent-app`。行号和当日本机版本不再对应当前代码。
+
 当前实现存在可复现的模型列表与切换缺陷。最直接的链路是：普通列表读取本地目录，在线发现仅由 Telegram 的 `refresh` 分支调用；在线结果临时注册进目录，但下一次切换又重建目录，导致后续切换失败。
 
 本次仅增加调研报告，没有修改运行代码或生产配置。工作区存在并持续产生其他未提交改动，因此验证使用独立源码快照，并通过 Go overlay 在已提交版本 `5753ecfe2831b3a625494b98919fc1dcd30dea2b` 上复核。

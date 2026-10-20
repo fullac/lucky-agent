@@ -2,6 +2,12 @@
 
 Date: 2026-07-10
 
+This is a historical audit. Paths such as `internal/agent` and `internal/tool`
+refer to the monolith that existed on that date. Current Agent code is
+`agent/` in this repository. Tool schemas are in `luckyagent-tools`, and
+memory/config are in `luckyagent-runtime`. Do not treat the line numbers below
+as current.
+
 ## Scope
 
 The audit covered Go runtime code, CLI and gateway startup, provider/model routing, memory and context routing, tool safety, and UI runtime defaults. Generated protobuf code, dependency lockfiles, benchmark/test fixtures, protocol endpoint paths, and user-facing documentation examples were scanned but are not treated as production rule debt by default.

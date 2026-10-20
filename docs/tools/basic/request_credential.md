@@ -4,8 +4,8 @@
 
 实现位置：
 
-- `internal/tool/builtin_credential.go`
-- `internal/agent/credential_form.go`
+- `luckyagent-tools` 中的 `request_credential` 内置工具
+- `agent/credential_form.go`
 
 注册信息：
 

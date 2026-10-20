@@ -154,6 +154,8 @@ history.db          ← 时间序列存储 (SQLite + 按天分区)
 
 Phase 1 已落地为 Go 原生、可插拔、默认安全的 dry-run TSE：
 
+> 下表路径是拆仓前的取证位置。proactive 实现现位于 `luckyagent-runtime/proactive`，Agent 侧事件在 `agent/proactive_events.go`，配置在 `luckyagent-runtime/config`，CLI 在 `luckyagent-app`。
+
 | 模块 | 当前实现 | 文件 |
 |---|---|---|
 | Gravitational Field Sampler | 采样 `time_of_day`、`day_of_week`、`workspace_context`、最近 runtime activity，暂不做侵入式活动窗口监听 | `internal/proactive/sampler.go` |
