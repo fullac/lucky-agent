@@ -247,6 +247,8 @@ config.example.json      产品配置模板
 docs/                    使用文档与模块边界
 ```
 
+`tools.filesystem.allowed_read_roots` 只放行 `file_read`、`file_list`、`document_read`。写入、补丁和删除仍限制在 `~/.luckyagent/` 与 `/tmp/`。示例里的 `~/workspace`、`~/Obsidian` 需要换成真实目录；不要加入 `~/.ssh`、`~/.aws`、`~/.gnupg`。改完后重启 `lh serve`。
+
 ## 开发
 
 运行 Agent 模块和薄入口模块的测试：
