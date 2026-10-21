@@ -121,9 +121,3 @@ func (a *Agent) baseProviderSnapshot() providerSnapshot {
 	snapshot.budget = a.requestBudget()
 	return snapshot
 }
-
-// maybeRouteModel is kept as a compatibility shim for package-local callers.
-// It no longer mutates Agent; callers should retain the returned snapshot.
-func (a *Agent) maybeRouteModel(userInput string) providerSnapshot {
-	return a.providerSnapshotForTurn(userInput)
-}
