@@ -1530,7 +1530,7 @@ func clauseBeforeTool(before string) string {
 	cut := 0
 	for i, r := range before {
 		switch r {
-		case '。', '\n', '；', ';', '.', ',', '!', '！', '？', '?':
+		case '。', '\n', '；', ';', '.', '!', '！', '？', '?':
 			cut = i + utf8.RuneLen(r)
 		}
 	}
