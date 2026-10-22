@@ -746,6 +746,7 @@ type loopRuntimeState struct {
 	provider                       providerSnapshot
 	toolCallRepeatCount            map[string]int
 	toolCallLastResult             map[string]string
+	failureRepeatCount             map[string]int
 	toolURLRepeatCount             map[string]int
 	toolURLLastResult              map[string]string
 	toolExecutionGuard             *toolExecutionGuard
@@ -993,9 +994,10 @@ func (a *Agent) processToolCallBatch(
 		if key := normalizedToolTarget(tc.Name, tc.Arguments); key != "" {
 			loopState.toolURLRepeatCount[key]++
 		}
-		if loopState.toolCallRepeatCount[sig] < loopCfg.RepeatToolCallLimit {
-			allRepeated = false
+		if loopState.failureRepeated(tc.Name, tc.Arguments) || loopState.toolCallRepeatCount[sig] >= loopCfg.RepeatToolCallLimit {
+			continue
 		}
+		allRepeated = false
 	}
 	if allRepeated && (strings.TrimSpace(resp.Content) == "" || loopState.consecutiveToolOnlyIters >= loopCfg.ToolOnlyIterationLimit) {
 		if !loopState.forceSearchSynthesis && loopState.successfulSearchEvidence > 0 {
@@ -1083,6 +1085,7 @@ func (a *Agent) processToolCallBatch(
 		if key := normalizedToolTarget(tcLog.Name, tcLog.Arguments); key != "" {
 			loopState.toolURLLastResult[key] = tcLog.Result
 		}
+		loopState.noteFailureRepeat(tcLog.Name, tcLog.Result)
 		messages = append(messages, contextToolMsg)
 		loopState.noteExplorationResult(execResult.ToolCall.Name, len(execResult.Result))
 		if sess != nil {

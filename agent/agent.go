@@ -1036,6 +1036,7 @@ type streamConvergenceState struct {
 	continuedReasoning             strings.Builder
 	toolCallRepeatCount            map[string]int
 	toolCallLastResult             map[string]string
+	failureRepeatCount             map[string]int
 	toolURLRepeatCount             map[string]int
 	toolURLLastResult              map[string]string
 	toolExecutionGuard             *toolExecutionGuard
@@ -1261,9 +1262,10 @@ func (s *streamConvergenceState) trackToolCallPattern(toolCalls []provider.ToolC
 			}
 			s.toolURLRepeatCount[key]++
 		}
-		if s.toolCallRepeatCount[sig] < s.repeatToolCallLimit {
-			allRepeated = false
+		if s.failureRepeated(tc.Name, tc.Arguments) || s.toolCallRepeatCount[sig] >= s.repeatToolCallLimit {
+			continue
 		}
+		allRepeated = false
 	}
 
 	if allRepeated && (trimmed == "" || s.consecutiveToolOnlyIters >= s.toolOnlyIterationLimit) {
@@ -1293,6 +1295,7 @@ func (s *streamConvergenceState) rememberToolCallResult(name, arguments, result 
 		}
 		s.toolURLLastResult[key] = result
 	}
+	s.noteFailureRepeat(name, result)
 	s.citationToolCalls = append(s.citationToolCalls, toolCallLog{
 		Name:      name,
 		Arguments: arguments,
