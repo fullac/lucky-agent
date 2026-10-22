@@ -362,7 +362,10 @@
   },
   "tools": {
     "filesystem": {
-      "allowed_read_roots": []
+      "allowed_read_roots": [
+        "~/workspace",
+        "~/Obsidian"
+      ]
     },
     "computer_use": {
       "enabled": false,
