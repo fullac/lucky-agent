@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/yurika0211/lucky-agent/agent/artifact"
 	"github.com/yurika0211/luckyagent-runtime/provider"
 	"github.com/yurika0211/luckyagent-runtime/turn"
 )
@@ -16,7 +17,7 @@ func (a *Agent) needsExecutionReview(goal, candidate string) bool {
 		return true
 	}
 	text := strings.ToLower(strings.TrimSpace(goal))
-	if hasArtifactIntent(goal) || intentTextContainsAny(text, "执行", "运行", "优化", "实现", "完成任务", "部署", "implement ", "edit ", "fix ", "run ", "optimize", "refactor") {
+	if artifact.HasIntent(goal) || intentTextContainsAny(text, "执行", "运行", "优化", "实现", "完成任务", "部署", "implement ", "edit ", "fix ", "run ", "optimize", "refactor") {
 		return true
 	}
 	answer := strings.ToLower(strings.TrimSpace(candidate))

@@ -1,18 +1,6 @@
 # Graph RAG 快速开始
 
-## 30 秒快速试用
-
-```bash
-# 1. 编译并运行演示
-cd /media/shiokou/DevRepo60/DevHub/Projects/2026-myapp/luckyharness
-go run ./cmd/graph-rag-demo/
-
-# 2. 查看输出
-# 你会看到：
-# - 知识图谱统计（节点和边数量）
-# - 激活扩散结果
-# - 关系路径追踪
-```
+实现位于 `github.com/yurika0211/luckyagent-runtime/rag`。可运行示例是该模块的 `Example_graphRAGBasicUsage`（`rag/graph_example_test.go`）。主仓不再携带 `cmd/graph-rag-demo`。
 
 ## 在你的代码中使用
 
@@ -24,9 +12,9 @@ package main
 import (
     "context"
     "fmt"
-    
-    "github.com/yurika0211/luckyagent/internal/embedder"
-    "github.com/yurika0211/luckyagent/internal/rag"
+
+    "github.com/yurika0211/luckyagent-runtime/embedder"
+    "github.com/yurika0211/luckyagent-runtime/rag"
 )
 
 // 实现你的 LLM Provider
@@ -36,7 +24,7 @@ type MyLLMProvider struct {
 
 func (p *MyLLMProvider) Complete(ctx context.Context, prompt string) (string, error) {
     // 调用你的 LLM API，返回 JSON 格式的实体和关系
-    // 具体格式见 internal/rag/extractor.go
+    // 具体格式见 luckyagent-runtime/rag 的实体提取约定
 }
 
 func main() {
@@ -45,7 +33,9 @@ func main() {
     config.EnableGraph = true
     
     ragManager := rag.NewRAGManagerWithGraph(
-        embedder.NewOpenAIEmbedder("your-key"),
+        embedder.NewOpenAIEmbedder(embedder.OpenAIEmbedderConfig{
+        APIKey: "your-key",
+    }),
         config,
         &MyLLMProvider{},
     )

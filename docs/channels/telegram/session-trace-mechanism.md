@@ -2,16 +2,16 @@
 
 本文件记录 Telegram channel 当前实现中的会话绑定、任务队列、Tool Trace 和 Reasoning Trace 机制。取证来源主要是：
 
-- `internal/gateway/telegram/handler.go`
-- `internal/gateway/telegram/tool_nl.go`
-- `internal/agent/agent.go`
-- `internal/agent/loop_execution.go`
-- `internal/session/session.go`
-- `internal/config/config.go`
+- `luckyagent-gateway/telegram/handler.go`
+- `luckyagent-gateway/telegram/tool_nl.go`
+- `agent/agent.go`
+- `agent/loop_execution.go`
+- `luckyagent-runtime/session/session.go`
+- `luckyagent-runtime/config/config.go`
 
 ## 结论
 
-Telegram 的会话连续性不是由 Telegram 消息本身承载，而是由 handler 内部的 `chatID -> sessionID` 映射承载。真正的会话内容仍由 `internal/session.Manager` 维护。
+Telegram 的会话连续性不是由 Telegram 消息本身承载，而是由 handler 内部的 `chatID -> sessionID` 映射承载。真正的会话内容仍由 `luckyagent-runtime/session.Manager` 维护。
 
 Tool Trace 来自 agent loop 发出的 `ChatEventToolCall` 和 `ChatEventToolResult`。Telegram handler 将这些事件拼成 `telegramToolTraceStep`，最后渲染成 Tool Trace 或 Agent Trace 卡片。
 

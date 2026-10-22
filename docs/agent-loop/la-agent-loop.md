@@ -4,7 +4,7 @@
 
 ## 结论
 
-LuckyAgent 的 agent loop 主入口在 `internal/agent/loop.go`：
+LuckyAgent 的 agent loop 主入口在 `agent/loop.go`：
 
 - `RunLoop`
 - `RunLoopWithSession`
@@ -47,7 +47,7 @@ Agent Loop 不是单纯的“发一次 prompt 给模型”。它是一个带状�
 7. 初始化 `LoopResult` 和本轮 `loopRuntimeState`。
 8. 构建上下文消息和 function calling 工具 schema。
 
-普通会话聊天入口在 `internal/agent/agent.go`：
+普通会话聊天入口在 `agent/agent.go`：
 
 ```text
 ChatWithSessionInput
@@ -59,7 +59,7 @@ ChatWithSessionInput
 
 ### 流式入口
 
-流式入口在 `internal/agent/agent.go`：
+流式入口在 `agent/agent.go`：
 
 ```text
 ChatWithSessionStreamInputWithLoopConfig
@@ -106,7 +106,7 @@ ChatWithSessionStreamInputWithLoopConfig
 
 ## 上下文构建
 
-上下文构建在 `internal/agent/context_planner.go`，入口是：
+上下文构建在 `agent/context_planner.go`，入口是：
 
 ```text
 buildContextMessagesForInput
@@ -161,7 +161,7 @@ system prompt
 
 ## 工具可见性
 
-工具 schema 构建在 `internal/agent/loop_execution.go`：
+工具 schema 构建在 `agent/loop_execution.go`：
 
 ```text
 buildLoopCallOptions
@@ -193,7 +193,7 @@ ToolChoice = "none"
 
 ## 意图级工具 Gating
 
-意图级工具 gating 在 `internal/agent/tool_intent_gating.go`。
+意图级工具 gating 在 `agent/tool_intent_gating.go`。
 
 它由环境变量控制：
 
@@ -302,7 +302,7 @@ toolExecutionGuard
 
 ### 执行保护
 
-`toolExecutionGuard` 在 `internal/agent/tool_execution_guard.go`。
+`toolExecutionGuard` 在 `agent/tool_execution_guard.go`。
 
 它根据用户当前输入里的限制词生成保护状态，例如：
 
@@ -419,7 +419,7 @@ forceSearchSynthesis = true
 
 ## Memory Gate
 
-Memory gate 在 `internal/agent/memory_gate.go`。
+Memory gate 在 `agent/memory_gate.go`。
 
 它解决的问题是：有些问题必须先补充外部事实或时间信息，不能直接依赖记忆回答。
 

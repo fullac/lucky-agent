@@ -35,9 +35,11 @@ flowchart TD
 - Existing tools/API/gateway modules retain generic execution, wire protocols
   and platform connections. Their implementations are not copied into the core.
 
-Previous `internal/agent` imports become the public Agent leaf path. Most former
-host support imports become runtime public packages. Full SDK consumers use
-`github.com/yurika0211/luckyagent-app/sdk`.
+Previous `internal/agent` imports are now `github.com/yurika0211/lucky-agent/agent`.
+Most former host support imports are public packages under
+`github.com/yurika0211/luckyagent-runtime`. Full SDK consumers use
+`github.com/yurika0211/luckyagent-app/sdk`. The embed example and SDK readme
+live in that app repository, not in this launcher tree.
 
 The former in-repository `modules/appservice` is now the public package
 `luckyagent-runtime/appservice`; its schema/catalog adapters live in

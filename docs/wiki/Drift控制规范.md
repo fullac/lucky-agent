@@ -130,8 +130,8 @@ delegate task、autonomy worker、cron/heartbeat 任务状态只能来自实际�
 建议命令：
 
 ```bash
-go test ./internal/agent ./internal/memory ./internal/config ./internal/cli/lhcmd
-go test ./...
+(cd agent && GOWORK=off go test -mod=readonly ./...)
+# memory 与 config 在 luckyagent-runtime；CLI 在 luckyagent-app
 ```
 
 ## 变更评审清单

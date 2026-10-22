@@ -22,13 +22,13 @@ Prompt 约束
 
 主要实现：
 
-- `internal/agent/system_prompt.go`
-- `internal/agent/loop.go`
-- `internal/agent/loop_execution.go`
-- `internal/agent/memory_gate.go`
-- `internal/agent/tool_execution_guard.go`
-- `internal/agent/tool_intent_gating.go`
-- `internal/agent/agent.go`
+- `agent/system_prompt.go`
+- `agent/loop.go`
+- `agent/loop_execution.go`
+- `agent/memory_gate.go`
+- `agent/tool_execution_guard.go`
+- `agent/tool_intent_gating.go`
+- `agent/agent.go`
 
 关键结构：
 

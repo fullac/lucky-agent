@@ -1,6 +1,6 @@
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
 
-package agent
+package plugin
 
 import (
 	"errors"
@@ -13,7 +13,7 @@ import (
 // only stops the interpreter, leaving its children alive; WaitDelay alone only
 // closes their inherited output pipes. Kill the group both on cancellation and
 // after the interpreter exits, so a background child cannot outlive the call.
-func preparePluginScriptProcess(command *exec.Cmd) (func(), error) {
+func PrepareProcess(command *exec.Cmd) (func(), error) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	killGroup := func() error {
 		if command.Process == nil {

@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yurika0211/lucky-agent/agent/artifact"
+	"github.com/yurika0211/lucky-agent/agent/textcall"
 	"github.com/yurika0211/luckyagent-runtime/config"
 	"github.com/yurika0211/luckyagent-runtime/logger"
 	"github.com/yurika0211/luckyagent-runtime/provider"
@@ -578,7 +580,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 	loopState := newLoopRuntimeState()
 	loopState.provider = turnProvider
 	loopState.toolExecutionGuard = configuredTurnToolGuard(routingText, loopCfg)
-	loopState.artifactGuard = newArtifactFinalizationGuard(routingText)
+	loopState.artifactGuard = artifact.NewGuard(routingText)
 	memoryGate := l.runtime.buildMemoryToolGate(routingText, turnInput.Scope, loopCfg.DisabledTools)
 
 	// 构建初始消息
@@ -644,7 +646,7 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 			}
 			result.Usage.AddResponse(resp)
 		}
-		applyTextToolCallsToResponse(resp, loopCfg.DisabledTools)
+		textcall.ApplyToResponse(resp, loopCfg.DisabledTools)
 		logger.Debug("agent loop provider response",
 			"session_id", sessionID,
 			"iteration", i+1,
@@ -758,7 +760,7 @@ type loopRuntimeState struct {
 	forceSearchSynthesis           bool
 	explorationBytes               int
 	handoffUsed                    bool
-	artifactGuard                  *artifactFinalizationGuard
+	artifactGuard                  *artifact.Guard
 	continuedResponse              strings.Builder
 	continuedReasoning             strings.Builder
 }
@@ -902,7 +904,7 @@ func (a *Agent) processDirectResponse(
 		appendContinuation(&loopState.continuedResponse, raw)
 		appendContinuation(&loopState.continuedReasoning, resp.ReasoningContent)
 		finalResponse := strings.TrimSpace(loopState.continuedResponse.String())
-		if msg, blocked := loopState.artifactGuard.blockMessage(finalResponse); blocked {
+		if msg, blocked := loopState.artifactGuard.BlockMessage(finalResponse); blocked {
 			messages = append(messages, provider.Message{Role: "assistant", Content: raw, ReasoningContent: resp.ReasoningContent})
 			messages = append(messages, provider.Message{Role: "user", Content: msg})
 			return messages, false, ""
@@ -910,7 +912,7 @@ func (a *Agent) processDirectResponse(
 		return messages, true, finalResponse
 	}
 
-	if msg, blocked := loopState.artifactGuard.blockMessage(raw); blocked {
+	if msg, blocked := loopState.artifactGuard.BlockMessage(raw); blocked {
 		messages = append(messages, provider.Message{Role: "assistant", Content: raw, ReasoningContent: resp.ReasoningContent})
 		messages = append(messages, provider.Message{Role: "user", Content: msg})
 		return messages, false, ""
@@ -1068,7 +1070,7 @@ func (a *Agent) processToolCallBatch(
 		}
 		result.ToolCalls = append(result.ToolCalls, tcLog)
 		if loopState.artifactGuard != nil {
-			loopState.artifactGuard.recordToolResult(execResult.ToolCall.Name, execResult.ToolCall.Arguments, execResult.Result)
+			loopState.artifactGuard.RecordToolResult(execResult.ToolCall.Name, execResult.ToolCall.Arguments, execResult.Result)
 		}
 
 		contextToolMsg := observedToolMessage(loopCfg.RunID, execResult, buildContextToolResult(execResult.ToolCall.Name, execResult.Result, &loopState.successfulSearchEvidence, &loopState.detailedSearchEvidence))

@@ -6,13 +6,15 @@ LuckyAgent 当前已经具备三层 multi-agent 能力，但它们还不是同�
 
 1. `internal/tool/delegate.go` 提供模型可见的子代理工具，面向对话内的异步委派。
 2. `internal/collab` 提供 HTTP API 侧的多 Agent 协作运行时，支持注册 Agent、任务拆分、pipeline、parallel、debate 和 planner trace。
-3. `cmd/la-multiagent-bench` 提供离线 benchmark，用于验证拆分策略、协作模式、风险、校准和数学规划器。
+3. `luckyagent-app/cmd/la-multiagent-bench` 提供离线 benchmark，用于验证拆分策略、协作模式、风险、校准和数学规划器。这个命令不在本仓库。
 
 当前最成熟、最可直接使用的是 `delegate_task` 工具链。`internal/collab` 的规划器已经有 Dijkstra、Markov、MDP Q-learning 和 verifier 钩子，但运行时接入仍偏轻量，主要通过 `/api/v1/agents/*` 暴露，尚未和模型可见的 `delegate_task`、autonomy worker、session trace 完全打通。
 
 ## 代码入口
 
 ### 模型可见委派工具
+
+> 本节路径写于拆仓前。委派引擎现位于 `luckyagent-orchestrator`，工具合同在 `luckyagent-tools`，Agent 注入在 `agent/agent.go`。
 
 相关文件：
 

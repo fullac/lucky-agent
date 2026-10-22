@@ -1,33 +1,18 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
-	"runtime"
-	"sort"
 	"strings"
-	"sync"
-	"time"
 
+	pluginpkg "github.com/yurika0211/lucky-agent/agent/plugin"
 	plugins "github.com/yurika0211/luckyagent-plugins"
 	"github.com/yurika0211/luckyagent-runtime/sandbox"
 	"github.com/yurika0211/luckyagent-runtime/tool"
 	"github.com/yurika0211/luckyagent-tools/execpolicy"
 )
-
-const (
-	pluginScriptTimeout     = 60 * time.Second
-	pluginScriptOutputLimit = 64 << 10
-	pluginScriptWaitDelay   = 250 * time.Millisecond
-)
-
-var pluginArgumentName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 
 // pluginSkillHandler never invokes the legacy SkillExecutor: that entry point
 // starts unbounded processes without a request context or sandbox metadata.
@@ -35,7 +20,7 @@ func (a *Agent) pluginSkillHandler(skill *tool.SkillInfo, definition tool.SkillT
 	if skill == nil {
 		return nil, fmt.Errorf("plugin skill is nil")
 	}
-	script, err := selectPluginScript(skill.Dir, definition)
+	script, err := pluginpkg.SelectScript(skill.Dir, definition)
 	if err != nil {
 		return nil, fmt.Errorf("plugin skill %s: %w", skill.Name, err)
 	}
@@ -72,20 +57,20 @@ func (a *Agent) pluginSkillHandler(skill *tool.SkillInfo, definition tool.SkillT
 		if script == "" {
 			return tool.ToolCallResult{Output: "[Skill: " + skill.Name + "]\n" + plugins.PromptBody(skill.Summary)}, nil
 		}
-		timeout := pluginScriptTimeout
+		timeout := pluginpkg.ScriptTimeout
 		if policy, ok := pluginPolicyFromContext(ctx); ok && policy.Config.Timeout > 0 && policy.Config.Timeout < timeout {
 			timeout = policy.Config.Timeout
 		}
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		argv, err := pluginScriptCommand(script, commandTokens)
+		argv, err := pluginpkg.Command(script, commandTokens)
 		if err != nil {
 			return tool.ToolCallResult{}, err
 		}
 		if raw, ok := args["args"].(string); ok {
 			argv = append(argv, strings.Fields(raw)...)
 		}
-		env, err := pluginScriptEnvironment(args)
+		env, err := pluginpkg.Environment(args)
 		if err != nil {
 			return tool.ToolCallResult{}, err
 		}
@@ -93,13 +78,13 @@ func (a *Agent) pluginSkillHandler(skill *tool.SkillInfo, definition tool.SkillT
 		command.Dir = skill.Dir
 		command.Env = env
 		command.Stdin = nil
-		command.WaitDelay = pluginScriptWaitDelay
-		cleanup, err := preparePluginScriptProcess(command)
+		command.WaitDelay = pluginpkg.ScriptWaitDelay
+		cleanup, err := pluginpkg.PrepareProcess(command)
 		if err != nil {
 			return tool.ToolCallResult{}, err
 		}
 		defer cleanup()
-		output := &pluginBoundedOutput{limit: pluginScriptOutputLimit}
+		output := &pluginpkg.BoundedOutput{Limit: pluginpkg.ScriptOutputLimit}
 		command.Stdout, command.Stderr = output, output
 		err = command.Run()
 		result := tool.ToolCallResult{Output: output.String()}
@@ -111,162 +96,4 @@ func (a *Agent) pluginSkillHandler(skill *tool.SkillInfo, definition tool.SkillT
 		}
 		return result, nil
 	}, nil
-}
-
-func selectPluginScript(skillDir string, definition tool.SkillToolDef) (string, error) {
-	if definition.Handler != nil {
-		return "", fmt.Errorf("injected plugin skill handlers are unsupported")
-	}
-	root, err := filepath.Abs(skillDir)
-	if err != nil {
-		return "", err
-	}
-	scriptsDir := filepath.Join(root, "scripts")
-	info, err := os.Lstat(scriptsDir)
-	if os.IsNotExist(err) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return "", fmt.Errorf("skill scripts must be a regular directory")
-	}
-	entries, err := os.ReadDir(scriptsDir)
-	if err != nil {
-		return "", err
-	}
-	var scripts []string
-	for _, entry := range entries {
-		if entry.Type()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("plugin script %q is a symlink", entry.Name())
-		}
-		if entry.IsDir() {
-			continue
-		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if ext != ".sh" && ext != ".py" && ext != ".js" {
-			continue
-		}
-		if !entry.Type().IsRegular() {
-			return "", fmt.Errorf("plugin script %q is not a regular file", entry.Name())
-		}
-		scripts = append(scripts, filepath.Join(scriptsDir, entry.Name()))
-	}
-	// Command contains already parsed CLI subcommand tokens. A single CLI
-	// script receives those tokens directly, never through a shell string.
-	if len(definition.Command) > 0 && len(scripts) == 1 {
-		return scripts[0], nil
-	}
-	if definition.Name == "" || strings.ContainsAny(definition.Name, "/\\") || definition.Name == ".." {
-		return "", fmt.Errorf("invalid plugin skill tool name %q", definition.Name)
-	}
-	for _, ext := range []string{".sh", ".py", ".js"} {
-		candidate := filepath.Join(scriptsDir, definition.Name+ext)
-		for _, script := range scripts {
-			if script == candidate {
-				return script, nil
-			}
-		}
-	}
-	if len(scripts) == 1 {
-		return scripts[0], nil
-	}
-	if len(definition.Command) > 0 {
-		return "", fmt.Errorf("CLI subcommands require an unambiguous plugin script")
-	}
-	return "", nil
-}
-
-func pluginScriptCommand(script string, arguments []string) ([]string, error) {
-	if runtime.GOOS == "windows" {
-		return nil, fmt.Errorf("plugin script execution is not supported on Windows until process-tree cancellation is implemented")
-	}
-	var binary string
-	switch strings.ToLower(filepath.Ext(script)) {
-	case ".sh":
-		binary = "sh"
-	case ".py":
-		binary = "python3"
-	case ".js":
-		binary = "node"
-	default:
-		return nil, fmt.Errorf("unsupported plugin script type")
-	}
-	return append([]string{binary, script}, arguments...), nil
-}
-
-func pluginScriptEnvironment(args map[string]any) ([]string, error) {
-	values := map[string]string{}
-	for _, entry := range os.Environ() {
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			values[key] = value
-		}
-	}
-	for key, value := range args {
-		// Host-only injection keys must not become plugin arguments.
-		if strings.HasPrefix(key, "_") {
-			continue
-		}
-		if !pluginArgumentName.MatchString(key) {
-			return nil, fmt.Errorf("invalid plugin argument name %q", key)
-		}
-		var encoded string
-		if text, ok := value.(string); ok {
-			encoded = text
-		} else {
-			data, err := json.Marshal(value)
-			if err != nil {
-				return nil, fmt.Errorf("plugin argument %s: %w", key, err)
-			}
-			encoded = string(data)
-		}
-		if strings.ContainsRune(encoded, 0) {
-			return nil, fmt.Errorf("plugin argument %s contains NUL", key)
-		}
-		values["SKILL_ARG_"+strings.ToUpper(key)] = encoded
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	env := make([]string, 0, len(values))
-	for _, key := range keys {
-		env = append(env, key+"="+values[key])
-	}
-	return env, nil
-}
-
-type pluginBoundedOutput struct {
-	mu        sync.Mutex
-	buffer    bytes.Buffer
-	limit     int
-	truncated bool
-}
-
-func (output *pluginBoundedOutput) Write(data []byte) (int, error) {
-	output.mu.Lock()
-	defer output.mu.Unlock()
-	n := len(data)
-	remaining := output.limit - output.buffer.Len()
-	if remaining < 0 {
-		remaining = 0
-	}
-	if len(data) > remaining {
-		data = data[:remaining]
-		output.truncated = true
-	}
-	_, _ = output.buffer.Write(data)
-	return n, nil
-}
-
-func (output *pluginBoundedOutput) String() string {
-	output.mu.Lock()
-	defer output.mu.Unlock()
-	text := output.buffer.String()
-	if output.truncated {
-		text += "\n[Plugin output truncated at 65536 bytes]"
-	}
-	return text
 }

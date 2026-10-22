@@ -16,7 +16,7 @@ LuckyAgent 是一个面向长期运行的 Agent runtime。它把 CLI、HTTP API�
    - RAG 知识库
    - 多平台消息网关
    - Cron、Autonomy 和工具系统
-   - 多 Agent / benchmark 能力
+   - 多 Agent；评测命令在 luckyagent-app
 
 3. [[使用场景]]
    - 本地 Agent 开发调试
@@ -36,8 +36,10 @@ LuckyAgent 是一个面向长期运行的 Agent runtime。它把 CLI、HTTP API�
 ```bash
 go run ./cmd/la init
 go run ./cmd/la config set provider openai
-go run ./cmd/la config set api_key sk-your-api-key
+go run ./cmd/la config set api_base https://api.openai.com/v1
 go run ./cmd/la config set model gpt-5.4-mini
+go run ./cmd/la credential add openai-main --kind llm_api_key
+go run ./cmd/la config set models.endpoints.chat.credential_ref openai-main
 go run ./cmd/la chat
 ```
 
