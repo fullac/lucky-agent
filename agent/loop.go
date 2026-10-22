@@ -748,6 +748,7 @@ type loopRuntimeState struct {
 	provider                       providerSnapshot
 	toolCallRepeatCount            map[string]int
 	toolCallLastResult             map[string]string
+	failureRepeatCount             map[string]int
 	toolURLRepeatCount             map[string]int
 	toolURLLastResult              map[string]string
 	toolExecutionGuard             *toolExecutionGuard
@@ -988,16 +989,25 @@ func (a *Agent) processToolCallBatch(
 
 	repeatedSigs := make([]string, 0, len(resp.ToolCalls))
 	allRepeated := true
+	failureStopped := false
 	for _, tc := range resp.ToolCalls {
 		sig := toolCallSignature(tc.Name, tc.Arguments)
 		repeatedSigs = append(repeatedSigs, sig)
+		if loopState.failureRepeated(tc.Name, tc.Arguments) {
+			failureStopped = true
+			continue
+		}
 		loopState.toolCallRepeatCount[sig]++
 		if key := normalizedToolTarget(tc.Name, tc.Arguments); key != "" {
 			loopState.toolURLRepeatCount[key]++
 		}
-		if loopState.toolCallRepeatCount[sig] < loopCfg.RepeatToolCallLimit {
-			allRepeated = false
+		if loopState.toolCallRepeatCount[sig] >= loopCfg.RepeatToolCallLimit {
+			continue
 		}
+		allRepeated = false
+	}
+	if failureStopped && (strings.TrimSpace(resp.Content) == "" || loopState.consecutiveToolOnlyIters >= loopCfg.ToolOnlyIterationLimit) {
+		return messages, true, formatRepeatedToolStop(repeatedSigs, loopState.toolCallLastResult)
 	}
 	if allRepeated && (strings.TrimSpace(resp.Content) == "" || loopState.consecutiveToolOnlyIters >= loopCfg.ToolOnlyIterationLimit) {
 		if !loopState.forceSearchSynthesis && loopState.successfulSearchEvidence > 0 {
@@ -1008,22 +1018,7 @@ func (a *Agent) processToolCallBatch(
 			})
 			return messages, false, ""
 		}
-		var b strings.Builder
-		b.WriteString("Detected repeated tool-call loop and stopped early to avoid timeout.\n")
-		b.WriteString("Latest tool outputs:\n")
-		for _, sig := range repeatedSigs {
-			parts := strings.SplitN(sig, "|", 2)
-			name := parts[0]
-			out := strings.TrimSpace(loopState.toolCallLastResult[sig])
-			if out == "" {
-				out = "(no cached output)"
-			}
-			if len(out) > 240 {
-				out = out[:240] + "...(truncated)"
-			}
-			b.WriteString(fmt.Sprintf("- %s: %s\n", name, out))
-		}
-		return messages, true, strings.TrimSpace(b.String())
+		return messages, true, formatRepeatedToolStop(repeatedSigs, loopState.toolCallLastResult)
 	}
 
 	messages = append(messages, provider.Message{
@@ -1085,6 +1080,7 @@ func (a *Agent) processToolCallBatch(
 		if key := normalizedToolTarget(tcLog.Name, tcLog.Arguments); key != "" {
 			loopState.toolURLLastResult[key] = tcLog.Result
 		}
+		loopState.noteFailureRepeat(tcLog.Name, tcLog.Result)
 		messages = append(messages, contextToolMsg)
 		loopState.noteExplorationResult(execResult.ToolCall.Name, len(execResult.Result))
 		if sess != nil {
