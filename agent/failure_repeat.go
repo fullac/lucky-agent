@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -49,8 +50,7 @@ func failureRepeatTarget(text string) string {
 	}
 	fields := strings.Fields(text)
 	for i := len(fields) - 1; i >= 0; i-- {
-		field := strings.Trim(fields[i], "`,;:()[]'\"")
-		if path := cleanFailurePath(field); path != "" && looksLikeFailurePath(path) {
+		if path := pathFromToken(fields[i]); path != "" {
 			return path
 		}
 	}
@@ -92,6 +92,27 @@ func firstLine(text string) string {
 		return text[:idx]
 	}
 	return text
+}
+
+func formatRepeatedToolStop(sigs []string, last map[string]string) string {
+	var b strings.Builder
+	b.WriteString("Detected repeated tool-call loop and stopped early to avoid timeout.\n")
+	b.WriteString("Latest tool outputs:\n")
+	for _, sig := range sigs {
+		parts := strings.SplitN(sig, "|", 2)
+		name := parts[0]
+		out := "(no cached output)"
+		if last != nil {
+			if v := strings.TrimSpace(last[sig]); v != "" {
+				out = v
+			}
+		}
+		if len(out) > 240 {
+			out = out[:240] + "...(truncated)"
+		}
+		b.WriteString(fmt.Sprintf("- %s: %s\n", name, out))
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func (s *streamConvergenceState) failureRepeated(name, arguments string) bool {
@@ -161,5 +182,66 @@ func toolCallPathArg(arguments string) string {
 		}
 	}
 	command, _ := args["command"].(string)
-	return failureRepeatTarget(command)
+	command = strings.ReplaceAll(command, `\'`, `'`)
+	command = strings.ReplaceAll(command, `\"`, `"`)
+	direct := failureRepeatTarget(command)
+	nested := failurePathInText(command)
+	if len(nested) > len(direct) {
+		return nested
+	}
+	return direct
+}
+
+func failurePathInText(text string) string {
+	var best string
+	consider := func(candidate string) {
+		path := pathFromToken(candidate)
+		if len(path) > len(best) {
+			best = path
+		}
+	}
+	for i := 0; i < len(text); i++ {
+		if text[i] != '\'' && text[i] != '"' && text[i] != '`' {
+			continue
+		}
+		quote := text[i]
+		end := i + 1
+		for end < len(text) && text[end] != quote {
+			end++
+		}
+		if end >= len(text) {
+			continue
+		}
+		consider(text[i+1 : end])
+		i = end
+	}
+	if best != "" {
+		return best
+	}
+	return pathFromToken(text)
+}
+
+func pathFromToken(token string) string {
+	token = strings.Trim(token, "`,;:()[]'\"")
+	start := strings.Index(token, "~/")
+	slash := strings.Index(token, "/")
+	if start < 0 || (slash >= 0 && slash < start) {
+		start = slash
+	}
+	if start < 0 {
+		if looksLikeFailurePath(token) && !strings.ContainsAny(token, "()") {
+			return cleanFailurePath(token)
+		}
+		return ""
+	}
+	rest := token[start:]
+	end := 0
+	for end < len(rest) && !strings.ContainsRune(" \t'\"`),;:()[]", rune(rest[end])) {
+		end++
+	}
+	path := cleanFailurePath(rest[:end])
+	if path == "" || !strings.Contains(path, "/") {
+		return ""
+	}
+	return path
 }

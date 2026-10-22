@@ -338,6 +338,7 @@ func (s *streamConvergenceState) trackToolCallPattern(toolCalls []provider.ToolC
 
 	repeatedSigs := make([]string, 0, len(toolCalls))
 	allRepeated := true
+	failureStopped := false
 	for _, tc := range toolCalls {
 		sig := s.toolCallSig(tc.Name, tc.Arguments)
 		repeatedSigs = append(repeatedSigs, sig)
@@ -347,6 +348,10 @@ func (s *streamConvergenceState) trackToolCallPattern(toolCalls []provider.ToolC
 			allRepeated = false
 			continue
 		}
+		if s.failureRepeated(tc.Name, tc.Arguments) {
+			failureStopped = true
+			continue
+		}
 		s.toolCallRepeatCount[sig]++
 		if key := normalizedToolTarget(tc.Name, tc.Arguments); key != "" {
 			if s.toolURLRepeatCount == nil {
@@ -354,10 +359,13 @@ func (s *streamConvergenceState) trackToolCallPattern(toolCalls []provider.ToolC
 			}
 			s.toolURLRepeatCount[key]++
 		}
-		if s.failureRepeated(tc.Name, tc.Arguments) || s.toolCallRepeatCount[sig] >= s.repeatToolCallLimit {
+		if s.toolCallRepeatCount[sig] >= s.repeatToolCallLimit {
 			continue
 		}
 		allRepeated = false
+	}
+	if failureStopped && (trimmed == "" || s.consecutiveToolOnlyIters >= s.toolOnlyIterationLimit) {
+		return true, repeatedSigs
 	}
 
 	if allRepeated && (trimmed == "" || s.consecutiveToolOnlyIters >= s.toolOnlyIterationLimit) {
