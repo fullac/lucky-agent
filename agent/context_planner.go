@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/yurika0211/lucky-agent/agent/artifact"
 	"github.com/yurika0211/luckyagent-runtime/config"
 	"github.com/yurika0211/luckyagent-runtime/contextx"
 	"github.com/yurika0211/luckyagent-runtime/logger"
@@ -1230,7 +1231,7 @@ func (p *contextPlanner) compactBoundaryContext(messages []provider.Message) ([]
 	}
 	out := make([]provider.Message, 0, len(segments))
 	for _, meta := range segments {
-		summary := strings.TrimSpace(sanitizeHistoricalMediaReferences(meta.Summary))
+		summary := strings.TrimSpace(artifact.SanitizeHistory(meta.Summary))
 		if summary == "" {
 			continue
 		}
@@ -1558,7 +1559,7 @@ compactHistoryMessage 对历史消息做必要的压缩与清洗。
 func (p *contextPlanner) compactHistoryMessage(msg provider.Message) provider.Message {
 	// Temporary computer screenshots must never be replayed as current delivery
 	// instructions. Drop stale MEDIA paths while preserving valid artifact refs.
-	msg.Content = sanitizeHistoricalMediaReferences(msg.Content)
+	msg.Content = artifact.SanitizeHistory(msg.Content)
 	if len(msg.ContentParts) > 0 {
 		msg.ContentParts = nil
 	}

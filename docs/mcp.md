@@ -1,6 +1,6 @@
 # MCP 服务连接
 
-LuckyAgent 的 MCP 客户端位于 `internal/mcpclient`，独立管理连接、工具目录和调用；`internal/tool/builtin_mcp.go` 负责把目录接到工具注册表。CLI、HTTP、消息网关通过同一个 `Admin` 接口管理连接。其他后端可以直接使用 `Manager.Tools()` 和 `Caller.CallTool()`，无需初始化 Agent 或工具注册表。
+LuckyAgent 的 MCP 客户端位于 `luckyagent-runtime/mcpclient`，独立管理连接、工具目录和调用；`luckyagent-tools` 的 MCP 内置工具负责把目录接到工具注册表。CLI、HTTP、消息网关通过同一个 `Admin` 接口管理连接。其他后端可以直接使用 `Manager.Tools()` 和 `Caller.CallTool()`，无需初始化 Agent 或工具注册表。
 
 协议实现使用官方 Go SDK。支持 stdio 与 Streamable HTTP，以及 SDK 的协议版本协商；不提供旧版独立 HTTP+SSE 传输、OAuth 登录流程、resources/prompts 入口或跨用户连接共享。本阶段一个 Manager 对应一个运行时身份；不同用户或租户应使用独立 Manager 和凭据解析器。
 

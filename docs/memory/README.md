@@ -23,8 +23,8 @@ RAG 与 memory 是两套系统。RAG 保存和检索 indexed documents；durable
 - `internal/memoryaestus/convert.go`：证据、时态、策略及定位信息的类型转换。
 - `internal/memoryaestus/tidal.go`：可选 Tidal 资源和反馈 hooks。
 - Aestus memory 及子包：实际引擎、Markdown 格式、图索引、缓冲和摘要算法。
-- `internal/agent/context_planner.go`：把 memory 注入模型上下文。
-- `internal/agent/memory_gate.go`：从记忆推导必须执行的工具检查。
+- `agent/context_planner.go`：把 memory 注入模型上下文。
+- `agent/memory_gate.go`：从记忆推导必须执行的工具检查。
 - `internal/tool/memory_service.go`、`builtin_memory.go`：`remember`、`recall`、`memory_hygiene` 工具。
 - `internal/server/server.go`：`/api/v1/memory*` HTTP API。
 

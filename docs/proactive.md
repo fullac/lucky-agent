@@ -154,6 +154,8 @@ history.db          ← 时间序列存储 (SQLite + 按天分区)
 
 Phase 1 已落地为 Go 原生、可插拔、默认安全的 dry-run TSE：
 
+> 下表路径是拆仓前的取证位置。proactive 实现现位于 `luckyagent-runtime/proactive`，Agent 侧事件在 `agent/proactive_events.go`，配置在 `luckyagent-runtime/config`，CLI 在 `luckyagent-app`。
+
 | 模块 | 当前实现 | 文件 |
 |---|---|---|
 | Gravitational Field Sampler | 采样 `time_of_day`、`day_of_week`、`workspace_context`、最近 runtime activity，暂不做侵入式活动窗口监听 | `internal/proactive/sampler.go` |
@@ -167,7 +169,7 @@ Phase 1 已落地为 Go 原生、可插拔、默认安全的 dry-run TSE：
 | Runtime Service | `proactive.enabled=true` 时 agent 启动后台 proactive loop，按 `action_interval_seconds` 运行 sample → estimate → gate → executor → persist | `internal/proactive/service.go`, `internal/agent/agent.go` |
 | Runtime config | `proactive.enabled`、`proactive.dry_run`、`proactive.confidence_threshold`、`proactive.horizon_seconds`、`proactive.store_path`、`proactive.action_interval_seconds`、`proactive.max_actions`、`proactive.action_cooldown_seconds`、`proactive.allowed_actions`、`proactive.kernel_learning_enabled`、`proactive.kernel_learning_rate`、`proactive.kernel_min_samples` | `internal/config/config.go` |
 | Observability | `la proactive status`、`la proactive sample`、`la proactive dry-run`、`la proactive act`、`la proactive feedback <actual-state>`、`la proactive events`、`la proactive executions`、`la proactive kernels`、`GET /api/v1/proactive/status` | `internal/cli/lhcmd`, `internal/server/server.go` |
-| Benchmark | 合成信号回放 benchmark，覆盖 estimate / gate / executor，可选 SQLite 持久化 | `cmd/la-proactive-bench` |
+| Benchmark | 合成信号回放 benchmark，覆盖 estimate / gate / executor，可选 SQLite 持久化 | `luckyagent-app/cmd/la-proactive-bench` |
 
 默认配置：
 
@@ -216,5 +218,6 @@ la proactive feedback coding
 la proactive events --limit 20
 la proactive executions --limit 20
 la proactive kernels --limit 20
+# 在 luckyagent-app 模块目录运行
 go run ./cmd/la-proactive-bench --events 10000 --rounds 3
 ```

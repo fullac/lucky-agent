@@ -39,13 +39,18 @@ LuckyAgent 主仓库维护公开的 Agent 核心库，并保留构建完整 `lh`
 
 ## Embed SDK（进程内）
 
-把 LuckyAgent 当作 Go library 嵌入宿主进程，无需先起 `lh serve`：
+把 LuckyAgent 当作 Go library 嵌入宿主进程，无需先起 `lh serve`。SDK 在 `luckyagent-app`，导入 `github.com/yurika0211/luckyagent-app/sdk`。
 
-```bash
-go run ./examples/embed_minimal
+```go
+agent, err := sdk.New(sdk.Config{
+    HomeDir:  "/var/lib/myapp/luckyagent",
+    Provider: "openai",
+    Model:    "gpt-5.4-mini",
+    APIKey:   os.Getenv("OPENAI_API_KEY"),
+})
 ```
 
-详情见 [`sdk/README.md`](sdk/README.md)。稳定面（v0）：`New` / `Chat*`（含多模态 Input） / Sessions（含 Compact） / Memory / RAG / Tools / Models / Skills。
+说明见 [luckyagent-app/sdk/README.md](https://github.com/yurika0211/luckyagent-app/blob/main/sdk/README.md)。稳定面（v0）：`New` / `Chat*`（含多模态 Input） / Sessions（含 Compact） / Memory / RAG / Tools / Models / Skills。Agent 循环本身是 `github.com/yurika0211/lucky-agent/agent`，完整应用组装走 SDK。
 
 ## 核心能力
 
@@ -57,7 +62,7 @@ go run ./examples/embed_minimal
 - **独立插件**：安装和管理包含 Skills、命令、Agent 预设、MCP 与工具 Hooks 的插件包，支持显式 marketplace。见[插件接入说明](docs/plugin-module.md)。
 - **多平台入口**：支持 Telegram、QQ Official、NapCat、飞书、微信和 OpenClaw Weixin。
 - **外部客户端**：会话、工具轨迹、Memory Graph、技能、插件管理和网关通过 HTTP API 提供。安卓“资源与连接 → 插件”支持查看、安装、更新、启停及卸载，变更重启服务后生效。手机工作区在独立仓库 `luckyagent-android`。
-- **多 Agent 能力**：提供协作、委派和实验/benchmark 相关运行能力。
+- **多 Agent 能力**：提供协作和委派。评测命令在 `luckyagent-app` 的 `cmd/la-*-bench`。
 - **长任务上下文**：有界历史投影、完整工具轮次裁剪、当前会话证据读回和执行账本。见[行为与限制](docs/long-task-context.md)。
 - **Agent 执行保障**：完整请求预算、早期失败账本、逐项验收证据和发布依赖一致性检查。见[核心加固说明](docs/agent-hardening.md)。
 
@@ -198,7 +203,7 @@ lh rag search "deployment"
 - [记忆系统](docs/memory_system.md)
 - [Graph RAG 快速开始](docs/GRAPH_RAG_QUICKSTART.md)
 - [多 Agent 协作](docs/multi-agent/collaboration.md)
-- [Benchmark：Hybrid 检索](docs/benchmarks/rag-hybrid-retrieval/REPORT.md)：精确标识符 Recall@1 `0.000 → 1.000`，语义召回无回退，含延迟代价与复现步骤
+- [Benchmark：Hybrid 检索](docs/benchmarks/rag-hybrid-retrieval/REPORT.md)：历史结果，精确标识符 Recall@1 `0.000 → 1.000`。复现命令 `cmd/la-rag-bench` 现在位于 `luckyagent-app`。
 
 ## Prompt 和运行数据
 
@@ -246,6 +251,8 @@ luckyagent-gateway       平台协议与连接（外部模块）
 config.example.json      产品配置模板
 docs/                    使用文档与模块边界
 ```
+
+`tools.filesystem.allowed_read_roots` 只放行 `file_read`、`file_list`、`document_read`。写入、补丁和删除仍限制在 `~/.luckyagent/` 与 `/tmp/`。示例里的 `~/workspace`、`~/Obsidian` 需要换成真实目录；不要加入 `~/.ssh`、`~/.aws`、`~/.gnupg`。改完后重启 `lh serve`。
 
 ## 开发
 

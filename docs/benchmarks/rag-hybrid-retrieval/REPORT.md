@@ -60,6 +60,8 @@ Embedding 请求通常会显著稀释该倍率。
 
 ## 复现
 
+评测命令已迁到 `github.com/yurika0211/luckyagent-app`。在该模块目录运行，不再使用本仓库的 `./cmd/la-rag-bench`。
+
 ```powershell
 go run ./cmd/la-rag-bench `
   --rounds 30 `
@@ -77,5 +79,5 @@ go run ./cmd/la-rag-bench `
 - JSONL：901 行
 - SHA-256：`5BA6FD4E503D61311B8A94462E5A99F03A06C7E0DDC5A203BD25D26EE37E999C`
 
-原始逐查询记录和最终 summary 位于 `results.jsonl`，benchmark 实现位于
-`cmd/la-rag-bench`。
+原始逐查询记录和最终 summary 位于 `results.jsonl`。benchmark 实现位于
+`luckyagent-app/cmd/la-rag-bench`。

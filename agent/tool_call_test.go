@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/yurika0211/lucky-agent/agent/textcall"
 	"github.com/yurika0211/luckyagent-runtime/provider"
 )
 
@@ -52,7 +53,7 @@ func TestExtractTextToolCallsDSML(t *testing.T) {
 </｜｜DSML｜｜invoke>
 </｜｜DSML｜｜tool_calls>`
 
-	cleaned, calls := extractTextToolCalls(content)
+	cleaned, calls := textcall.Extract(content)
 	if cleaned != "" {
 		t.Fatalf("expected DSML block to be removed, got %q", cleaned)
 	}
@@ -82,7 +83,7 @@ func TestApplyTextToolCallsFiltersDisabledTools(t *testing.T) {
 </｜｜DSML｜｜invoke>
 </｜｜DSML｜｜tool_calls>`}
 
-	if !applyTextToolCallsToResponse(resp, []string{"autonomy"}) {
+	if !textcall.ApplyToResponse(resp, []string{"autonomy"}) {
 		t.Fatal("expected text tool call protocol to be detected")
 	}
 	if resp.Content != "" {

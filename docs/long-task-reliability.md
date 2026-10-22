@@ -59,10 +59,10 @@
 实现后的验证命令：
 
 ```bash
-go test ./internal/autonomy ./internal/agent ./internal/config ./internal/tool ./internal/session ./internal/server -count=1
-go test ./internal/cli/lhcmd ./internal/gateway/telegram ./internal/gateway/qqofficial ./internal/gateway/napcat ./internal/gateway/feishu -count=1
-go test -race ./internal/autonomy ./internal/agent ./internal/server ./internal/session ./internal/config -run 'Test(Foreground|Recovery|Durable|ProgressingTool|LongChat|AutonomyRecovery)' -count=1
-go test ./internal/tool ./internal/agent -run 'Test(Autonomy|ToolExecutionGuard|Durable|ProgressingTool)' -count=1
+# 2026-10-20 对应的模块命令。上面的 internal/* 是拆仓前记录。
+(cd agent && GOWORK=off go test -mod=readonly -count=1 ./...)
+# autonomy、config、session 在 luckyagent-runtime；工具在 luckyagent-tools
+# CLI 与 HTTP handler 在 luckyagent-app；平台连接在 luckyagent-gateway
 go build -o /tmp/luckyagent-foreground-check ./cmd/la
 ```
 

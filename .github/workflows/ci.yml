@@ -60,6 +60,8 @@ jobs:
           go vet ./...
       - name: Run tests
         run: go test ./... -race -count=1 -timeout 10m
+      - name: Launcher end-to-end
+        run: go test -tags e2e -count=1 -timeout 8m ./e2e
       - name: Build
         run: |
           test "$(go list -f '{{.Dir}}' github.com/yurika0211/lucky-agent/agent)" = "$PWD/agent"

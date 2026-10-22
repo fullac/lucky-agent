@@ -73,9 +73,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/yurika0211/luckyagent/internal/embedder"
-	"github.com/yurika0211/luckyagent/internal/provider"
-	"github.com/yurika0211/luckyagent/internal/rag"
+	"github.com/yurika0211/luckyagent-runtime/embedder"
+	"github.com/yurika0211/luckyagent-runtime/provider"
+	"github.com/yurika0211/luckyagent-runtime/rag"
 )
 
 // RealLLMProvider 使用你实际的 LLM Provider

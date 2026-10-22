@@ -24,10 +24,10 @@ shared without making channel handlers depend on CLI packages.
 
 | Host package | Ownership |
 | --- | --- |
-| `internal/gateway/*` | Compatibility aliases for existing imports |
+| `luckyagent-gateway` | Platform connections; the old `internal/gateway/*` aliases are gone |
 | `luckyagent-app/server` | Compatibility aliases for API application construction |
 | `luckyagent-app/websocket` | Compatibility aliases for wire types and the host handler |
-| `internal/turn` | Neutral contract aliases; durable execution stays application-owned |
+| `luckyagent-runtime/turn` | Neutral turn contract; durable execution stays application-owned |
 | `luckyagent-app/channelapp/telegram`, `qqofficial` | LuckyAgent commands, model/session/config operations and chat presentation policy |
 | `luckyagent-app/channelapp/websocket` | Agent run execution, cancellation and approval integration; run records/replay come from the API module |
 | `luckyagent-app/apiapp` | Agent/domain operations, storage/configuration policy and resource lifecycle assembly; shared resource parsing/rendering lives in `luckyagent-api/resources` |

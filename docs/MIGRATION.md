@@ -32,7 +32,7 @@
 下载并运行迁移脚本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yurika0211/luckyagent/main/scripts/migrate-prompts.sh | bash
+curl -fsSL https://raw.githubusercontent.com/yurika0211/lucky-agent/master/scripts/migrate-prompts.sh | bash
 ```
 
 ### 手动迁移
@@ -167,12 +167,11 @@ la init
 
 ## 📚 更多资源
 
-- [完整文档](https://github.com/yurika0211/luckyagent)
+- [完整文档](https://github.com/yurika0211/lucky-agent)
 - [Prompt 自定义指南](~/.luckyagent/memory/prompts/README.md)
-- [提交问题](https://github.com/yurika0211/luckyagent/issues)
+- [提交问题](https://github.com/yurika0211/lucky-agent/issues)
 
 ## 📅 时间线
 
 - **2026-06-28**: v0.9.0 发布，配置文件统一到 memory/prompts
-- **2026-07-28**: 旧位置将被标记为 deprecated（仍可用）
-- **2026-10-28**: 移除对旧位置的支持
+- **2026-10-20**: `lh init` 仍只在 `memory/prompts/` 写入默认文件。`agent/system_prompt.go` 查找手册时仍会回退到 `description/AGENTS.md` 和 `LUCKYHARNESS_*` 文件名。根目录旧 `SOUL.md` 不会被初始化覆盖，也不是默认 `soul_path`。

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yurika0211/lucky-agent/agent/artifact"
 	"github.com/yurika0211/luckyagent-runtime/provider"
 )
 
@@ -16,7 +17,7 @@ func TestArtifactIntentIgnoresPlatformDeliveryGuidance(t *testing.T) {
 		"你好\n\n[QQ delivery rule]\nInclude MEDIA:/absolute/path/to/file.ext when sending a file.",
 		"你好\n\n[Feishu delivery rule]\nFeishu delivery is text-only in Phase 1. Do not claim a local file was delivered.",
 	} {
-		if hasArtifactIntent(text) {
+		if artifact.HasIntent(text) {
 			t.Fatalf("platform delivery guidance alone must not trigger artifact finalization: %q", text)
 		}
 	}
@@ -25,7 +26,7 @@ func TestArtifactIntentIgnoresPlatformDeliveryGuidance(t *testing.T) {
 func TestProcessDirectResponseBlocksArtifactWithoutWrite(t *testing.T) {
 	a := &Agent{}
 	state := newLoopRuntimeState()
-	state.artifactGuard = newArtifactFinalizationGuard("保存为 md 文档")
+	state.artifactGuard = artifact.NewGuard("保存为 md 文档")
 
 	messages, finalized, finalResponse := a.processDirectResponse(&provider.Response{
 		Content: "已保存到 /tmp/report.md",
@@ -45,8 +46,8 @@ func TestProcessDirectResponseAllowsVerifiedFileWrite(t *testing.T) {
 	}
 	a := &Agent{}
 	state := newLoopRuntimeState()
-	state.artifactGuard = newArtifactFinalizationGuard("保存为 md 文档")
-	state.artifactGuard.recordToolResult("file_write", fmt.Sprintf(`{"path":%q}`, path), fmt.Sprintf("Written 2 bytes to %s (sha256 abc123)", path))
+	state.artifactGuard = artifact.NewGuard("保存为 md 文档")
+	state.artifactGuard.RecordToolResult("file_write", fmt.Sprintf(`{"path":%q}`, path), fmt.Sprintf("Written 2 bytes to %s (sha256 abc123)", path))
 
 	_, finalized, finalResponse := a.processDirectResponse(&provider.Response{
 		Content: "已保存。",
@@ -60,8 +61,8 @@ func TestProcessDirectResponseBlocksMissingMediaPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.md")
 	a := &Agent{}
 	state := newLoopRuntimeState()
-	state.artifactGuard = newArtifactFinalizationGuard("保存为 md 文档")
-	state.artifactGuard.paths["/tmp/existing.md"] = struct{}{}
+	state.artifactGuard = artifact.NewGuard("保存为 md 文档")
+	state.artifactGuard.Paths["/tmp/existing.md"] = struct{}{}
 
 	messages, finalized, _ := a.processDirectResponse(&provider.Response{
 		Content: "已保存。\nMEDIA:" + path,
@@ -75,7 +76,7 @@ func TestProcessDirectResponseBlocksMissingMediaPath(t *testing.T) {
 }
 
 func TestArtifactGuardDetectsMissingWindowsMediaPath(t *testing.T) {
-	missing := missingMediaPaths(`完成
+	missing := artifact.MissingMediaPaths(`完成
 MEDIA:C:\Users\Administrator\.luckyagent\workspace\interview\missing.docx`)
 	if len(missing) != 1 || missing[0] != `C:\Users\Administrator\.luckyagent\workspace\interview\missing.docx` {
 		t.Fatalf("expected missing Windows media path, got %#v", missing)
@@ -88,14 +89,14 @@ func TestSanitizeHistoricalMediaReferencesPreservesExistingFile(t *testing.T) {
 		t.Fatalf("write media file: %v", err)
 	}
 	text := "已生成文件\nMEDIA:" + path
-	if got := sanitizeHistoricalMediaReferences(text); got != text {
+	if got := artifact.SanitizeHistory(text); got != text {
 		t.Fatalf("existing media path should be preserved, got %q", got)
 	}
 }
 
 func TestArtifactReferencesFindsWorkspacePathInProse(t *testing.T) {
 	text := "本地路径：`~/.luckyagent/workspace/generated-images/nailong-01.jpg`"
-	references := ArtifactReferences(text)
+	references := artifact.ArtifactReferences(text)
 	if len(references) != 1 || references[0] != filepath.Join(mustUserHomeDir(t), ".luckyagent", "workspace", "generated-images", "nailong-01.jpg") {
 		t.Fatalf("artifact references = %#v", references)
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	pluginpkg "github.com/yurika0211/lucky-agent/agent/plugin"
 	plugins "github.com/yurika0211/luckyagent-plugins"
 	"github.com/yurika0211/luckyagent-runtime/config"
 	"github.com/yurika0211/luckyagent-runtime/hook"
@@ -214,7 +215,7 @@ func TestPluginScriptCancellationAndOutputBound(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
 		t.Fatalf("unbounded script: elapsed=%s err=%v", time.Since(start), err)
 	}
-	buffer := &pluginBoundedOutput{limit: 64}
+	buffer := &pluginpkg.BoundedOutput{Limit: 64}
 	_, _ = buffer.Write([]byte(strings.Repeat("x", 1000)))
 	if len(buffer.String()) > 150 || !strings.Contains(buffer.String(), "truncated") {
 		t.Fatal("output limit failed")

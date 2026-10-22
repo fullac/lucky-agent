@@ -1,4 +1,4 @@
-package agent
+package textcall
 
 import (
 	"encoding/json"
@@ -16,24 +16,24 @@ var (
 	textToolAttrRe       = regexp.MustCompile(`(?is)\b([a-zA-Z_][a-zA-Z0-9_-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 )
 
-func applyTextToolCallsToResponse(resp *provider.Response, disabledTools []string) bool {
+func ApplyToResponse(resp *provider.Response, disabledTools []string) bool {
 	if resp == nil || strings.TrimSpace(resp.Content) == "" {
 		return false
 	}
-	cleaned, calls := extractTextToolCalls(resp.Content)
+	cleaned, calls := Extract(resp.Content)
 	if len(calls) == 0 {
 		return false
 	}
 
 	resp.Content = cleaned
-	calls = filterProviderToolCalls(calls, disabledTools)
+	calls = FilterDisabled(calls, disabledTools)
 	if len(calls) > 0 {
 		resp.ToolCalls = append(resp.ToolCalls, calls...)
 	}
 	return true
 }
 
-func extractTextToolCalls(content string) (string, []provider.ToolCall) {
+func Extract(content string) (string, []provider.ToolCall) {
 	if !strings.Contains(content, "tool_calls") {
 		return content, nil
 	}
@@ -51,7 +51,7 @@ func extractTextToolCalls(content string) (string, []provider.ToolCall) {
 		if len(match) < 4 || match[2] < 0 || match[3] < 0 {
 			continue
 		}
-		blockCalls := parseTextToolCallBlock(content[match[2]:match[3]])
+		blockCalls := parseBlock(content[match[2]:match[3]])
 		if len(blockCalls) == 0 {
 			continue
 		}
@@ -69,7 +69,7 @@ func extractTextToolCalls(content string) (string, []provider.ToolCall) {
 	return strings.TrimSpace(cleaned.String()), calls
 }
 
-func parseTextToolCallBlock(block string) []provider.ToolCall {
+func parseBlock(block string) []provider.ToolCall {
 	matches := textToolInvokeRe.FindAllStringSubmatchIndex(block, -1)
 	if len(matches) == 0 {
 		return nil
@@ -144,7 +144,7 @@ func parseTextToolParamValue(rawValue string, stringAttr string) any {
 	return rawValue
 }
 
-func filterProviderToolCalls(calls []provider.ToolCall, disabledTools []string) []provider.ToolCall {
+func FilterDisabled(calls []provider.ToolCall, disabledTools []string) []provider.ToolCall {
 	if len(calls) == 0 || len(disabledTools) == 0 {
 		return calls
 	}
@@ -169,7 +169,7 @@ func filterProviderToolCalls(calls []provider.ToolCall, disabledTools []string) 
 	return filtered
 }
 
-func shouldHoldPotentialTextToolCallStream(content string) bool {
+func ShouldHoldStream(content string) bool {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		return false

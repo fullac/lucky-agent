@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	pluginpkg "github.com/yurika0211/lucky-agent/agent/plugin"
 	"github.com/yurika0211/luckyagent-runtime/tool"
 )
 
@@ -59,7 +60,7 @@ func TestPluginScriptWindowsExecutionIsExplicitlyUnsupported(t *testing.T) {
 		t.Skip("Windows-only error contract")
 	}
 	for _, script := range []string{"check.py", "check.js", "check.sh"} {
-		if _, err := pluginScriptCommand(script, nil); err == nil || !strings.Contains(err.Error(), "process-tree cancellation") {
+		if _, err := pluginpkg.Command(script, nil); err == nil || !strings.Contains(err.Error(), "process-tree cancellation") {
 			t.Fatalf("Windows script %s did not fail explicitly: %v", script, err)
 		}
 	}

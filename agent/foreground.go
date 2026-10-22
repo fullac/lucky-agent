@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yurika0211/lucky-agent/agent/textcall"
 	"github.com/yurika0211/luckyagent-runtime/config"
 	"github.com/yurika0211/luckyagent-runtime/provider"
 	"github.com/yurika0211/luckyagent-runtime/session"
@@ -325,7 +326,7 @@ func (a *Agent) foregroundModelCall(ctx context.Context, messages []provider.Mes
 			}
 			content.WriteString(chunk.Content)
 			reasoning.WriteString(chunk.ReasoningContent)
-			if chunk.Content != "" && !shouldHoldPotentialTextToolCallStream(content.String()) {
+			if chunk.Content != "" && !textcall.ShouldHoldStream(content.String()) {
 				emitForeground(cfg, ChatEvent{Type: ChatEventContent, Content: chunk.Content})
 			}
 			if chunk.ReasoningContent != "" {
