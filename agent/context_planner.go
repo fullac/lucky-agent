@@ -1331,27 +1331,6 @@ func formatPostCompactRestore(attachments []session.CompactAttachment) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func (p *contextPlanner) summarizeIntentAwareConversationRange(ctx context.Context, sess *session.Session, messages []provider.Message, header string, tokenBudget int, terms []string) string {
-	filtered := filterIntentAwareHistory(messages, terms)
-	if len(filtered) == 0 {
-		return ""
-	}
-	return p.summarizeConversationRangeWithLLM(ctx, sess, filtered, header, tokenBudget)
-}
-
-func filterIntentAwareHistory(messages []provider.Message, terms []string) []provider.Message {
-	if len(messages) == 0 {
-		return nil
-	}
-	filtered := make([]provider.Message, 0, len(messages))
-	for _, msg := range messages {
-		if historyMessageRelevant(msg, terms) {
-			filtered = append(filtered, msg)
-		}
-	}
-	return filtered
-}
-
 func (p *contextPlanner) selectIntentAwareRecentHistory(messages []provider.Message, terms []string) []provider.Message {
 	if len(messages) <= 2 {
 		return append([]provider.Message(nil), messages...)
@@ -1536,89 +1515,6 @@ func historyExplicitlyIrrelevant(content string) bool {
 		}
 	}
 	return false
-}
-
-func (p *contextPlanner) summarizeConversationRangeWithLLM(ctx context.Context, sess *session.Session, messages []provider.Message, header string, tokenBudget int) string {
-	// Context construction runs before the user-facing model call. Do not make
-	// an extra provider request here: transient upstream failures would charge
-	// tokens, increment the shared circuit breaker, and then still fall back to
-	// a local summary. Manual/auto compact keeps the explicit LLM summary path.
-	return summarizeConversationRange(messages, header, p.est, tokenBudget)
-}
-
-func (p *contextPlanner) tryLLMConversationSummary(ctx context.Context, sess *session.Session, messages []provider.Message, header string, tokenBudget int) string {
-	if p == nil || p.agent == nil || !p.turnProvider.valid() || len(messages) < 8 || tokenBudget <= 0 {
-		return ""
-	}
-	historyTokens := 0
-	for _, msg := range messages {
-		historyTokens += p.est.Estimate(msg.Content) + 4
-	}
-	threshold := 0.0
-	if cfgMgr := p.agent.Config(); cfgMgr != nil {
-		threshold = cfgMgr.Get().Context.CompressionThreshold
-	}
-	if threshold <= 0 {
-		threshold = 0.8
-	}
-	if float64(historyTokens) < float64(tokenBudget)*threshold {
-		return ""
-	}
-
-	var transcript strings.Builder
-	for _, msg := range messages {
-		content := strings.TrimSpace(msg.Content)
-		if content == "" {
-			continue
-		}
-		role := strings.ToUpper(msg.Role)
-		transcript.WriteString(role)
-		if msg.Name != "" {
-			transcript.WriteString("(" + msg.Name + ")")
-		}
-		transcript.WriteString(": ")
-		transcript.WriteString(truncate(content, 240))
-		transcript.WriteString("\n")
-	}
-	if strings.TrimSpace(transcript.String()) == "" {
-		return ""
-	}
-
-	prompt := fmt.Sprintf(
-		"Summarize the following prior conversation for future context compression.\n"+
-			"Return concise plain text under these headings only:\n"+
-			"User topics:\nAssistant progress:\nTool evidence:\nOpen questions:\n"+
-			"Keep the summary factual, preserve decisions, file/module names, errors, and unresolved items.\n"+
-			"Avoid markdown bullets deeper than one level. Do not add commentary outside the summary.\n\nConversation:\n%s",
-		transcript.String(),
-	)
-
-	sumCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	messagesToSummarize := []provider.Message{
-		{Role: "system", Content: "You compress prior conversation into a compact working-memory summary for an autonomous coding assistant."},
-		{Role: "user", Content: prompt},
-	}
-	if err := p.turnProvider.budget.check(messagesToSummarize, provider.CallOptions{}); err != nil {
-		return ""
-	}
-	resp, err := p.turnProvider.provider.Chat(sumCtx, messagesToSummarize)
-	if err != nil || resp == nil {
-		return ""
-	}
-
-	content := strings.TrimSpace(resp.Content)
-	if content == "" {
-		return ""
-	}
-	content = header + "\n" + content
-	content = p.fitTextToBudget(content, tokenBudget)
-	if strings.TrimSpace(content) == "" {
-		return ""
-	}
-
-	p.persistCompressedSummary(ctx, sess, messages, content)
-	return content
 }
 
 func (p *contextPlanner) persistCompressedSummary(ctx context.Context, sess *session.Session, messages []provider.Message, summary string) {
