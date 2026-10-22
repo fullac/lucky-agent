@@ -1558,24 +1558,61 @@ func (a *Agent) fitContextWindow(messages []provider.Message) []provider.Message
 		}
 		return messages
 	}
-	for _, msg := range messages {
-		if len(msg.ContentParts) > 0 {
-			if latestComputerFrame != nil {
-				messages = append(messages, *latestComputerFrame)
-			}
-			return messages
+	// Structured parts are not represented in contextx.Message. Hold those
+	// messages out of Fit, trim the text history, then restore them in place.
+	// A single image must not keep the whole history.
+	held := make(map[int]provider.Message)
+	text := make([]provider.Message, 0, len(messages))
+	for i, msg := range messages {
+		if len(msg.ContentParts) == 0 {
+			text = append(text, msg)
+			continue
+		}
+		held[i] = msg
+	}
+	text = a.projectToolEvidence(text)
+	if len(text) > 0 {
+		fitted, trimResult := a.contextWin.Fit(a.toContextMessages(text))
+		if trimResult.Trimmed {
+			text = a.fromContextMessages(fitted)
 		}
 	}
-	messages = a.projectToolEvidence(messages)
-	contextMessages := a.toContextMessages(messages)
-	fitted, trimResult := a.contextWin.Fit(contextMessages)
-	if trimResult.Trimmed {
-		messages = a.fromContextMessages(fitted)
-	}
+	messages = restoreHeldMessages(text, held, len(messages))
 	if latestComputerFrame != nil {
 		messages = append(messages, *latestComputerFrame)
 	}
 	return messages
+}
+
+func restoreHeldMessages(text []provider.Message, held map[int]provider.Message, originalLen int) []provider.Message {
+	if len(held) == 0 {
+		return text
+	}
+	trimmed := originalLen - len(text) - len(held)
+	if trimmed < 0 {
+		trimmed = 0
+	}
+	out := make([]provider.Message, 0, len(text)+len(held))
+	textIdx := 0
+	for i := 0; i < originalLen; i++ {
+		if msg, ok := held[i]; ok {
+			out = append(out, msg)
+			continue
+		}
+		if i < trimmed {
+			continue
+		}
+		if textIdx >= len(text) {
+			break
+		}
+		out = append(out, text[textIdx])
+		textIdx++
+	}
+	for textIdx < len(text) {
+		out = append(out, text[textIdx])
+		textIdx++
+	}
+	return out
 }
 
 // indexConversationTurn 将最终答案索引进 RAG（异步执行）
