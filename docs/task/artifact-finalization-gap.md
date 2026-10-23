@@ -69,7 +69,7 @@ file_move
 
 `internal/agent/loop.go`
 
-`processDirectResponse` 处理没有 tool call 的模型回复。只要内容非空，且不是 length 截断，当前逻辑会直接认为任务完成：
+`processDirectResponse` 处理没有 tool call 的模型回复。只要内容非空，当前逻辑会直接认为任务完成：
 
 ```go
 return messages, true, raw

@@ -550,21 +550,21 @@ func TestProcessDirectResponsePreservesReasoningForRecoveryMessages(t *testing.T
 	if len(messages) < 1 || messages[0].ReasoningContent != "empty reasoning" {
 		t.Fatalf("expected empty response assistant reasoning to be preserved, got %#v", messages)
 	}
+}
 
-	state = newLoopRuntimeState()
-	messages, finalized, _ = a.processDirectResponse(&provider.Response{
+func TestProcessDirectResponseReturnsLengthLimitedContent(t *testing.T) {
+	a := &Agent{}
+	state := newLoopRuntimeState()
+	messages, finalized, response := a.processDirectResponse(&provider.Response{
 		Content:          "partial",
 		ReasoningContent: "length reasoning",
 		FinishReason:     "length",
 	}, nil, state)
-	if finalized {
-		t.Fatal("expected length recovery to continue")
+	if !finalized || response != "partial" || len(messages) != 0 {
+		t.Fatalf("finalized=%v response=%q messages=%#v", finalized, response, messages)
 	}
-	if len(messages) < 1 || messages[0].ReasoningContent != "length reasoning" {
-		t.Fatalf("expected length response assistant reasoning to be preserved, got %#v", messages)
-	}
-	if got := strings.TrimSpace(state.continuedReasoning.String()); got != "length reasoning" {
-		t.Fatalf("expected continued reasoning to be tracked, got %q", got)
+	if directReasoningContent(&provider.Response{ReasoningContent: "length reasoning"}, state) != "length reasoning" {
+		t.Fatal("reasoning was not returned with the length-limited response")
 	}
 }
 

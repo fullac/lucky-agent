@@ -189,8 +189,7 @@
     "timeout_seconds": 60,
     "max_timeout_seconds": 600,
     "max_tool_calls": 5,
-    "max_concurrent_tool_calls": 3,
-    "max_length_continuations": 8
+    "max_concurrent_tool_calls": 3
   },
   "retry": {
     "enabled": true,

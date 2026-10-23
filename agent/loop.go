@@ -216,10 +216,8 @@ const maxAllowedIterations = 300
 
 const (
 	maxEmptyResponseRetries        = 2
-	defaultMaxLengthContinuations  = 8
 	searchSynthesisThreshold       = 2
 	emptyResponseRecoveryPrompt    = "Your last response was empty. Please provide a direct, complete answer to my previous request. Avoid tool calls unless required."
-	lengthRecoveryPrompt           = "Continue exactly from where you stopped. Do not repeat previous content."
 	searchSynthesisPrompt          = "You now have enough search evidence from previous tool results. Synthesize a direct, source-aware answer now. Do not call any more tools unless a critical factual gap remains unresolved."
 	explorationHandoffBytes        = 12 * 1024
 	explorationHandoffSummaryBytes = 1500
@@ -228,19 +226,7 @@ const (
 	computerActDirectiveMarker     = "[computer-use action required]"
 	computerActDirectiveMessage    = computerActDirectiveMarker + " The latest computer_observe reason requires a desktop action. In the next response, call computer_act with the newest frame_id and the concrete action. Do not call computer_observe again or use terminal to simulate the GUI action."
 	emptyFinalResponseMessage      = "I couldn't produce a complete answer this round. Please retry."
-	lengthTruncatedNotice          = "\n\n[Output may be truncated after multiple continuation attempts.]"
 )
-
-// maxLengthContinuations 返回长回复续写重试次数上限，可通过
-// limits.max_length_continuations 运行时配置；未配置时使用默认值。
-func (a *Agent) maxLengthContinuations() int {
-	if a != nil && a.cfg != nil {
-		if n := a.cfg.Get().Limits.MaxLengthContinuations; n > 0 {
-			return n
-		}
-	}
-	return defaultMaxLengthContinuations
-}
 
 // sanitizeLoopConfig 校验并修正 LoopConfig 的安全边界
 func sanitizeLoopConfig(cfg *LoopConfig) {
@@ -286,16 +272,6 @@ func normalizeToolNameList(names []string) []string {
 		normalized = append(normalized, name)
 	}
 	return normalized
-}
-
-/*
-appendContinuation 将一段续写内容追加到累计回复中。
-*/
-func appendContinuation(dst *strings.Builder, part string) {
-	if strings.TrimSpace(part) == "" {
-		return
-	}
-	dst.WriteString(part)
 }
 
 /*
@@ -694,10 +670,6 @@ func (l *Loop) RunWithProviderSnapshot(ctx context.Context, sess *session.Sessio
 		return result, finalizer.Finalize(finalResponse, directReasoningContent(resp, loopState))
 	}
 
-	if strings.TrimSpace(loopState.continuedResponse.String()) != "" {
-		return result, finalizer.Finalize(strings.TrimSpace(loopState.continuedResponse.String())+lengthTruncatedNotice, strings.TrimSpace(loopState.continuedReasoning.String()))
-	}
-
 	if memoryGate != nil && (memoryGate.shouldBlockFinal() || len(memoryGate.attemptedTools()) > 0) {
 		result.Response = memoryGate.incompleteMessage()
 		result.State = StateDone
@@ -755,15 +727,12 @@ type loopRuntimeState struct {
 	consecutiveToolOnlyIters       int
 	consecutiveComputerObserveOnly int
 	emptyResponseRetries           int
-	lengthRecoveryCount            int
 	successfulSearchEvidence       int
 	detailedSearchEvidence         int
 	forceSearchSynthesis           bool
 	explorationBytes               int
 	handoffUsed                    bool
 	artifactGuard                  *artifact.Guard
-	continuedResponse              strings.Builder
-	continuedReasoning             strings.Builder
 }
 
 /*
@@ -853,9 +822,7 @@ processDirectResponse 处理模型在当前轮次没有返回工具调用时的�
 
 它负责：
 1. 空回复恢复
-2. 长度截断续写恢复
-3. continuation 拼接
-4. 决定是否直接结束本轮
+2. 决定是否直接结束本轮
 
 返回值含义：
 - updatedMessages: 可能附加了恢复提示的消息序列
@@ -877,41 +844,9 @@ func (a *Agent) processDirectResponse(
 			messages = append(messages, provider.Message{Role: "user", Content: emptyResponseRecoveryPrompt})
 			return messages, false, ""
 		}
-		if strings.TrimSpace(loopState.continuedResponse.String()) != "" {
-			return messages, true, strings.TrimSpace(loopState.continuedResponse.String())
-		}
 		return messages, true, emptyFinalResponseMessage
 	}
 	loopState.emptyResponseRetries = 0
-
-	if strings.EqualFold(resp.FinishReason, "length") {
-		appendContinuation(&loopState.continuedResponse, raw)
-		appendContinuation(&loopState.continuedReasoning, resp.ReasoningContent)
-		if loopState.lengthRecoveryCount < a.maxLengthContinuations() {
-			loopState.lengthRecoveryCount++
-			messages = append(messages, provider.Message{Role: "assistant", Content: raw, ReasoningContent: resp.ReasoningContent})
-			messages = append(messages, provider.Message{Role: "user", Content: lengthRecoveryPrompt})
-			return messages, false, ""
-		}
-		partial := strings.TrimSpace(loopState.continuedResponse.String())
-		if partial == "" {
-			partial = clean
-		}
-		return messages, true, partial + lengthTruncatedNotice
-	}
-	loopState.lengthRecoveryCount = 0
-
-	if strings.TrimSpace(loopState.continuedResponse.String()) != "" {
-		appendContinuation(&loopState.continuedResponse, raw)
-		appendContinuation(&loopState.continuedReasoning, resp.ReasoningContent)
-		finalResponse := strings.TrimSpace(loopState.continuedResponse.String())
-		if msg, blocked := loopState.artifactGuard.BlockMessage(finalResponse); blocked {
-			messages = append(messages, provider.Message{Role: "assistant", Content: raw, ReasoningContent: resp.ReasoningContent})
-			messages = append(messages, provider.Message{Role: "user", Content: msg})
-			return messages, false, ""
-		}
-		return messages, true, finalResponse
-	}
 
 	if msg, blocked := loopState.artifactGuard.BlockMessage(raw); blocked {
 		messages = append(messages, provider.Message{Role: "assistant", Content: raw, ReasoningContent: resp.ReasoningContent})
@@ -922,13 +857,10 @@ func (a *Agent) processDirectResponse(
 }
 
 func directReasoningContent(resp *provider.Response, loopState *loopRuntimeState) string {
-	if loopState == nil || strings.TrimSpace(loopState.continuedReasoning.String()) == "" {
-		if resp == nil {
-			return ""
-		}
-		return resp.ReasoningContent
+	if resp == nil {
+		return ""
 	}
-	return strings.TrimSpace(loopState.continuedReasoning.String())
+	return resp.ReasoningContent
 }
 
 /*
@@ -976,7 +908,6 @@ func (a *Agent) processToolCallBatch(
 		"tool_calls", formatToolCallsForLog(resp.ToolCalls),
 	)
 	loopState.emptyResponseRetries = 0
-	loopState.lengthRecoveryCount = 0
 	result.State = StateAct
 	if strings.TrimSpace(resp.Content) == "" {
 		loopState.consecutiveToolOnlyIters++

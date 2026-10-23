@@ -123,9 +123,6 @@ type streamConvergenceState struct {
 	autoApprove                    bool
 	source                         string
 	emptyResponseRetries           int
-	lengthRecoveryCount            int
-	continuedResponse              strings.Builder
-	continuedReasoning             strings.Builder
 	toolCallRepeatCount            map[string]int
 	toolCallLastResult             map[string]string
 	failureRepeatCount             map[string]int
@@ -168,16 +165,6 @@ func (s *streamConvergenceState) addResponseUsage(resp *provider.Response) {
 		s.usage = &provider.TokenUsage{}
 	}
 	s.usage.AddResponse(resp)
-}
-
-/*
-hasContinuation 判断当前是否存在待续写的累计回复内容。
-*/
-func (s *streamConvergenceState) hasContinuation() bool {
-	if s == nil {
-		return false
-	}
-	return strings.TrimSpace(s.continuedResponse.String()) != ""
 }
 
 func (s *streamConvergenceState) hasPendingDelegateTasks() bool {
@@ -676,10 +663,6 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 			a.finalizeStreamWithState(events, sess, turnInput, state.memoryGate.incompleteMessage(), state)
 			return
 		}
-		if state.hasContinuation() {
-			a.finalizeStreamWithState(events, sess, turnInput, strings.TrimSpace(state.continuedResponse.String())+lengthTruncatedNotice, state)
-			return
-		}
 		events <- ChatEvent{Type: ChatEventError, Err: fmt.Errorf("max iterations reached")}
 		return
 	}
@@ -858,7 +841,6 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 	// 如果有累积的 tool_calls，处理它们
 	if len(toolCallsAcc) > 0 || len(textToolCalls) > 0 {
 		state.emptyResponseRetries = 0
-		state.lengthRecoveryCount = 0
 		toolCalls := make([]provider.ToolCall, 0, len(toolCallsAcc)+len(textToolCalls))
 		for _, acc := range toolCallsAcc {
 			if acc.name != "" {
@@ -962,10 +944,6 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 					a.finalizeStreamWithState(events, sess, turnInput, message, state)
 					return
 				}
-				if state.hasContinuation() {
-					a.finalizeStreamWithState(events, sess, turnInput, strings.TrimSpace(state.continuedResponse.String())+lengthTruncatedNotice, state)
-					return
-				}
 				events <- ChatEvent{Type: ChatEventError, Err: fmt.Errorf("max iterations reached")}
 				return
 			}
@@ -1006,46 +984,13 @@ func (a *Agent) streamNativeAttempt(ctx context.Context, events chan<- ChatEvent
 			a.streamSimulated(ctx, events, messages, callOpts, sess, turnInput, nextRound, remaining-1, state)
 			return
 		}
-		if state.hasContinuation() {
-			a.finalizeStreamWithState(events, sess, turnInput, strings.TrimSpace(state.continuedResponse.String()), state)
-		} else {
-			a.finalizeStreamWithState(events, sess, turnInput, emptyFinalResponseMessage, state)
-		}
+		a.finalizeStreamWithState(events, sess, turnInput, emptyFinalResponseMessage, state)
 		return
 	}
 	state.emptyResponseRetries = 0
 
-	// 原生流式可携带 finish_reason，遇到 length 时走续写恢复。
-	if strings.EqualFold(streamFinishReason, "length") {
-		appendContinuation(&state.continuedResponse, response)
-		appendContinuation(&state.continuedReasoning, reasoning.String())
-		if state.lengthRecoveryCount < a.maxLengthContinuations() && remaining > 1 {
-			state.lengthRecoveryCount++
-			messages = append(messages, provider.Message{Role: "assistant", Content: response, ReasoningContent: reasoning.String()})
-			messages = append(messages, provider.Message{Role: "user", Content: lengthRecoveryPrompt})
-			messages = a.fitContextWindow(messages)
-			nextRound := round + 1
-			events <- ChatEvent{Type: ChatEventThinking, Content: fmt.Sprintf("Thinking... (round %d)", nextRound)}
-			a.streamSimulated(ctx, events, messages, callOpts, sess, turnInput, nextRound, remaining-1, state)
-			return
-		}
-		partial := strings.TrimSpace(state.continuedResponse.String())
-		if partial == "" {
-			partial = clean
-		}
-		a.finalizeStreamWithState(events, sess, turnInput, partial+lengthTruncatedNotice, state)
-		return
-	}
-	state.lengthRecoveryCount = 0
-
 	finalResponse := response
 	finalReasoning := reasoning.String()
-	if state.hasContinuation() {
-		appendContinuation(&state.continuedResponse, response)
-		appendContinuation(&state.continuedReasoning, reasoning.String())
-		finalResponse = strings.TrimSpace(state.continuedResponse.String())
-		finalReasoning = strings.TrimSpace(state.continuedReasoning.String())
-	}
 	if msg, blocked := state.artifactGuard.BlockMessage(finalResponse); blocked {
 		if remaining > 1 {
 			messages = append(messages, provider.Message{Role: "assistant", Content: response, ReasoningContent: reasoning.String()})
@@ -1090,10 +1035,6 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 		}
 		if state.memoryGate != nil && state.memoryGate.shouldBlockFinal() {
 			a.finalizeStreamWithState(events, sess, turnInput, state.memoryGate.incompleteMessage(), state)
-			return
-		}
-		if state.hasContinuation() {
-			a.finalizeStreamWithState(events, sess, turnInput, strings.TrimSpace(state.continuedResponse.String())+lengthTruncatedNotice, state)
 			return
 		}
 		events <- ChatEvent{Type: ChatEventError, Err: fmt.Errorf("max iterations reached")}
@@ -1153,7 +1094,6 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 	// 有工具调用 → 展示过程 → 执行 → 继续循环
 	if len(resp.ToolCalls) > 0 {
 		state.emptyResponseRetries = 0
-		state.lengthRecoveryCount = 0
 		if state.trackComputerObservationLoop(resp.ToolCalls, a.cfg.Get().Tools.ComputerUse.MaxConsecutiveObserveOnly) {
 			a.finalizeStreamWithState(events, sess, turnInput, computerObservationLoopMessage, state)
 			return
@@ -1231,10 +1171,6 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 				a.finalizeStreamWithState(events, sess, turnInput, message, state)
 				return
 			}
-			if state.hasContinuation() {
-				a.finalizeStreamWithState(events, sess, turnInput, strings.TrimSpace(state.continuedResponse.String())+lengthTruncatedNotice, state)
-				return
-			}
 			events <- ChatEvent{Type: ChatEventError, Err: fmt.Errorf("max iterations reached")}
 			return
 		}
@@ -1266,51 +1202,13 @@ func (a *Agent) streamSimulated(ctx context.Context, events chan<- ChatEvent, me
 			a.streamSimulated(ctx, events, messages, callOpts, sess, turnInput, nextRound, remaining-1, state)
 			return
 		}
-		if state.hasContinuation() {
-			a.finalizeStreamWithState(events, sess, turnInput, strings.TrimSpace(state.continuedResponse.String()), state)
-		} else {
-			a.finalizeStreamWithState(events, sess, turnInput, emptyFinalResponseMessage, state)
-		}
+		a.finalizeStreamWithState(events, sess, turnInput, emptyFinalResponseMessage, state)
 		return
 	}
 	state.emptyResponseRetries = 0
 
-	// length 续写恢复
-	if strings.EqualFold(resp.FinishReason, "length") {
-		chunks := splitIntoChunks(response, 60)
-		for _, chunk := range chunks {
-			events <- ChatEvent{Type: ChatEventContent, Content: chunk}
-			time.Sleep(50 * time.Millisecond)
-		}
-		appendContinuation(&state.continuedResponse, response)
-		appendContinuation(&state.continuedReasoning, resp.ReasoningContent)
-		if state.lengthRecoveryCount < a.maxLengthContinuations() && remaining > 1 {
-			state.lengthRecoveryCount++
-			messages = append(messages, provider.Message{Role: "assistant", Content: response, ReasoningContent: resp.ReasoningContent})
-			messages = append(messages, provider.Message{Role: "user", Content: lengthRecoveryPrompt})
-			messages = a.fitContextWindow(messages)
-			nextRound := round + 1
-			events <- ChatEvent{Type: ChatEventThinking, Content: fmt.Sprintf("Thinking... (round %d)", nextRound)}
-			a.streamSimulated(ctx, events, messages, callOpts, sess, turnInput, nextRound, remaining-1, state)
-			return
-		}
-		partial := strings.TrimSpace(state.continuedResponse.String())
-		if partial == "" {
-			partial = clean
-		}
-		a.finalizeStreamWithState(events, sess, turnInput, partial+lengthTruncatedNotice, state)
-		return
-	}
-	state.lengthRecoveryCount = 0
-
 	finalResponse := response
 	finalReasoning := resp.ReasoningContent
-	if state.hasContinuation() {
-		appendContinuation(&state.continuedResponse, response)
-		appendContinuation(&state.continuedReasoning, resp.ReasoningContent)
-		finalResponse = strings.TrimSpace(state.continuedResponse.String())
-		finalReasoning = strings.TrimSpace(state.continuedReasoning.String())
-	}
 	if msg, blocked := state.artifactGuard.BlockMessage(finalResponse); blocked {
 		if remaining > 1 {
 			messages = append(messages, provider.Message{Role: "assistant", Content: response, ReasoningContent: resp.ReasoningContent})
@@ -1397,8 +1295,6 @@ func (a *Agent) finalizeStreamWithState(events chan<- ChatEvent, sess *session.S
 	reasoningContent := ""
 	if len(reasoning) > 0 {
 		reasoningContent = reasoning[0]
-	} else if strings.TrimSpace(state.continuedReasoning.String()) != "" {
-		reasoningContent = strings.TrimSpace(state.continuedReasoning.String())
 	}
 	a.finalizeStreamWithUsage(events, sess, turnInput, response, reasoningContent, state.usage, state.citationToolCalls)
 }
@@ -1431,9 +1327,6 @@ func (a *Agent) finalizeStreamAfterInterruption(
 
 	synthesisMessages := append([]provider.Message(nil), messages...)
 	partial = strings.TrimSpace(partial)
-	if partial == "" && state != nil {
-		partial = strings.TrimSpace(state.continuedResponse.String())
-	}
 	if partial != "" {
 		synthesisMessages = append(synthesisMessages, provider.Message{
 			Role:    "assistant",
@@ -1505,15 +1398,6 @@ func streamInterruptionMessage(err error, state *streamConvergenceState, partial
 	}
 
 	partial = strings.TrimSpace(partial)
-	if state != nil {
-		continuation := strings.TrimSpace(state.continuedResponse.String())
-		if continuation != "" && !strings.Contains(partial, continuation) {
-			if partial != "" {
-				partial += "\n"
-			}
-			partial += continuation
-		}
-	}
 	if partial != "" {
 		message.WriteString("\n\nPartial model output (may be incomplete):\n")
 		message.WriteString(utils.TrimToRunes(partial, 1200))

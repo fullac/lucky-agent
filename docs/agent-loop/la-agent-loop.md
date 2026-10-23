@@ -236,12 +236,9 @@ LH_TOOL_INTENT_GATING=on
 | `toolExecutionGuard` | 用户约束驱动的工具执行保护。 |
 | `consecutiveToolOnlyIters` | 连续只调用工具、不产出文本的轮数。 |
 | `emptyResponseRetries` | 空回复恢复次数。 |
-| `lengthRecoveryCount` | length 截断续写次数。 |
 | `successfulSearchEvidence` | 有效搜索证据计数。 |
 | `detailedSearchEvidence` | 详细搜索证据计数。 |
 | `forceSearchSynthesis` | 是否强制进入搜索综合。 |
-| `continuedResponse` | length 续写累计正文。 |
-| `continuedReasoning` | length 续写累计 reasoning。 |
 
 这些状态只属于当前一次 agent loop，不写入长期 memory。
 
@@ -465,22 +462,11 @@ memory gate did not produce final synthesis
 
 - 最多重试 `maxEmptyResponseRetries=2` 次。
 - 每次追加 `emptyResponseRecoveryPrompt`。
-- 超过后返回空回复 fallback 文案，或返回已累计的 continuation。
-
-### length 截断
-
-如果 `FinishReason == "length"`：
-
-- 将本轮内容追加到 `continuedResponse`。
-- 将 reasoning 追加到 `continuedReasoning`。
-- 最多续写 `maxLengthContinuationRetries=3` 次。
-- 超过后返回已累计内容并追加截断提示。
+- 超过后返回空回复 fallback 文案。
 
 ### 正常文本
 
-如果已有 continuation，则拼接后 finalize。
-
-否则直接 finalize 当前回复。
+直接 finalize 当前回复。输出因长度被截断时，也把这一次已经返回的内容作为本轮结果，不再自动续写。
 
 ## 结束条件
 
@@ -488,13 +474,11 @@ memory gate did not produce final synthesis
 
 | 条件 | 行为 |
 | --- | --- |
-| 模型给出无工具最终文本 | finalize。 |
-| length 续写完成 | finalize 拼接结果。 |
+| 模型给出无工具最终文本 | finalize。长度截断的内容也在这里结束。 |
 | 空回复恢复耗尽 | finalize fallback。 |
 | 重复工具调用循环 | 提前停止并返回最新工具输出摘要。 |
 | 搜索证据足够且持续 tool-only | 强制进入搜索综合。 |
 | memory gate 未满足 | 自动执行 required tools 后继续。 |
-| 达到 `MaxIterations` 且有 continuation | finalize continuation + 截断提示。 |
 | 达到 `MaxIterations` 且 memory gate 未综合 | 返回 incomplete message + error。 |
 | 达到 `MaxIterations` 且无可用部分结果 | 返回 max iterations error。 |
 
@@ -545,7 +529,6 @@ memory gate did not produce final synthesis
 - URL 去重；
 - 搜索综合；
 - 空回复恢复；
-- length 续写恢复；
 - session 持久化。
 
 但流式路径多了事件输出：
