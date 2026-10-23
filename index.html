@@ -1664,11 +1664,11 @@
             kind: 'core',
             x: 68,
             y: 58,
-            summary: '正式接口说明在独立页面 api.html。它按当前注册路由列出方法、鉴权、错误和主要字段。仓库 docs/API.md 保留字段示例。',
+            summary: '正式接口说明在独立页面 api.html。每个常用接口写了方法、请求字段、响应、错误和 curl 示例。仓库 docs/API.md 是同一口径的源稿。',
             points: [
               '页面地址是 ./api.html，GitHub Pages 发布后为 /lucky-agent/api.html。',
-              '默认基址是 http://127.0.0.1:9090，应用路由在 /api/v1。',
-              '聊天、会话工具轨迹、插件、任务、MCP 和 WebSocket 都有独立条目。',
+              '左侧目录可按路径、字段和错误码筛选。',
+              '聊天、会话工具轨迹、配置补丁、插件、任务、RAG 和 WebSocket 都有请求或响应示例。',
               '没有 OpenAPI 或 Swagger。行为以 handler 为准，页面写明了核对的提交。'
             ],
             related: ['api', 'runtime', 'commands'],
