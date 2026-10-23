@@ -1344,7 +1344,7 @@
                   { field: 'agent.foreground.enabled', example: 'true', description: '前台对话保存检查点并验收工具任务；早期未解决失败持续参与验收，每条验收条件需要具体证据。取消或断线即停止。' },
                   { field: 'agent.foreground.max_slices', example: '48', description: '一次前台执行预算允许的片段总数，包含失败重试；用尽后报告未完成并保留恢复记录。' },
                   { field: 'agent.foreground.max_total_seconds', example: '3600', description: '前台执行总墙钟期限，包含模型、工具、验收和重试等待；显式恢复授予新的有界预算。' },
-                  { field: 'agent.foreground.max_retries', example: '3', description: '模型或验收失败的额外重试次数，0 表示不重试；按 1 秒起步指数退避，最多 30 秒。工具结果不明时先阻塞核对。' },
+                  { field: 'agent.foreground.max_retries', example: '3', description: '模型或验收失败的额外重试次数，0 表示不重试；按 1 秒起步指数退避，最多 30 秒。工具结果不明时先阻塞核对。只读工具连续返回相同结果时要求收束，不因此阻塞。' },
                   { field: 'agent.auto_approve', example: 'false', description: '是否自动批准需要确认的工具调用；生产环境建议保持 false。' },
                   { field: 'agent.repeat_tool_call_limit', example: '3', description: '同一工具重复调用的限制。' },
                   { field: 'agent.tool_only_iteration_limit', example: '3', description: '连续工具轮次的收敛阈值；仅在重复调用且没有新结果时触发，正常推进不会因此停止。' },

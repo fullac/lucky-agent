@@ -86,6 +86,77 @@ func scriptedForeground(p *foregroundProvider, steps int) {
 	}
 }
 
+func TestForegroundStableReadRepeatsConvergeWithoutBlocking(t *testing.T) {
+	a, sess, _ := foregroundHarness(t)
+	if err := a.cfg.Set("agent.repeat_tool_call_limit", "2"); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	a.Tools().Register(&tool.Tool{
+		Name: "read_evidence", Enabled: true, Permission: tool.PermAuto, ParallelSafe: true,
+		Handler: func(map[string]any) (string, error) {
+			reads++
+			return "already read", nil
+		},
+	})
+	calls := 0
+	a.provider = &foregroundProvider{chat: func(_ context.Context, messages []provider.Message) (*provider.Response, error) {
+		calls++
+		if strings.HasPrefix(messages[0].Content, "Review whether") {
+			return &provider.Response{Content: verifiedAssessment}, nil
+		}
+		for _, message := range messages {
+			if strings.Contains(message.Content, "same read-only call returned the same result") {
+				return &provider.Response{Content: "已有读取结果，审查结束"}, nil
+			}
+		}
+		return &provider.Response{ToolCalls: []provider.ToolCall{{ID: fmt.Sprintf("read-%d", calls), Name: "read_evidence", Arguments: `{"path":"a.go"}`}}}, nil
+	}}
+
+	result, err := a.ChatWithSession(context.Background(), sess.ID, "读取证据并给出结论")
+	if err != nil || result != "已有读取结果，审查结束" {
+		t.Fatalf("result=%q err=%v", result, err)
+	}
+	if reads != 2 {
+		t.Fatalf("stable read executed %d times, want the configured repeat limit", reads)
+	}
+	q, err := a.openForeground(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := q.ListAll()
+	if len(tasks) != 1 || tasks[0].State != autonomy.TaskDone {
+		t.Fatalf("tasks=%+v", tasks)
+	}
+}
+
+func TestForegroundStableWriteRepeatsStayBlocked(t *testing.T) {
+	a, sess, _ := foregroundHarness(t)
+	if err := a.cfg.Set("agent.repeat_tool_call_limit", "2"); err != nil {
+		t.Fatal(err)
+	}
+	a.Tools().Register(&tool.Tool{
+		Name: "change_file", Enabled: true, Permission: tool.PermAuto,
+		Handler: func(map[string]any) (string, error) { return "unchanged", nil },
+	})
+	a.provider = &foregroundProvider{chat: func(context.Context, []provider.Message) (*provider.Response, error) {
+		return &provider.Response{ToolCalls: []provider.ToolCall{{ID: "write-1", Name: "change_file", Arguments: `{"path":"a.go"}`}}}, nil
+	}}
+
+	_, err := a.ChatWithSession(context.Background(), sess.ID, "修改文件直到内容稳定")
+	if err == nil || !strings.Contains(err.Error(), "repeated tool calls produced no new evidence") || !strings.Contains(err.Error(), "前台任务未完成") {
+		t.Fatalf("err=%v", err)
+	}
+	q, err := a.openForeground(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := q.ListByState(autonomy.TaskBlocked)
+	if len(tasks) != 1 {
+		t.Fatalf("tasks=%+v", q.ListAll())
+	}
+}
+
 func TestForegroundContinuesInRequestAndStreams(t *testing.T) {
 	for _, mode := range []string{"sync", "native", "simulated"} {
 		t.Run(mode, func(t *testing.T) {

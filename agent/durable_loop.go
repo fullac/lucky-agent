@@ -520,11 +520,35 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 		if errors.As(toolErr, &approvalErr) {
 			return fmt.Errorf("%w: %v", autonomy.ErrBlocked, toolErr)
 		}
-		if cp.NoProgress >= cfg.RepeatToolCallLimit {
+		// The matching result just observed is the first repeat, so stop when
+		// the configured limit is reached instead of running one more call.
+		if cp.NoProgress+1 >= cfg.RepeatToolCallLimit {
+			if a.durableRepeatCanConverge(pending.Call.Name, toolErr) {
+				cp.Messages = append(cp.Messages, provider.Message{Role: "user", Content: stableReadRepeatPrompt})
+				cp.NoProgress = 0
+				cp.Pending = nil
+				if err := save(); err != nil {
+					return err
+				}
+				return nil
+			}
 			return fmt.Errorf("%w: repeated tool calls produced no new evidence", autonomy.ErrBlocked)
 		}
 	}
 	return nil
+}
+
+const stableReadRepeatPrompt = "The same read-only call returned the same result again. Use the results already in this conversation, record the conclusion, and stop calling that tool. If the evidence does not cover the task, say exactly what remains unverified. Do not repeat the call to confirm it."
+
+// durableRepeatCanConverge reports whether a stable repeated result is usable
+// evidence. A read-only tool can be concluded from; a failed or mutating call
+// still needs the existing blocked recovery path.
+func (a *Agent) durableRepeatCanConverge(name string, toolErr error) bool {
+	if toolErr != nil || a == nil || a.Tools() == nil {
+		return false
+	}
+	registered, ok := a.Tools().Get(a.canonicalToolName(name))
+	return ok && registered != nil && registered.ParallelSafe && !registered.ShellAware
 }
 
 func (a *Agent) verifyDurableCandidate(ctx context.Context, goal string, criteria []string, cp *durableCheckpoint, cfg LoopConfig, snapshot providerSnapshot) (*durableVerification, int, error) {
