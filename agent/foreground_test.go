@@ -130,6 +130,70 @@ func TestForegroundStableReadRepeatsConvergeWithoutBlocking(t *testing.T) {
 	}
 }
 
+func TestForegroundMixedBatchKeepsCallsAfterStableRead(t *testing.T) {
+	a, sess, _ := foregroundHarness(t)
+	if err := a.cfg.Set("agent.repeat_tool_call_limit", "2"); err != nil {
+		t.Fatal(err)
+	}
+	var reads, writes atomic.Int32
+	a.Tools().Register(&tool.Tool{
+		Name: "read_evidence", Enabled: true, Permission: tool.PermAuto, ParallelSafe: true,
+		Handler: func(map[string]any) (string, error) {
+			reads.Add(1)
+			return "already read", nil
+		},
+	})
+	a.Tools().Register(&tool.Tool{
+		Name: "change_file", Enabled: true, Permission: tool.PermAuto,
+		Handler: func(map[string]any) (string, error) {
+			writes.Add(1)
+			return "changed", nil
+		},
+	})
+	calls := 0
+	a.provider = &foregroundProvider{chat: func(_ context.Context, messages []provider.Message) (*provider.Response, error) {
+		calls++
+		if strings.HasPrefix(messages[0].Content, "Review whether") {
+			for _, message := range messages {
+				if message.Role == "tool" && message.Name == "change_file" && !strings.Contains(message.Content, "changed") {
+					t.Errorf("write result missing from review: %+v", messages)
+				}
+			}
+			return &provider.Response{Content: verifiedAssessment}, nil
+		}
+		for _, message := range messages {
+			if strings.Contains(message.Content, "same read-only call returned the same result") {
+				seenWrite := false
+				for _, item := range messages {
+					if item.Role == "tool" && item.Name == "change_file" && strings.Contains(item.Content, "changed") {
+						seenWrite = true
+					}
+				}
+				if !seenWrite {
+					t.Errorf("convergence prompt arrived before the same-batch write result")
+				}
+				return &provider.Response{Content: "读取已稳定，写入已执行"}, nil
+			}
+		}
+		readCall := provider.ToolCall{ID: fmt.Sprintf("read-%d", calls), Name: "read_evidence", Arguments: `{"path":"a.go"}`}
+		if calls == 1 {
+			return &provider.Response{ToolCalls: []provider.ToolCall{
+				readCall,
+				{ID: "write-1", Name: "change_file", Arguments: `{"path":"a.go"}`},
+			}}, nil
+		}
+		return &provider.Response{ToolCalls: []provider.ToolCall{readCall}}, nil
+	}}
+
+	result, err := a.ChatWithSession(context.Background(), sess.ID, "读取证据并修改文件")
+	if err != nil || result != "读取已稳定，写入已执行" {
+		t.Fatalf("result=%q err=%v", result, err)
+	}
+	if reads.Load() != 2 || writes.Load() != 1 {
+		t.Fatalf("reads=%d writes=%d", reads.Load(), writes.Load())
+	}
+}
+
 func TestForegroundStableWriteRepeatsStayBlocked(t *testing.T) {
 	a, sess, _ := foregroundHarness(t)
 	if err := a.cfg.Set("agent.repeat_tool_call_limit", "2"); err != nil {
