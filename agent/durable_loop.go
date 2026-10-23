@@ -44,6 +44,7 @@ type durableCheckpoint struct {
 	Verification       *durableVerification  `json:"verification,omitempty"`
 	LastResults        map[string]string     `json:"last_results,omitempty"` // legacy checkpoints only
 	LastResultDigests  map[string]string     `json:"last_result_digests,omitempty"`
+	RepeatSignatures   []string              `json:"repeat_signatures,omitempty"`
 	NoProgress         int                   `json:"no_progress,omitempty"`
 	Continuation       string                `json:"continuation,omitempty"`
 	Summary            string                `json:"summary,omitempty"`
@@ -392,6 +393,22 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 			return durableProviderError(ctx, err)
 		}
 		pending := &cp.Pending[0]
+		sig := toolCallSignature(pending.Call.Name, pending.Call.Arguments)
+		if signatureListed(cp.RepeatSignatures, sig) {
+			cp.Pending = cp.Pending[1:]
+			cp.Messages = append(cp.Messages, provider.Message{
+				Role: "tool", Name: pending.Call.Name, ToolCallID: pending.Call.ID, Content: stableReadSkippedResult,
+			})
+			if sess != nil {
+				if err := sess.AddProviderMessageWithError(cp.Messages[len(cp.Messages)-1]); err != nil {
+					return sessionError(err)
+				}
+			}
+			if err := save(); err != nil {
+				return err
+			}
+			continue
+		}
 		emitForeground(cfg, ChatEvent{Type: ChatEventToolCall, Name: pending.Call.Name, Args: pending.Call.Arguments})
 		if err := ctx.Err(); err != nil {
 			return durableProviderError(ctx, err)
@@ -500,7 +517,6 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 			}
 		}
 		artifacts.RecordToolResult(pending.Call.Name, executeArgs, executed.Output)
-		sig := toolCallSignature(pending.Call.Name, pending.Call.Arguments)
 		digest := durableResultDigest(executed.Output)
 		if previous, ok := cp.LastResultDigests[sig]; ok && previous == digest {
 			cp.NoProgress++
@@ -520,11 +536,60 @@ func (a *Agent) executeDurablePending(ctx context.Context, sess *session.Session
 		if errors.As(toolErr, &approvalErr) {
 			return fmt.Errorf("%w: %v", autonomy.ErrBlocked, toolErr)
 		}
-		if cp.NoProgress >= cfg.RepeatToolCallLimit {
+		// The matching result just observed is the first repeat, so stop when
+		// the configured limit is reached instead of running one more call.
+		if cp.NoProgress+1 >= cfg.RepeatToolCallLimit {
+			if a.durableRepeatCanConverge(pending.Call.Name, toolErr) {
+				// Skip only this repeated signature. Other calls from the same
+				// assistant message still need results, so the batch stays pending.
+				cp.RepeatSignatures = appendUnique(cp.RepeatSignatures, sig)
+				cp.NoProgress = 0
+				if err := save(); err != nil {
+					return err
+				}
+				continue
+			}
 			return fmt.Errorf("%w: repeated tool calls produced no new evidence", autonomy.ErrBlocked)
 		}
 	}
+	if len(cp.RepeatSignatures) > 0 {
+		cp.Messages = append(cp.Messages, provider.Message{Role: "user", Content: stableReadRepeatPrompt})
+		cp.RepeatSignatures = nil
+		if err := save(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+const stableReadRepeatPrompt = "The same read-only call returned the same result again. Use the results already in this conversation, record the conclusion, and stop calling that tool. If the evidence does not cover the task, say exactly what remains unverified. Do not repeat the call to confirm it."
+const stableReadSkippedResult = "Skipped: this read-only call already returned the same result. Use the earlier result."
+
+func signatureListed(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUnique(items []string, value string) []string {
+	if signatureListed(items, value) {
+		return items
+	}
+	return append(items, value)
+}
+
+// durableRepeatCanConverge reports whether a stable repeated result is usable
+// evidence. A read-only tool can be concluded from; a failed or mutating call
+// still needs the existing blocked recovery path.
+func (a *Agent) durableRepeatCanConverge(name string, toolErr error) bool {
+	if toolErr != nil || a == nil || a.Tools() == nil {
+		return false
+	}
+	registered, ok := a.Tools().Get(a.canonicalToolName(name))
+	return ok && registered != nil && registered.ParallelSafe && !registered.ShellAware
 }
 
 func (a *Agent) verifyDurableCandidate(ctx context.Context, goal string, criteria []string, cp *durableCheckpoint, cfg LoopConfig, snapshot providerSnapshot) (*durableVerification, int, error) {

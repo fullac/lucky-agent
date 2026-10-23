@@ -1346,7 +1346,7 @@
                   { field: 'agent.foreground.max_total_seconds', example: '3600', description: '前台执行总墙钟期限，包含模型、工具、验收和重试等待；显式恢复授予新的有界预算。' },
                   { field: 'agent.foreground.max_retries', example: '3', description: '模型或验收失败的额外重试次数，0 表示不重试；按 1 秒起步指数退避，最多 30 秒。工具结果不明时先阻塞核对。' },
                   { field: 'agent.auto_approve', example: 'false', description: '是否自动批准需要确认的工具调用；生产环境建议保持 false。' },
-                  { field: 'agent.repeat_tool_call_limit', example: '3', description: '同一工具重复调用的限制。' },
+                  { field: 'agent.repeat_tool_call_limit', example: '3', description: '同一工具签名连续返回相同结果的上限。只读且可并发的调用达到上限后停止该签名并要求收束，同批其他调用继续执行；写入、命令或失败调用仍阻塞并保留恢复记录。' },
                   { field: 'agent.tool_only_iteration_limit', example: '3', description: '连续工具轮次的收敛阈值；仅在重复调用且没有新结果时触发，正常推进不会因此停止。' },
                   { field: 'agent.duplicate_fetch_limit', example: '1', description: '重复抓取同一资源的允许次数。' },
                   { field: 'agent.context_debug', example: 'false', description: '是否输出上下文规划调试信息。' },
