@@ -88,23 +88,6 @@ func TestAppendEphemeralToolSchemasUsesSessionScope(t *testing.T) {
 	}
 }
 
-func TestMaxLengthContinuationsUsesRuntimeConfig(t *testing.T) {
-	cfg, err := config.NewManagerWithDir(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewManagerWithDir() error = %v", err)
-	}
-	a := &Agent{cfg: cfg}
-	if got := a.maxLengthContinuations(); got != defaultMaxLengthContinuations {
-		t.Fatalf("default max length continuations = %d, want %d", got, defaultMaxLengthContinuations)
-	}
-	if err := cfg.Set("limits.max_length_continuations", "12"); err != nil {
-		t.Fatalf("Set() error = %v", err)
-	}
-	if got := a.maxLengthContinuations(); got != 12 {
-		t.Fatalf("configured max length continuations = %d, want 12", got)
-	}
-}
-
 func TestEmitChatToolResultEventRetainsFullResultAndMemoryTrace(t *testing.T) {
 	events := make(chan ChatEvent, 2)
 	result := "prefix-" + strings.Repeat("full tool output ", 100) + "-suffix"

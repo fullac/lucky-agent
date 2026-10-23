@@ -185,33 +185,9 @@ model answer
 Your last response was empty. Please provide a direct, complete answer to my previous request. Avoid tool calls unless required.
 ```
 
-超过重试次数后：
+超过重试次数后，返回 `I couldn't produce a complete answer this round. Please retry.`
 
-- 如果已有续写累计内容，返回累计内容。
-- 否则返回 `I couldn't produce a complete answer this round. Please retry.`
-
-### 4.3 length 截断续写
-
-如果 `FinishReason == "length"`，说明模型输出被截断。
-
-LA 会累计已有输出，并最多续写 `maxLengthContinuationRetries = 3` 次。
-
-恢复提示：
-
-```text
-Continue exactly from where you stopped. Do not repeat previous content.
-```
-
-超过续写次数后，会返回已有内容并加：
-
-```text
-[Output may be truncated after multiple continuation attempts.]
-```
-
-作用：
-
-- 防止长回答因为一次截断就丢失。
-- 也防止模型无限续写。
+输出因 `FinishReason == "length"` 被截断时，本轮直接结束并返回已经生成的内容，不再自动发起续写。
 
 ## 5. 工具调用后收束
 
@@ -486,7 +462,6 @@ ToolOnlyIterationLimit: 默认最多 2
 - 搜索综合强制。
 - duplicate URL 去重。
 - memory gate。
-- length 续写恢复。
 - final answer 引用工具结果。
 
 区别：

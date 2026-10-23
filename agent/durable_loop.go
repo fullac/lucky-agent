@@ -345,13 +345,8 @@ func (a *Agent) runDurableLoop(ctx context.Context, sess *session.Session, input
 			for j, call := range resp.ToolCalls {
 				cp.Pending = append(cp.Pending, durablePendingCall{ID: fmt.Sprintf("step-%d-%d", cp.Batch, j+1), Call: call})
 			}
-		} else if strings.EqualFold(resp.FinishReason, "length") {
-			cp.Continuation += resp.Content
-			cp.Messages = append(cp.Messages,
-				provider.Message{Role: "assistant", Content: resp.Content, ReasoningContent: resp.ReasoningContent},
-				provider.Message{Role: "user", Content: lengthRecoveryPrompt})
 		} else {
-			answer := strings.TrimSpace(cp.Continuation + resp.Content)
+			answer := strings.TrimSpace(resp.Content)
 			cp.Continuation = ""
 			if answer == "" {
 				cp.NoProgress++
