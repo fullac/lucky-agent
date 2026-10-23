@@ -664,6 +664,10 @@
         </a>
       </div>
       <div class="flex items-center gap-2">
+        <a href="./api.html" class="inline-flex h-8 items-center gap-1.5 rounded border px-2.5 text-xs font-semibold no-underline" style="border-color: var(--line); background: var(--panel); color: var(--text);" title="HTTP API 说明">
+          <i data-lucide="book-open" class="h-3.5 w-3.5"></i>
+          <span>API</span>
+        </a>
         <a href="./download.html" class="inline-flex h-8 items-center gap-1.5 rounded border px-2.5 text-xs font-semibold no-underline" style="border-color: var(--line); background: var(--panel); color: var(--text);" title="下载安装包">
           <i data-lucide="download" class="h-3.5 w-3.5"></i>
           <span>下载</span>
@@ -1048,6 +1052,7 @@
           ['config', 'dev-docker'],
           ['config', 'prod-docker'],
           ['runtime', 'api'],
+          ['api', 'api-reference'],
           ['runtime', 'opencli'],
           ['source', 'api'],
           ['dev-docker', 'api'],
@@ -1645,9 +1650,30 @@
               'Docker healthcheck 走容器内部 http://127.0.0.1:9090/api/v1/health/live；detail 需要普通鉴权。',
               'Bot 已启动但外部访问不到 API 时，优先检查 server.addr。'
             ],
-            related: ['source', 'dev-docker', 'prod-docker', 'telegram', 'napcat'],
+            related: ['api-reference', 'source', 'dev-docker', 'prod-docker', 'telegram', 'napcat'],
             commands: [
               { label: '启动和验证', body: 'lh serve --addr 127.0.0.1:9090\ncurl http://127.0.0.1:9090/api/v1/health/live\ncurl http://127.0.0.1:9090/api/v1/health/ready' }
+            ]
+          },
+          {
+            id: 'api-reference',
+            title: '接口说明',
+            short: 'HTTP、SSE 和 WebSocket',
+            group: '30 Services',
+            icon: 'book-open',
+            kind: 'core',
+            x: 68,
+            y: 58,
+            summary: '正式接口说明在独立页面 api.html。它按当前注册路由列出方法、鉴权、错误和主要字段。仓库 docs/API.md 保留字段示例。',
+            points: [
+              '页面地址是 ./api.html，GitHub Pages 发布后为 /lucky-agent/api.html。',
+              '默认基址是 http://127.0.0.1:9090，应用路由在 /api/v1。',
+              '聊天、会话工具轨迹、插件、任务、MCP 和 WebSocket 都有独立条目。',
+              '没有 OpenAPI 或 Swagger。行为以 handler 为准，页面写明了核对的提交。'
+            ],
+            related: ['api', 'runtime', 'commands'],
+            commands: [
+              { label: '打开说明', body: 'https://yurika0211.github.io/lucky-agent/api.html' }
             ]
           },
           {

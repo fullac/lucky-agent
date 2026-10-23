@@ -21,7 +21,7 @@ LuckyAgent 主仓库维护公开的 Agent 核心库，并保留构建完整 `lh`
   <a href="https://yurika0211.github.io/lucky-agent/">
     <img src="https://img.shields.io/badge/部署知识库-Deployment-2d6f93?style=for-the-badge&amp;logo=docker&amp;logoColor=white" alt="Deployment knowledge base">
   </a>
-  <a href="docs/API.md">
+  <a href="https://yurika0211.github.io/lucky-agent/api.html">
     <img src="https://img.shields.io/badge/API-文档-9a5f24?style=for-the-badge&amp;logo=swagger&amp;logoColor=white" alt="API documentation">
   </a>
 </p>

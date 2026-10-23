@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="public/favicon.png" />
+  <title>LuckyAgent HTTP API</title>
+  <meta name="description" content="LuckyAgent lh serve 的 HTTP、SSE 与 WebSocket 接口说明。路由以当前注册表为准。" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Roboto+Mono:wght@400;500&display=swap');
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; }
+    .theme-light {
+      --bg: #f6f4ec;
+      --bg-soft: #f2f0e7;
+      --panel: #ffffff;
+      --line: #e2e1d9;
+      --line-strong: #b7b5ac;
+      --text: #1d1d1b;
+      --muted: #6f6e69;
+      --faint: #9a9891;
+      --accent: #24837b;
+      --accent-soft: rgba(36, 131, 123, .12);
+      --warn: #bc5215;
+      --code: #1b1f26;
+      --code-text: #e9efe9;
+      --shadow: 0 18px 50px rgba(29, 29, 27, .08);
+    }
+    .theme-dark {
+      --bg: #13141c;
+      --bg-soft: #1a1b26;
+      --panel: #191a27;
+      --line: #2a2c3d;
+      --line-strong: #414868;
+      --text: #c0c8e0;
+      --muted: #8c91aa;
+      --faint: #5d637c;
+      --accent: #3aa99f;
+      --accent-soft: rgba(58, 169, 159, .16);
+      --warn: #da702c;
+      --code: #0f1117;
+      --code-text: #dce6df;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .35);
+    }
+    .theme-light, .theme-dark {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(36,131,123,.08), transparent 28%),
+        radial-gradient(circle at top right, rgba(45,111,147,.08), transparent 24%),
+        var(--bg);
+      color: var(--text);
+      font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    a { color: inherit; }
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      height: 58px;
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(14px);
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+    }
+    .brand-mark { width: 28px; height: 28px; color: var(--accent); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-radius: 14px;
+      border: 1px solid transparent;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      background: transparent;
+      color: var(--muted);
+    }
+    .btn-ghost { border-color: var(--line); }
+    .shell {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      max-width: 1180px;
+      margin: 0 auto;
+      gap: 28px;
+      padding: 28px 20px 80px;
+    }
+    .toc {
+      position: sticky;
+      top: 78px;
+      align-self: start;
+      max-height: calc(100vh - 100px);
+      overflow: auto;
+      padding-right: 8px;
+    }
+    .toc a {
+      display: block;
+      padding: 6px 0;
+      color: var(--muted);
+      font-size: 13px;
+      text-decoration: none;
+    }
+    .toc a:hover, .toc a.active { color: var(--text); }
+    .toc .group {
+      margin: 16px 0 6px;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .hero h1 { margin: 10px 0 8px; font-size: 36px; letter-spacing: -.03em; }
+    .lede { margin: 0; max-width: 68ch; color: var(--muted); line-height: 1.7; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 12px;
+      background: var(--bg-soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    section.block { margin-top: 42px; }
+    section.block h2 { margin: 0 0 8px; font-size: 24px; }
+    section.block > p, .note { color: var(--muted); line-height: 1.7; }
+    .card {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card h3 {
+      margin: 0;
+      padding: 14px 16px 0;
+      font-size: 16px;
+    }
+    .card p { margin: 8px 16px 14px; color: var(--muted); font-size: 14px; line-height: 1.65; }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-top: 1px solid var(--line); }
+    th { color: var(--faint); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+    td code, p code, li code { font-family: "Roboto Mono", ui-monospace, monospace; font-size: .92em; }
+    .method {
+      display: inline-block;
+      min-width: 58px;
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-family: "Roboto Mono", ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    pre {
+      margin: 0 16px 16px;
+      border-radius: 14px;
+      background: var(--code);
+      color: var(--code-text);
+      padding: 12px 14px;
+      overflow: auto;
+      font-family: "Roboto Mono", ui-monospace, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+    ul.clean { margin: 8px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.7; }
+    .status { color: var(--warn); font-weight: 700; }
+    @media (max-width: 860px) {
+      .shell { grid-template-columns: 1fr; }
+      .toc { position: static; max-height: none; }
+      .hero h1 { font-size: 30px; }
+    }
+  </style>
+</head>
+<body>
+  <div x-data="{ dark: localStorage.getItem('la-theme') === 'dark', active: 'contract' }" x-init="$watch('dark', v => localStorage.setItem('la-theme', v ? 'dark' : 'light')); $nextTick(() => window.lucide && lucide.createIcons())" :class="dark ? 'theme-dark' : 'theme-light'">
+    <header class="site-header flex items-center justify-between px-5">
+      <a href="./" class="flex items-center gap-3 text-sm font-semibold no-underline" style="color: var(--text);">
+        <svg class="brand-mark" viewBox="0 0 34 34" fill="none" aria-hidden="true">
+          <path d="M4 28L14 5L30 28H4Z" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"></path>
+          <path d="M14 5V28" stroke="currentColor" stroke-width="2.2"></path>
+          <path d="M14 19L25 28" stroke="currentColor" stroke-width="2.2"></path>
+        </svg>
+        <span>LuckyAgent API</span>
+      </a>
+      <div class="flex items-center gap-2">
+        <a class="btn btn-ghost" href="./">知识库</a>
+        <a class="btn btn-ghost" href="./download.html">下载</a>
+        <a class="btn btn-ghost" href="https://github.com/yurika0211/lucky-agent/blob/master/docs/API.md">仓库说明</a>
+        <button type="button" class="btn btn-ghost" @click="dark = !dark; $nextTick(() => window.lucide && lucide.createIcons())" title="切换主题">
+          <i :data-lucide="dark ? 'sun' : 'moon'" class="h-4 w-4"></i>
+        </button>
+      </div>
+    </header>
+
+    <div class="shell">
+      <nav class="toc" aria-label="接口目录">
+        <div class="group">约定</div>
+        <a href="#contract">适用范围</a>
+        <a href="#auth">鉴权与错误</a>
+        <div class="group">对话</div>
+        <a href="#chat">聊天</a>
+        <a href="#sessions">会话</a>
+        <a href="#commands">命令与插件</a>
+        <div class="group">运行</div>
+        <a href="#models">模型与配置</a>
+        <a href="#tools">工具、技能、MCP</a>
+        <a href="#tasks">任务与审批</a>
+        <a href="#memory">记忆、上下文、RAG</a>
+        <div class="group">通道</div>
+        <a href="#realtime">WebSocket 与 gRPC</a>
+        <a href="#ops">健康检查与网关</a>
+        <a href="#catalog">路由目录</a>
+      </nav>
+
+      <main>
+        <header class="hero">
+          <span class="pill"><i data-lucide="book-open" class="h-3.5 w-3.5"></i> 对照 v1.5.42 注册路由</span>
+          <h1>HTTP API 说明</h1>
+          <p class="lede">这是 <code>lh serve</code> 对外的产品接口。默认地址是 <code>http://127.0.0.1:9090</code>，应用路由都在 <code>/api/v1</code>。路由注册在 <code>luckyagent-api</code>，行为在 <code>luckyagent-app</code>。本页列出当前已注册的方法和稳定字段；字段细节以仓库 <a href="https://github.com/yurika0211/lucky-agent/blob/master/docs/API.md">docs/API.md</a> 和对应 handler 为准。</p>
+        </header>
+
+        <section class="block" id="contract">
+          <h2>适用范围</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>项目</th><th>约定</th></tr></thead>
+              <tbody>
+                <tr><td>进程</td><td><code>lh serve</code>。根路径 <code>GET /</code> 返回简短路由摘要。</td></tr>
+                <tr><td>内容类型</td><td>JSON 请求默认 2 MiB，必须是一个完整 JSON 值。显式不支持的 <code>Content-Type</code> 返回 415。省略该头的旧客户端仍可使用。</td></tr>
+                <tr><td>上传</td><td><code>POST /api/v1/uploads</code> 使用 multipart，限额独立于 JSON。</td></tr>
+                <tr><td>密钥</td><td>查询字符串里的 API key 不被接受。响应不回传密钥。</td></tr>
+                <tr><td>变更</td><td>插件、MCP 配置和部分运行状态在进程启动时加载。管理接口保存安装状态，不代替重启。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="block" id="auth">
+          <h2>鉴权与错误</h2>
+          <p>配置了 <code>server.api_keys</code> 时，请求必须带下列之一：</p>
+          <pre>X-API-Key: &lt;key&gt;
+Authorization: Bearer &lt;key&gt;</pre>
+          <p class="note">未配置密钥时，只有本机回环连接、回环 Host、同源或缺失的 Origin，且没有转发头，才允许无密钥访问。同机反向代理也要配置密钥。<code>GET/HEAD /</code>、<code>/api/v1/health/live</code> 和 <code>/api/v1/health/ready</code> 公开；<code>/api/v1/health/detail</code> 走普通鉴权。</p>
+          <p class="note"><code>lh qr</code> 签发的临时 key 只存在于进程内存，默认 24 小时，API 重启后失效，不写入 <code>config.json</code>。</p>
+          <div class="card">
+            <h3>错误体</h3>
+            <pre>{
+  "error": "message",
+  "code": 400,
+  "error_code": "invalid_request",
+  "request_id": "server-generated-id",
+  "details": "optional details"
+}</pre>
+            <table>
+              <thead><tr><th>状态</th><th>含义</th></tr></thead>
+              <tbody>
+                <tr><td class="status">401 / 403</td><td>缺少密钥 / 密钥无效</td></tr>
+                <tr><td class="status">404 / 405 / 409</td><td>不存在 / 方法不允许 / 冲突</td></tr>
+                <tr><td class="status">413 / 415 / 429</td><td>请求体过大 / 媒体类型不支持 / 超过配额，429 带 <code>Retry-After: 60</code></td></tr>
+                <tr><td class="status">500 / 503</td><td>内部错误 / 服务未初始化</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="block" id="chat">
+          <h2>聊天</h2>
+          <div class="card">
+            <h3><span class="method">POST</span> /api/v1/chat</h3>
+            <p>SSE 流式对话。省略 <code>session_id</code> 会新建会话；显式传入但不存在的会话在调用模型前返回 404。<code>max_iterations</code> 取 0 到 300，0 表示使用配置默认值。</p>
+            <pre>curl -N http://127.0.0.1:9090/api/v1/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"hello"}'</pre>
+            <p>事件保留类型和内容，并带 <code>run_id</code>、<code>event_id</code> 和 SSE <code>id:</code>。失败事件含字符串 <code>error</code>、<code>error_code</code> 和 <code>status: "failed"</code>，后面不再跟成功的 <code>complete</code>。取消为 <code>type: "cancelled"</code>。这个端点不重放持久游标；可重试投递使用 WebSocket。</p>
+          </div>
+          <div class="card">
+            <h3><span class="method">POST</span> /api/v1/chat/sync</h3>
+            <p>同步返回整包。请求字段与流式接口相同。成功响应使用实际保存消息的会话。</p>
+            <pre>{
+  "response": "assistant response",
+  "session_id": "session-id",
+  "iterations": 1,
+  "tokens_used": 0,
+  "tool_calls": [],
+  "duration": "1.2s"
+}</pre>
+          </div>
+        </section>
+
+        <section class="block" id="sessions">
+          <h2>会话</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/sessions</code></td><td>列表。查询参数 <code>q</code>、<code>limit</code>、<code>offset</code>。条目含 <code>format</code>、<code>byte_size</code>、<code>pinned</code>、<code>project</code>。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/sessions</code></td><td>创建会话。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/sessions/{id}</code></td><td>读取会话。带 <code>limit</code> 时从最新消息向前分页，<code>offset</code> 是从末尾跳过的条数。</td></tr>
+                <tr><td><span class="method">PATCH</span></td><td><code>/api/v1/sessions/{id}</code></td><td>至少提供一个字段：<code>title</code>、<code>pinned</code>、<code>project</code>。只写元数据。</td></tr>
+                <tr><td><span class="method">DELETE</span></td><td><code>/api/v1/sessions/{id}</code></td><td>删除会话并取消该会话的在途任务。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/sessions/{id}/tools</code></td><td>分页工具轨迹。每条含 <code>duration_ms</code>、<code>status</code>、<code>success</code>。汇总含调用数、成功、失败、进行中和成功率。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/sessions/{id}/backups</code></td><td>列出会话备份。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/sessions/{id}/backups/{backup}/restore</code></td><td>恢复指定备份。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/sessions/{id}/compact</code></td><td>压缩会话。可选 <code>force_local</code>、<code>dry_run</code>。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/sessions/{id}/compact/latest</code></td><td>最近一次压缩记录。没有记录时 404。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">工具轨迹的 <code>turn=first</code> 只在原始首轮仍在时有效。压缩边界已经盖住原始轮次时返回 410，不会把后续对话标成第一次执行。没有写入 <code>duration_ms</code> 的旧消息读出来是 0。</p>
+        </section>
+
+        <section class="block" id="commands">
+          <h2>命令与插件</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/commands</code></td><td>返回 <code>commands</code> 和 <code>count</code>。插件命令的 <code>group</code> 为 <code>plugins</code>，名称保持 <code>plugin:command</code>。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/commands</code></td><td>执行目录中的命令。插件命令可带或不带前导斜杠。省略会话会新建；传入的会话必须存在。</td></tr>
+                <tr><td><span class="method">GET</span> <span class="method">POST</span></td><td><code>/api/v1/plugins</code></td><td>列出或安装。安装体包含 <code>source</code>，可选 <code>ref</code>、<code>subdir</code>、<code>trust</code>。</td></tr>
+                <tr><td><span class="method">GET</span> <span class="method">DELETE</span></td><td><code>/api/v1/plugins/{name}</code></td><td>读取或移除登记。不可变缓存保留。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/plugins/{name}/enable</code></td><td>保存启用状态。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/plugins/{name}/disable</code></td><td>保存停用状态。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/plugins/{name}/update</code></td><td>按已记录来源更新。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">插件命令成功时 HTTP 200 且 <code>ok: true</code>。循环失败仍可能是 HTTP 200、 <code>ok: false</code>，客户端必须看 <code>ok</code>。安装、启停和更新不执行插件，也不重启进程；正在运行的 Agent 继续使用启动时的快照。</p>
+        </section>
+
+        <section class="block" id="models">
+          <h2>模型与配置</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/models</code></td><td>模型列表。可选 <code>kind</code>、<code>provider</code>、<code>refresh=1</code>。</td></tr>
+                <tr><td><span class="method">GET</span> <span class="method">PUT</span></td><td><code>/api/v1/models/effort</code></td><td>读取或设置推理力度。稳定选项为 <code>auto</code>、<code>none</code>、<code>minimal</code>、<code>low</code>、<code>medium</code>、<code>high</code>、<code>xhigh</code>。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/models/switch</code></td><td>切换模型。体为 <code>kind</code>、<code>model</code>，可选 <code>provider</code>。</td></tr>
+                <tr><td><span class="method">GET</span> <span class="method">POST</span></td><td><code>/api/v1/models/profiles</code></td><td>列出或应用模型配置档。应用体为 <code>{"name":"..."}</code>。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/config</code></td><td>脱敏配置。响应带配置版本 ETag。</td></tr>
+                <tr><td><span class="method">PUT</span></td><td><code>/api/v1/config</code></td><td>完整替换。被打码的密钥会保留原值。</td></tr>
+                <tr><td><span class="method">PATCH</span></td><td><code>/api/v1/config</code></td><td>局部修改。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/config/schema</code></td><td>字段类型、默认值和重启提示。敏感默认值保持 <code>null</code>。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/config/reload</code></td><td>重新加载。无效配置被拒绝，原配置继续生效。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="block" id="tools">
+          <h2>工具、技能、MCP</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/tools</code></td><td>当前可用工具。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/skills</code></td><td>技能列表。</td></tr>
+                <tr><td><span class="method">GET</span> <span class="method">DELETE</span></td><td><code>/api/v1/skills/{name}</code></td><td>详情或卸载。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/skills/{name}/enable</code></td><td>启用。状态机拒绝时返回 409。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/skills/{name}/disable</code></td><td>停用。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/skills/{name}/reload</code></td><td>重载一个技能。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/skills/reload</code></td><td>重载全部技能。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/skills/install</code></td><td>准备安装。名为 <code>install</code> 的技能名被保留。</td></tr>
+                <tr><td><span class="method">GET</span> <span class="method">POST</span></td><td><code>/api/v1/mcp/servers</code></td><td>查看状态，或对已配置名称执行 <code>connect</code>、<code>refresh</code>、<code>disconnect</code>。传输和进程参数仍在配置里。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/uploads</code></td><td>上传附件。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/artifacts</code></td><td>读取产物。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">技能子路径还有 <code>uninstall</code>、<code>rollback</code>、<code>versions</code> 和 <code>installs</code>。未知子资源返回 404。MCP 未知动作返回 400，连接失败返回 502。</p>
+        </section>
+
+        <section class="block" id="tasks">
+          <h2>任务与审批</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/tasks</code></td><td>任务列表。可按 <code>source</code>、<code>status</code>、<code>parent_id</code>、<code>limit</code> 过滤。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/tasks/{id}</code></td><td>单个任务。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/tasks/{id}/tree</code></td><td>任务和已持久化的后代。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/tasks/{id}/events</code></td><td>任务事件。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/tasks/{id}/trace</code></td><td>规划轨迹。没有轨迹时 404。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/tasks/{id}/result</code></td><td>任务结果。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/tasks/{id}/observation</code></td><td>由记录和事件归约出的观察。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/tasks/{id}/feedback</code></td><td>写入验收反馈。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/tasks/{id}/cancel</code></td><td>取消任务，体可含 <code>reason</code>。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/autonomy/dashboard</code></td><td>后台自治面板。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/autonomy/tasks/{id}</code></td><td>单个自治任务。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/cron</code></td><td>定时任务。</td></tr>
+                <tr><td><span class="method">GET</span> <span class="method">POST</span></td><td><code>/api/v1/approvals</code></td><td>列出或解决待审批。列表可按 <code>provider</code>、<code>session_id</code> 过滤。解决时需要 <code>provider</code>、<code>approval_id</code>、<code>decision</code>。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/approvals/resolve</code></td><td>与 <code>POST /approvals</code> 相同的解决入口。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="block" id="memory">
+          <h2>记忆、上下文、RAG</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><span class="method">GET</span> <span class="method">POST</span></td><td><code>/api/v1/memory</code></td><td>读取分层计数，或保存一条记忆。保存体含 <code>content</code>、<code>category</code>。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/memory/recall</code></td><td>召回。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/memory/recall/trace</code></td><td>最近召回轨迹。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/memory/stats</code></td><td>记忆统计。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/memory/graph</code></td><td>记忆图。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/context</code></td><td>上下文窗口。 <code>inspect=1</code> 附加组装结果和本地 token 估计。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/context/fit</code></td><td>把调用方提供的消息装进窗口。不组装当前规划器上下文。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/rag/index</code></td><td>索引。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/rag/search</code></td><td>检索。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/rag/stats</code></td><td>统计。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/rag/store</code></td><td>存储信息。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/rag/stream/start</code></td><td>启动流式索引。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/rag/stream/stop</code></td><td>停止流式索引。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/rag/stream/status</code></td><td>流式索引状态。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">流式索引还有 <code>watch</code>、<code>scan</code>、<code>index</code>、<code>queue</code>、<code>process</code>。函数调用入口是 <code>GET/POST /api/v1/fc</code>、<code>/api/v1/fc/tools</code> 和 <code>/api/v1/fc/history</code>。</p>
+        </section>
+
+        <section class="block" id="realtime">
+          <h2>WebSocket 与 gRPC</h2>
+          <div class="card">
+            <h3><span class="method">GET</span> /api/v1/ws</h3>
+            <p>升级为 WebSocket。鉴权头与 HTTP 相同。</p>
+            <pre>ws://127.0.0.1:9090/api/v1/ws?session=&lt;session-id&gt;</pre>
+            <ul class="clean">
+              <li>同一会话、同一请求 ID 和同一输入会复用已接受的运行，不重复执行。</li>
+              <li>同一 ID 但输入不同，返回 <code>REQUEST_CONFLICT</code>。</li>
+              <li>初始持久化失败返回 <code>PERSIST_FAILED</code>，不会排队。</li>
+              <li>重连发送 <code>type: "reconnect"</code>，<code>data.last_message_id</code> 填最后实际收到的事件。客户端也要按 <code>event_id</code> 去重。</li>
+              <li><code>type: "lucky"</code> 先收集同一会话的多条消息，<code>off</code> 时合并成一轮。收集状态只在当前进程内存里。</li>
+              <li>任务入库后向所有连接推送 <code>type: "task_event"</code>。</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3><span class="method">GET</span> /api/v1/ws/stats</h3>
+            <p>当前 WebSocket Hub 统计。</p>
+          </div>
+          <p class="note"><code>lh serve</code> 不监听 gRPC。嵌入方使用 <code>luckyagent-app/api/grpc</code> 的 <code>NewGRPCServer</code>。聊天走真实会话；<code>max_iterations</code> 同样是 0 到 300。非空 metadata 会被拒绝，因为它没有定义语义。</p>
+        </section>
+
+        <section class="block" id="ops">
+          <h2>健康检查、网关与协作</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/health/live</code></td><td>存活。公开。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/health/ready</code></td><td>就绪。公开。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/health/detail</code></td><td>详细健康，需要普通鉴权。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/metrics</code></td><td>指标快照。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/stats</code></td><td>服务统计。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/proactive/status</code></td><td>主动运行状态。可选 <code>limit</code>。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/soul</code></td><td>当前人格。 <code>name</code> 来自身份行，<code>system_prompt</code> 是全文。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/gateways</code></td><td>网关列表。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/gateways/{name}/start</code></td><td>在 <code>lh serve</code> 进程内启动网关。已运行时 409。不要同时再跑 <code>lh msg-gateway start</code>。</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/api/v1/agents</code></td><td>协作注册表。</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/api/v1/agents/delegate</code></td><td>HTTP 委派。它和模型工具 <code>delegate_task</code> 的任务视图没有完全打通。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">协作还有 <code>register</code>、<code>deregister</code>、<code>task</code>、<code>tasks</code>、<code>cancel</code>、<code>blackboard</code>、<code>messages</code>。工作流入口是 <code>/api/v1/workflows</code> 和 <code>/api/v1/workflow-instances</code>。嵌入器入口是 <code>/api/v1/embedders</code>、<code>/register</code>、<code>/switch</code> 和按名称的子路径。人格模板在 <code>/api/v1/soul/templates</code>。</p>
+          <p class="note">pprof 不属于 <code>/api/v1</code>。只有设置 <code>LA_PPROF_ADDR</code> 后才在该地址提供 <code>/debug/pprof/</code>。</p>
+        </section>
+
+        <section class="block" id="catalog">
+          <h2>路由目录</h2>
+          <p>下表是 v1.5.42 选中的 <code>luckyagent-api</code> 注册表，加上应用额外注册的插件和 MCP。方法来自对应 handler 的分发。未在表中写出子路径的资源，以本节前面的说明为准。</p>
+          <div class="card">
+            <table>
+              <thead><tr><th>前缀</th><th>用途</th></tr></thead>
+              <tbody>
+                <tr><td><code>/api/v1/health/*</code> <code>/metrics</code> <code>/stats</code></td><td>探针、指标、统计</td></tr>
+                <tr><td><code>/api/v1/config</code> <code>/models</code></td><td>配置和模型</td></tr>
+                <tr><td><code>/api/v1/chat</code> <code>/sessions</code> <code>/uploads</code> <code>/commands</code></td><td>对话、历史、附件、命令</td></tr>
+                <tr><td><code>/api/v1/tasks</code> <code>/autonomy</code> <code>/cron</code> <code>/approvals</code></td><td>任务、自治、定时、审批</td></tr>
+                <tr><td><code>/api/v1/memory</code> <code>/context</code> <code>/rag</code></td><td>记忆、上下文、检索</td></tr>
+                <tr><td><code>/api/v1/tools</code> <code>/skills</code> <code>/plugins</code> <code>/mcp/servers</code></td><td>工具、技能、插件、MCP</td></tr>
+                <tr><td><code>/api/v1/ws</code> <code>/fc</code> <code>/gateways</code> <code>/agents</code> <code>/workflows</code></td><td>实时、函数调用、网关、协作、工作流</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">核对日期：2026-10-23。路由来自公开包 v1.5.42 选中的 app <code>159015485c70</code> 和 api <code>5bc49550b485</code>。本页随主仓文档发布，不改变已安装的二进制。Android 通过这些 HTTP 和 WebSocket 字段消费后端，不导入 Go 模块。</p>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

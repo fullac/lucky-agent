@@ -1,5 +1,8 @@
 # LuckyAgent HTTP API
 
+The published reference is [the GitHub Pages API guide](https://yurika0211.github.io/lucky-agent/api.html).
+This file keeps the field-level examples for the same routes.
+
 This document describes the HTTP API registered by `lh serve`.
 
 Source of truth: `luckyagent-api/routes.go` for route registration,
