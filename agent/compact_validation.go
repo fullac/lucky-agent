@@ -16,7 +16,7 @@ func validateCompactSummary(summary string, messages []provider.Message) Compact
 	if !validation.Valid {
 		return validation
 	}
-	missing := missingCompactIdentifiers(summary, compactIdentifiers(messages))
+	missing := missingCompactIdentifiers(summary, requiredCompactIdentifiers(messages))
 	if len(missing) == 0 {
 		return validation
 	}

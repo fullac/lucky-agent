@@ -18,7 +18,7 @@ var (
 	identifierPathPattern   = regexp.MustCompile(`(?:^|[\s"'(=:\[,])((?:/[\w.\-]+){2,}/?|(?:\.{1,2}/)[^\s"')\]]+|~/[^\s"')\]]+|[A-Za-z]:\\[^\s"')\]]+)`)
 	identifierURLPattern    = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"')\]]+`)
 	identifierCommitPattern = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
-	identifierValuePattern  = regexp.MustCompile(`(?:\b0x[0-9a-fA-F]+|\b\d+\.\d+|\b\d+%|\b\d{4,})`)
+	identifierValuePattern  = valuePattern
 )
 
 // maxCompactIdentifiers bounds the check so a large tool dump cannot turn one
@@ -27,6 +27,25 @@ const maxCompactIdentifiers = 40
 
 // maxCompactErrorHeadRunes bounds one captured error line.
 const maxCompactErrorHeadRunes = 160
+
+// requiredCompactIdentifiers is the gate for a summary that may replace
+// messages. Measurements are kept when they fit, but a rewritten duration
+// must not fail automatic compaction. Paths, commands, and error heads are
+// the identifiers a follow-up turn cannot rebuild.
+func requiredCompactIdentifiers(messages []provider.Message) []string {
+	required := make([]string, 0, maxCompactIdentifiers)
+	for _, identifier := range compactIdentifiers(messages) {
+		if identifierValuePattern.MatchString(identifier) &&
+			!errorPattern.MatchString(identifier) &&
+			!identifierPathPattern.MatchString(" "+identifier) &&
+			!identifierURLPattern.MatchString(identifier) &&
+			!toolLineIsCommand(identifier) {
+			continue
+		}
+		required = append(required, identifier)
+	}
+	return required
+}
 
 // compactIdentifiers returns the identifiers of the messages a summary covers.
 // Paths, URLs, commits, and values are mutually exclusive shapes, and the result
@@ -76,11 +95,38 @@ func compactIdentifiers(messages []provider.Message) []string {
 			add(match)
 		}
 	}
-	sort.Strings(out)
-	if len(out) > maxCompactIdentifiers {
-		out = out[:maxCompactIdentifiers]
+	return preferCompactIdentifiers(out)
+}
+
+// preferCompactIdentifiers keeps the check explainable. Alphabetical order
+// let a timestamp crowd out a path. Error heads, paths, URLs, commits, and
+// commands outrank bare measurements when the set is capped.
+func preferCompactIdentifiers(identifiers []string) []string {
+	rank := func(identifier string) int {
+		switch {
+		case errorPattern.MatchString(identifier):
+			return 0
+		case identifierURLPattern.MatchString(identifier) || identifierPathPattern.MatchString(" "+identifier):
+			return 1
+		case toolLineIsCommand(identifier):
+			return 2
+		case identifierCommitPattern.MatchString(identifier):
+			return 3
+		default:
+			return 4
+		}
 	}
-	return out
+	sort.SliceStable(identifiers, func(i, j int) bool {
+		left, right := rank(identifiers[i]), rank(identifiers[j])
+		if left != right {
+			return left < right
+		}
+		return identifiers[i] < identifiers[j]
+	})
+	if len(identifiers) > maxCompactIdentifiers {
+		identifiers = identifiers[:maxCompactIdentifiers]
+	}
+	return identifiers
 }
 
 // missingCompactIdentifiers reports which identifiers the summary does not

@@ -76,8 +76,8 @@ func TestCompressToolResultNeverDropsEveryLine(t *testing.T) {
 	if strings.TrimSpace(compacted) == "" {
 		t.Fatal("compaction removed the whole result")
 	}
-	if !strings.Contains(compacted, "omitted for context") && len([]rune(output)) > 8 {
-		t.Fatal("expected an omission record pointing at the transcript")
+	if !strings.Contains(compacted, "first") && !strings.Contains(compacted, "second") && !strings.Contains(compacted, "third") {
+		t.Fatalf("tiny budget dropped every original line: %q", compacted)
 	}
 }
 
@@ -85,10 +85,11 @@ func TestCompressToolResultNeverDropsEveryLine(t *testing.T) {
 func TestCompressToolResultKeepsOrder(t *testing.T) {
 	lines := make([]string, 0, 60)
 	for i := 0; i < 20; i++ {
-		lines = append(lines, "filler line", "", "go test ./internal/agent", "note")
+		lines = append(lines, "filler line", "", "ordinary note", "note")
 	}
+	lines = append(lines, "go test ./internal/agent")
 	output := strings.Join(lines, "\n")
-	compacted := compressToolResultLines(output, 120)
+	compacted := compressToolResultLines(output, 180)
 
 	position := 0
 	for _, line := range strings.Split(compacted, "\n") {
@@ -106,6 +107,65 @@ func TestCompressToolResultKeepsOrder(t *testing.T) {
 		if !found {
 			t.Fatalf("retained line is not a subsequence: %q", line)
 		}
+	}
+}
+
+// criterion: a protected line that itself exceeds the budget is shortened, not
+// returned whole. Callers binary-search this function and drop an empty result.
+func TestCompressToolResultHardCapWhenProtectedLineExceedsBudget(t *testing.T) {
+	line := "error: " + strings.Repeat("connection refused at /var/log/app/server.log ", 40)
+	got := compressToolResultLines(line, 80)
+	if len([]rune(got)) > 80 {
+		t.Fatalf("protected overflow returned %d runes", len([]rune(got)))
+	}
+	if !strings.Contains(got, "error:") {
+		t.Fatalf("error head was dropped: %q", got)
+	}
+	previous := len([]rune(got))
+	for _, limit := range []int{64, 48, 32, 16, 8} {
+		shrunk := compressToolResultLines(line, limit)
+		if n := len([]rune(shrunk)); n > limit || n > previous {
+			t.Fatalf("limit %d returned %d runes after %d", limit, n, previous)
+		}
+		previous = len([]rune(shrunk))
+	}
+}
+
+// criterion: a timestamped progress line is redundant, not an identifier.
+func TestCompressToolResultDropsTimestampProgress(t *testing.T) {
+	lines := []string{"2026-10-24 02:14:28 fetching"}
+	for i := 0; i < 30; i++ {
+		lines = append(lines, "2026-10-24 02:14:28 fetching")
+	}
+	lines = append(lines, "error: build failed", "wrote /tmp/out/result.json")
+	got := compressToolResultLines(strings.Join(lines, "\n"), 160)
+	if len([]rune(got)) > 160 {
+		t.Fatalf("timestamped log exceeded budget: %d", len([]rune(got)))
+	}
+	if strings.Count(got, "fetching") > 1 {
+		t.Fatalf("repeated timestamp lines were kept: %q", got)
+	}
+	for _, want := range []string{"error: build failed", "/tmp/out/result.json"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("identifier dropped: %q\n%s", want, got)
+		}
+	}
+}
+
+// criterion: rewriting a duration does not fail compaction. Dropping the path does.
+func TestValidateCompactSummaryAllowsRewrittenMeasurement(t *testing.T) {
+	messages := compactSampleMessages()
+	rewritten := strings.ReplaceAll(compactSampleSummaryBody, "elapsed=4213ms", "耗时约 4 秒") + "\n\npending work: rerun the suite."
+	if got := validateCompactSummary(rewritten, messages); !got.Valid {
+		t.Fatalf("rewritten measurement rejected: %s", got.Reason)
+	}
+	droppedPath := strings.ReplaceAll(rewritten, "/home/dev/workspace/lucky-agent/agent/compact_adapter.go", "the adapter file")
+	got := validateCompactSummary(droppedPath, messages)
+	if got.Valid {
+		t.Fatal("dropped path was accepted")
+	}
+	if !strings.Contains(got.Reason, "compact_adapter.go") {
+		t.Fatalf("failure does not name the path: %q", got.Reason)
 	}
 }
 
@@ -139,12 +199,12 @@ func TestValidateCompactSummaryRejectsDroppedIdentifier(t *testing.T) {
 		t.Fatalf("positive sample rejected: %s", got.Reason)
 	}
 
-	negative := strings.ReplaceAll(positive, "elapsed=4213ms", "elapsed measured")
+	negative := strings.ReplaceAll(positive, "error: undefined: compactlib.Validate", "the suite failed")
 	got := validateCompactSummary(negative, messages)
 	if got.Valid {
 		t.Fatal("negative sample accepted after dropping a source identifier")
 	}
-	if !strings.Contains(got.Reason, "4213") {
+	if !strings.Contains(got.Reason, "compactlib.Validate") {
 		t.Fatalf("failure does not name the dropped identifier: %q", got.Reason)
 	}
 }
@@ -156,7 +216,7 @@ func TestCompactValidatorStrength(t *testing.T) {
 	base := compactSampleSummaryBody + "\n\npending work: rerun the suite."
 
 	negatives := []string{
-		strings.ReplaceAll(base, "4213", "measured"),
+		strings.ReplaceAll(base, "go test ./internal/agent", "the test command"),
 		strings.ReplaceAll(base, "/home/dev/workspace/lucky-agent/agent/compact_adapter.go", "the adapter file"),
 		strings.ReplaceAll(base, "compactlib.Validate", "the validator"),
 	}

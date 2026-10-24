@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -36,7 +37,9 @@ type toolLine struct {
 var (
 	diffHunkPattern = regexp.MustCompile(`^(?:@@ -\d|\+\+\+ |--- |diff --git )`)
 	commitPattern   = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
-	valuePattern    = regexp.MustCompile(`(?:\b0x[0-9a-fA-F]+|\b\d+\.\d+|\b\d+%|\b\d{4,})`)
+	// A bare 4-digit run matches years, ports, and line numbers on almost every
+	// log line, which made compression a no-op. Named measurements stay.
+	valuePattern    = regexp.MustCompile(`(?i)(?:\b0x[0-9a-fA-F]{4,}|\b\d+\.\d+%?|\b\d{4,}(?:ms|ns|us|µs|s|kb|mb|gb|kib|mib|gib)\b|(?:elapsed|duration|latency|timeout|size|bytes|count|total|limit|offset|status|code|exit)\s*[=:]\s*\d+)`)
 	pathPattern     = regexp.MustCompile(`(?:^|[\s"'(=:\[,])(?:/[\w.\-]+/[^\s"')\]]*|(?:\.{1,2}/)[^\s"')\]]+|~/[^\s"')\]]+|[A-Za-z]:\\[^\s"')\]]+)`)
 	urlPattern      = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"')\]]+`)
 	errorPattern    = regexp.MustCompile(`(?i)\b(?:error|panic|exception|traceback|fatal|failed|failure|denied|not found|exit (?:status|code))\b`)
@@ -141,19 +144,12 @@ func toolLineRedundancy(line string, seen map[string]int, position, total int) f
 	}
 	score := 1.0
 	if length := float64(len([]rune(trimmed))); length > 0 {
-		score += minFloat(length/240.0, 1.0)
+		score += math.Min(length/240.0, 1.0)
 	}
 	if position == 0 || position == total-1 {
 		score += 0.5
 	}
 	return score
-}
-
-func minFloat(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // compressToolResultLines shortens out to at most limit runes. Lines that carry
@@ -271,9 +267,94 @@ func compressToolResultLines(out string, limit int) string {
 	if dropped > 0 {
 		compacted += "\n" + omissionRecord(dropped)
 	}
-	// Identifier lines outrank the budget: when they alone exceed it the block
-	// stays intact rather than losing evidence the next turn cannot rebuild.
+	// Callers treat limit as a hard cap: a binary search and a shrinking
+	// evidence window both assume a smaller limit never returns a longer
+	// string. Protected lines are preferred, but a line that alone exceeds
+	// the budget is cut in place instead of returning the whole block.
+	if len([]rune(compacted)) > limit {
+		return fitToolResultToLimit(lines, kept, limit)
+	}
 	return compacted
+}
+
+// fitToolResultToLimit returns a result of at most limit runes. Protected
+// lines are shortened from the middle before any of them is dropped, so a
+// path or error head still has both ends. The omission record is appended
+// only when it still fits; the evidence comes first.
+func fitToolResultToLimit(lines []toolLine, kept []bool, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	selected := make([]int, 0, len(lines))
+	for _, line := range lines {
+		if kept[line.index] {
+			selected = append(selected, line.index)
+		}
+	}
+	if len(selected) == 0 && len(lines) > 0 {
+		selected = append(selected, 0)
+	}
+	texts := make([]string, len(selected))
+	costs := make([]int, len(selected))
+	for i, index := range selected {
+		texts[i] = lines[index].text
+		costs[i] = len([]rune(texts[i]))
+	}
+	separators := len(selected) - 1
+	if separators < 0 {
+		separators = 0
+	}
+	for sumRunes(costs)+separators > limit {
+		longest, index := -1, -1
+		for i, cost := range costs {
+			if cost > longest {
+				longest, index = cost, i
+			}
+		}
+		if index < 0 || longest <= 1 {
+			break
+		}
+		next := longest / 2
+		if next < 1 {
+			next = 1
+		}
+		if next > limit {
+			next = limit
+		}
+		texts[index] = truncateToolResultMiddle(texts[index], next)
+		costs[index] = len([]rune(texts[index]))
+		if costs[index] >= longest {
+			texts[index] = truncateToolResultMiddle(texts[index], limit)
+			costs[index] = len([]rune(texts[index]))
+			break
+		}
+	}
+	for sumRunes(costs)+separators > limit && len(texts) > 1 {
+		texts = texts[:len(texts)-1]
+		costs = costs[:len(costs)-1]
+		separators = len(texts) - 1
+	}
+	if len(texts) == 1 && costs[0] > limit {
+		texts[0] = truncateToolResultMiddle(texts[0], limit)
+	}
+	compacted := strings.Join(texts, "\n")
+	record := omissionRecord(len(lines))
+	if len([]rune(compacted))+1+len([]rune(record)) <= limit {
+		compacted += "\n" + record
+	}
+	runes := []rune(compacted)
+	if len(runes) > limit {
+		return string(runes[:limit])
+	}
+	return compacted
+}
+
+func sumRunes(costs []int) int {
+	total := 0
+	for _, cost := range costs {
+		total += cost
+	}
+	return total
 }
 
 // minShrinkableLine is the size below which a line is not worth cutting again.
