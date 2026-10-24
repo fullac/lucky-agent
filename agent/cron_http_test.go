@@ -27,13 +27,14 @@ func TestAddCronJobPauseResumeRemovePersists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a1.AddCronJob("morning", "早间任务", "提醒", "agent", "总结昨日", map[string]string{
-		"session_id": "sess-1",
-		"platform":   "android",
+		"session_id":       "sess-1",
+		"platform":         "android",
+		"delete_after_run": "true",
 	}, schedule); err != nil {
 		t.Fatalf("AddCronJob() error = %v", err)
 	}
 	job, ok := a1.CronEngine().GetJob("morning")
-	if !ok || job.Metadata["session_id"] != "sess-1" || job.Metadata["platform"] != "android" || job.Metadata["command"] != "总结昨日" {
+	if !ok || job.Metadata["session_id"] != "sess-1" || job.Metadata["platform"] != "android" || job.Metadata["command"] != "总结昨日" || !job.DeleteAfterRun {
 		t.Fatalf("created job metadata = %+v ok=%v", job, ok)
 	}
 	if err := a1.PauseCronJob("morning"); err != nil {
@@ -53,7 +54,7 @@ func TestAddCronJobPauseResumeRemovePersists(t *testing.T) {
 	}
 	defer a2.Close()
 	restored, ok := a2.CronEngine().GetJob("morning")
-	if !ok || restored.Status != cron.StatusPaused || restored.Metadata["session_id"] != "sess-1" {
+	if !ok || restored.Status != cron.StatusPaused || restored.Metadata["session_id"] != "sess-1" || !restored.DeleteAfterRun {
 		t.Fatalf("restored job = %+v ok=%v", restored, ok)
 	}
 	if err := a2.ResumeCronJob("morning"); err != nil {
