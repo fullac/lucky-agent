@@ -159,6 +159,15 @@ func (a *Agent) compactSessionWithProvider(ctx context.Context, sess *session.Se
 			emitCompactProgress(opts, CompactProgress{Phase: "failed", Trigger: trigger, Message: err.Error(), Error: err.Error()})
 			return nil, err
 		}
+		// A summary may only replace messages that are still recoverable. Re-read
+		// the session after the backup and refuse to write a boundary when the
+		// covered range moved underneath this compaction, so a boundary never
+		// replaces messages that now exist only as an earlier summary.
+		if _, reread, coveredAgain := session.CompactSegments(sess.GetMessages()); coveredAgain != covered || len(reread) < len(raw) {
+			err := fmt.Errorf("compact session: raw messages changed during compaction; refusing to overwrite them with a summary")
+			emitCompactProgress(opts, CompactProgress{Phase: "failed", Trigger: trigger, Message: err.Error(), Error: err.Error()})
+			return nil, err
+		}
 		sess.AddCompactBoundary(meta)
 		if err := sess.Save(); err != nil {
 			err = fmt.Errorf("compact session: save boundary: %w", err)
