@@ -56,17 +56,21 @@ func (p *contextPlanner) fitEvidenceToBudget(text string, budget int) string {
 	if p.est.Estimate(text) <= budget {
 		return text
 	}
-	lo, hi, best := 1, len([]rune(text)), ""
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		candidate := truncateToolResultForContext(text, mid)
-		if p.est.Estimate(candidate) <= budget {
-			best, lo = candidate, mid+1
-		} else {
-			hi = mid - 1
+	// Line selection can change the composition as the rune cap changes, so
+	// estimated tokens are not monotonic. Back off a bounded cap and validate
+	// each actual candidate instead of binary-searching an invalid predicate.
+	for limit := len([]rune(text)); limit > 0; {
+		candidate := truncateToolResultForContext(text, limit)
+		cost := p.est.Estimate(candidate)
+		if cost <= budget {
+			return candidate
 		}
+		if limit == 1 {
+			break
+		}
+		limit = max(1, min(limit*budget/cost, limit-max(1, limit/10)))
 	}
-	return best
+	return ""
 }
 
 // Storage remains append-only. Only the projection presented to the model is

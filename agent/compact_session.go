@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -48,16 +49,12 @@ func compactRangeFingerprint(messages []provider.Message, from, to int) string {
 	if from > to {
 		from = to
 	}
-	sum := sha256.New()
-	for _, message := range messages[from:to] {
-		sum.Write([]byte(message.Role))
-		sum.Write([]byte{0})
-		sum.Write([]byte(message.Content))
-		sum.Write([]byte{0})
-		sum.Write([]byte(message.ToolCallID))
-		sum.Write([]byte{0})
+	data, err := json.Marshal(messages[from:to])
+	if err != nil {
+		return ""
 	}
-	return hex.EncodeToString(sum.Sum(nil))
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 type CompactSessionOptions struct {
@@ -110,6 +107,9 @@ func (a *Agent) compactSessionWithProvider(ctx context.Context, sess *session.Se
 	}
 	compactInput, retained := selectCompactSegmentInput(raw, est, opts.RetainRecentTurns, opts.TargetTailTokens)
 	coveredFingerprint := compactRangeFingerprint(raw, 0, len(compactInput))
+	if coveredFingerprint == "" {
+		return nil, fmt.Errorf("compact session: cannot fingerprint source messages")
+	}
 	if len(compactInput) == 0 {
 		return nil, fmt.Errorf("compact session: retained tail leaves no complete messages to compact")
 	}

@@ -66,6 +66,11 @@ func compactIdentifiers(messages []provider.Message) []string {
 	}
 	for _, message := range messages {
 		for _, line := range strings.Split(message.Content, "\n") {
+			if toolLineIsCommand(line) {
+				command := strings.TrimSpace(line)
+				command = strings.TrimPrefix(strings.TrimPrefix(command, "$ "), "> ")
+				add(command)
+			}
 			// The first line of an error is what a follow-up turn re-reads, so it
 			// counts as an identifier even without a path or a value on it.
 			if !errorPattern.MatchString(line) {
@@ -129,16 +134,15 @@ func preferCompactIdentifiers(identifiers []string) []string {
 	return identifiers
 }
 
-// missingCompactIdentifiers reports which identifiers the summary does not
-// mention. Matching is case-insensitive because a summary may reflow casing.
+// Identifiers are exact evidence: changing path or command-flag case can name
+// a different file or operation even if surrounding prose is reworded.
 func missingCompactIdentifiers(summary string, identifiers []string) []string {
 	if len(identifiers) == 0 {
 		return nil
 	}
-	lower := strings.ToLower(summary)
 	missing := make([]string, 0, len(identifiers))
 	for _, identifier := range identifiers {
-		if !strings.Contains(lower, strings.ToLower(identifier)) {
+		if !strings.Contains(summary, identifier) {
 			missing = append(missing, identifier)
 		}
 	}

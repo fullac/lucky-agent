@@ -11,13 +11,11 @@ import (
 // Tool output is evidence. The next turn may need a path, an error string, a
 // commit, or one numeric value that happens to sit in the middle of a long
 // result, and a positional head/tail cut drops exactly those lines. Compaction
-// therefore drops the most redundant lines and never drops a line that carries
-// an identifier.
+// therefore prefers identifier-bearing lines over redundant lines. The hard
+// budget can still shorten identifiers; callers retain a transcript reference.
 //
-// The redundancy score is a deterministic stand-in for the conditional-entropy
-// ranking in #337: the agent loop has no frozen proxy model, and the rule below
-// can only remove blank, repeated, and progress lines, so it cannot remove
-// evidence by mistake.
+// This is a deterministic redundancy heuristic, not a conditional-entropy
+// model or a proof that omitted text can be reconstructed.
 type toolLineKind int
 
 const (
@@ -153,7 +151,7 @@ func toolLineRedundancy(line string, seen map[string]int, position, total int) f
 }
 
 // compressToolResultLines shortens out to at most limit runes. Lines that carry
-// identifiers are never dropped, redundant lines are dropped first, at least one
+// identifiers are preferred, redundant lines are dropped first, at least one
 // original line survives, and retained lines keep their original order.
 func compressToolResultLines(out string, limit int) string {
 	if limit <= 0 || len([]rune(out)) <= limit {
@@ -164,9 +162,9 @@ func compressToolResultLines(out string, limit int) string {
 	seen := make(map[string]int, len(rawLines))
 	for i, line := range rawLines {
 		kind := classifyToolLine(line)
-		score := 0.0
-		if kind != toolLineProtected {
-			score = toolLineRedundancy(line, seen, i, len(rawLines))
+		score := toolLineRedundancy(line, seen, i, len(rawLines))
+		if seen[strings.TrimSpace(line)] > 1 {
+			kind = toolLineRedundant
 		}
 		lines[i] = toolLine{index: i, text: line, kind: kind, score: score, runes: len([]rune(line)) + 1}
 	}
@@ -184,18 +182,9 @@ func compressToolResultLines(out string, limit int) string {
 	// budget and force a positional cut through a protected line.
 	reserve := len([]rune(omissionRecord(len(lines)))) + 1
 	dropped := 0
+	textRunes := len([]rune(out))
 	blockRunes := func() int {
-		total, first := 0, true
-		for _, line := range lines {
-			if !kept[line.index] {
-				continue
-			}
-			if !first {
-				total++
-			}
-			first = false
-			total += line.runes - 1
-		}
+		total := textRunes
 		if dropped > 0 {
 			total += 1 + len([]rune(omissionRecord(dropped)))
 		}
@@ -207,6 +196,7 @@ func compressToolResultLines(out string, limit int) string {
 			return
 		}
 		kept[index] = false
+		textRunes -= lines[index].runes
 		if lines[index].kind != toolLineProtected {
 			nonProtected--
 		}
@@ -228,22 +218,23 @@ func compressToolResultLines(out string, limit int) string {
 	// 2. A single long line can still dominate the budget. Shrink it in place so
 	// the shorter lines around it, which usually name the target and conclusion,
 	// survive intact.
-	for blockRunes() > limit {
-		longest, index := -1, -1
-		for _, line := range lines {
-			if !kept[line.index] || line.kind == toolLineProtected {
-				continue
-			}
-			if line.runes > longest {
-				longest, index = line.runes, line.index
-			}
-		}
-		if index < 0 || longest <= minShrinkableLine {
+	longestFirst := append([]toolLine(nil), lines...)
+	sort.SliceStable(longestFirst, func(i, j int) bool {
+		return longestFirst[i].runes > longestFirst[j].runes
+	})
+	for _, line := range longestFirst {
+		if blockRunes() <= limit {
 			break
 		}
-		shrunk := truncateToolResultMiddle(lines[index].text, longest/2)
+		index := line.index
+		if !kept[index] || line.kind == toolLineProtected || line.runes <= minShrinkableLine {
+			continue
+		}
+		target := max(minShrinkableLine-1, line.runes-1-(blockRunes()-limit))
+		shrunk := truncateToolResultMiddle(lines[index].text, target)
 		lines[index].text = shrunk
 		lines[index].runes = len([]rune(shrunk)) + 1
+		textRunes += lines[index].runes - line.runes
 	}
 
 	// 3. Only then drop ordinary content lines, cheapest first, keeping one.
@@ -294,6 +285,17 @@ func fitToolResultToLimit(lines []toolLine, kept []bool, limit int) string {
 	if len(selected) == 0 && len(lines) > 0 {
 		selected = append(selected, 0)
 	}
+	// Avoid turning thousands of protected rows into one-character fragments.
+	// Select bounded meaningful snippets, preferring identifying rows, then
+	// restore source order. Repeated longest-line scans here were quadratic.
+	maxLines := max(1, (limit+1)/9)
+	if len(selected) > maxLines {
+		sort.SliceStable(selected, func(i, j int) bool {
+			return lines[selected[i]].kind > lines[selected[j]].kind
+		})
+		selected = selected[:maxLines]
+		sort.Ints(selected)
+	}
 	texts := make([]string, len(selected))
 	costs := make([]int, len(selected))
 	for i, index := range selected {
@@ -304,41 +306,25 @@ func fitToolResultToLimit(lines []toolLine, kept []bool, limit int) string {
 	if separators < 0 {
 		separators = 0
 	}
-	for sumRunes(costs)+separators > limit {
-		longest, index := -1, -1
-		for i, cost := range costs {
-			if cost > longest {
-				longest, index = cost, i
-			}
+	available := limit - separators
+	cap := 1
+	for lo, hi := 1, available; lo <= hi; {
+		mid := lo + (hi-lo)/2
+		total := 0
+		for _, cost := range costs {
+			total += min(cost, mid)
 		}
-		if index < 0 || longest <= 1 {
-			break
-		}
-		next := longest / 2
-		if next < 1 {
-			next = 1
-		}
-		if next > limit {
-			next = limit
-		}
-		texts[index] = truncateToolResultMiddle(texts[index], next)
-		costs[index] = len([]rune(texts[index]))
-		if costs[index] >= longest {
-			texts[index] = truncateToolResultMiddle(texts[index], limit)
-			costs[index] = len([]rune(texts[index]))
-			break
+		if total <= available {
+			cap, lo = mid, mid+1
+		} else {
+			hi = mid - 1
 		}
 	}
-	for sumRunes(costs)+separators > limit && len(texts) > 1 {
-		texts = texts[:len(texts)-1]
-		costs = costs[:len(costs)-1]
-		separators = len(texts) - 1
-	}
-	if len(texts) == 1 && costs[0] > limit {
-		texts[0] = truncateToolResultMiddle(texts[0], limit)
+	for i := range texts {
+		texts[i] = truncateToolResultMiddle(texts[i], cap)
 	}
 	compacted := strings.Join(texts, "\n")
-	record := omissionRecord(len(lines))
+	record := omissionRecord(len(lines) - len(selected))
 	if len([]rune(compacted))+1+len([]rune(record)) <= limit {
 		compacted += "\n" + record
 	}
@@ -347,14 +333,6 @@ func fitToolResultToLimit(lines []toolLine, kept []bool, limit int) string {
 		return string(runes[:limit])
 	}
 	return compacted
-}
-
-func sumRunes(costs []int) int {
-	total := 0
-	for _, cost := range costs {
-		total += cost
-	}
-	return total
 }
 
 // minShrinkableLine is the size below which a line is not worth cutting again.
