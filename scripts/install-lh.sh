@@ -56,19 +56,30 @@ for asset in data.get("assets", []):
     if asset.get("name") == archive_name:
         print(asset.get("download_url", ""))
         print(data.get("tag_name", ""))
+        print(asset.get("sha256", ""))
         break
 PY
 )"
 download_url="$(printf '%s\n' "$release_metadata" | sed -n '1p')"
 release_tag="$(printf '%s\n' "$release_metadata" | sed -n '2p')"
+asset_sha="$(printf '%s\n' "$release_metadata" | sed -n '3p')"
 
 if [ -z "$download_url" ]; then
   echo "could not find release asset: $archive_name" >&2
   exit 1
 fi
+if [ -z "$asset_sha" ]; then
+  echo "release asset is missing sha256: $archive_name" >&2
+  exit 1
+fi
 
 mkdir -p "$tmp_dir"
 curl -fsSL -o "$tmp_dir/$archive_name" "$download_url"
+actual="$(sha256sum "$tmp_dir/$archive_name" | awk '{print $1}')"
+if [ "$actual" != "$asset_sha" ]; then
+  echo "checksum mismatch for $archive_name" >&2
+  exit 1
+fi
 tar -xzf "$tmp_dir/$archive_name" -C "$tmp_dir"
 installer="$tmp_dir/install.sh"
 if [ ! -x "$installer" ]; then
