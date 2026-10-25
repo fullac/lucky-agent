@@ -75,11 +75,19 @@ fi
 
 mkdir -p "$tmp_dir"
 curl -fsSL -o "$tmp_dir/$archive_name" "$download_url"
-actual="$(sha256sum "$tmp_dir/$archive_name" | awk '{print $1}')"
-if [ "$actual" != "$asset_sha" ]; then
-  echo "checksum mismatch for $archive_name" >&2
-  exit 1
-fi
+# Python is already required for the manifest; unlike sha256sum it is also
+# available on the supported macOS installation path. Hash before extraction.
+python3 - "$tmp_dir/$archive_name" "$asset_sha" <<'PY'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+with open(sys.argv[1], "rb") as archive:
+    for block in iter(lambda: archive.read(1024 * 1024), b""):
+        digest.update(block)
+if digest.hexdigest() != sys.argv[2].strip().lower():
+    raise SystemExit("checksum mismatch for " + sys.argv[1])
+PY
 tar -xzf "$tmp_dir/$archive_name" -C "$tmp_dir"
 installer="$tmp_dir/install.sh"
 if [ ! -x "$installer" ]; then
