@@ -4,6 +4,10 @@
 开始核对时仍为 open 的 issue，不包含 PR、已关闭 issue 或 Android 仓库。
 共 14 项，其中 #81 与 #84 是同一 WebSocket 测试问题。
 
+合并后补查结论：**13 项完成，#274 重新打开，尚未全部完成。** 9 MiB 的旧 Markdown
+单行 JSON 在冷搜索时仍漏结果，见下表。主修复通过 [#351](https://github.com/yurika0211/lucky-agent/pull/351)
+合入 `master`（`1694ad6`）；#274 的继续实现需要在所属的 runtime 仓库进行。
+
 这是一次交付快照，不替代项目的长期进度总览。下表区分本次补齐与已有修复，
 不把历史修复计为本次新写代码。
 
@@ -16,7 +20,7 @@
 | [#268](https://github.com/yurika0211/lucky-agent/issues/268) | 整合 #350 并补发布契约测试 | 清单内下载地址固定到 tag，不能使用浮动 latest |
 | [#269](https://github.com/yurika0211/lucky-agent/issues/269) | 整合 #350、合并 app #20、接入主程序 | updater 和两种安装脚本解压前验证 SHA-256；Unix 复用 Python，避免依赖 macOS 默认缺失的 sha256sum |
 | [#270](https://github.com/yurika0211/lucky-agent/issues/270) | 修正 #350 未覆盖的 tag-push 场景 | `published_at` 在 release event 字段为空时使用生成时的 UTC 时间，下载页已有日期映射不变 |
-| [#274](https://github.com/yurika0211/lucky-agent/issues/274) | 已有修复，核验保留 | `05d6da9` 及后续 runtime：`TestSearchMetadataOnlySessionFindsMessage` 通过，不要求先全量加载 |
+| [#274](https://github.com/yurika0211/lucky-agent/issues/274) | **未完成，已重新打开** | 小会话回归通过，但额外 9 MiB 旧格式复现仍是 `cold_hits=0`、加载后 `hot_hits=1`；`fileContainsFold` 的 Scanner 单行上限为 8 MiB 且忽略扫描错误 |
 | [#275](https://github.com/yurika0211/lucky-agent/issues/275) | 已有修复，核验保留 | runtime 的加载失败返回错误，不提升为空的已加载历史；`TestSaveCorruptSegmentDoesNotWipe` 通过 |
 | [#276](https://github.com/yurika0211/lucky-agent/issues/276) | 合并当前所属模块的修复并接入 | [runtime #18](https://github.com/yurika0211/luckyagent-runtime/pull/18) 取代旧路径 PR #287；构造时解析环境配置，校验向量维数/响应索引，保持 RAG fingerprint 一致 |
 | [#281](https://github.com/yurika0211/lucky-agent/issues/281) | 已有修复，核验保留 | orchestrator `4c324046`：等任务完成而非固定 sleep；`TestDelegateManagerAutoModeUsesPlanner` 的 race 测试重复 50 次通过 |
@@ -40,6 +44,18 @@
 
 根 `go.mod` 与 `agent/go.mod` 分别验证。只跑根 `./...` 不代表测试了 Agent。
 最终源码与下载版本的一致性用 `scripts/verify-agent-graph.py` 检查。
+
+## #274 的剩余工作
+
+在最终选择的 runtime 上，用标题不含关键词的旧 `.md` 会话，正文为 9 MiB 字符
+后跟 `unique-zebra-42`。结果为 `legacy bytes=9437360 cold_hits=0`，
+`GetMessagesWithError` 返回一条消息且无错误，随后同一查询 `hot_hits=1`。
+原测试仅有短文本，因此没有覆盖真实大会话的单行限制。
+
+需要在 `luckyagent-runtime/session` 将冷搜索改为按记录/消息解码的扫描，不靠提高
+Scanner 上限解决；同时补超长旧文件、转义文本及保持懒加载的回归。本线程尚未挂载
+runtime 仓库，因此没有在模块缓存或已删除的旧 `internal/session` 路径修改源码。
+前面的关单已撤回，并在 issue 和 #351 留下更正说明。
 
 ## 验证环境和限制
 
