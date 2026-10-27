@@ -73,8 +73,9 @@ assistant tool-call 和它的全部匹配连续结果必须一起保留；裁剪
 result 会被移除。最新工具组位于检索证据之后，因此同为 High 时优先入选。
 Critical 不会被静默丢弃；实际文本超窗时在模型请求前报错。
 
-工具有原有的专用字符摘要/头尾压缩，随后按 ToolResult token 预算投影；并行调用
-共享预算。截短结果给出 `context_history_read action=result tool_call_id=...`。
+项目规则使用独立的头尾文本裁剪；工具结果先按行去重复、进度和空行，再按路径、
+错误、命令等标识符优先级压缩，最后在 ToolResult token 预算内投影。并行调用共享预算。
+截短结果给出 `context_history_read action=result tool_call_id=...`。
 该工具从宿主绑定会话读原结果（含 blob），或读取旧 compact 片段；它不接受模型
 选择其他会话。参数、分页和执行验收说明见[长任务上下文](../long-task-context.md)。
 
@@ -86,5 +87,5 @@ bucket 包含 `system/project/history/memory/rag/tool_result/user`，消费者�
 
 计数包含文本、reasoning、名称和调用参数，但不是供应商精确 tokenizer；不包含完整
 工具 schema 和图像费用。结构化 ContentParts 仍跳过最终文本裁剪，电脑画面只保留
-最新临时帧。长文头尾可能省略中间约束，模型需要读回原文件/证据。验收依赖模型，
-确定性回归通过不代表所有模型的长任务成功率已提升。
+最新临时帧。项目规则保留头尾，工具结果按行优先级省略，模型需要读回原文件/证据。
+验收依赖模型，确定性回归通过不代表所有模型的长任务成功率已提升。

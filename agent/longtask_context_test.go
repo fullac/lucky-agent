@@ -56,6 +56,26 @@ func TestLongtaskProjectRulesSurviveLongSoul(t *testing.T) {
 	}
 }
 
+func TestLongtaskProjectRulesUseDedicatedTextClip(t *testing.T) {
+	a, _ := contextTestAgent(t)
+	p := newContextPlanner(a, defaultContextBuildOptions())
+	const firstRule = "PROJECT_RULE_FIRST: preserve the current request"
+	const lastRule = "PROJECT_RULE_LAST: verify before claiming completion"
+	project := firstRule + "\n" + strings.Repeat("ordinary project guidance\n", 2000) + lastRule
+
+	const budget = 64
+	got := p.fitProjectContextToBudget(project, budget)
+	if !strings.Contains(got, firstRule) || !strings.Contains(got, lastRule) {
+		t.Fatalf("dedicated project clip lost a rule: %q", got)
+	}
+	if p.est.Estimate(got) > budget {
+		t.Fatalf("project clip exceeded budget: %d > %d", p.est.Estimate(got), budget)
+	}
+	if strings.Contains(got, "lines omitted for context") {
+		t.Fatalf("project context used tool-output omission metadata: %q", got)
+	}
+}
+
 func TestLongtaskEmergencyCompactUsesActualInputBudget(t *testing.T) {
 	a, sess := contextTestAgent(t)
 	sess.AddProviderMessage(provider.Message{Role: "user", Content: strings.Repeat("large current task ", 1500)})

@@ -57,11 +57,11 @@ func BenchmarkCompactRepeatedLines(b *testing.B) {
 	}
 }
 
-func TestCompactEvidenceFitsWithoutMonotonicLineAssumption(t *testing.T) {
+func TestToolEvidenceFitsWithoutMonotonicLineAssumption(t *testing.T) {
 	p := &contextPlanner{est: contextx.NewTokenEstimator(4096)}
 	text := strings.Repeat("普通说明 text repeated\n", 100) + "error: /srv/CaseSensitive/main.go failed"
 	for _, budget := range []int{1, 4, 16, 64, 128, 256} {
-		got := p.fitEvidenceToBudget(text, budget)
+		got := p.fitToolEvidenceToBudget(text, budget)
 		if got == "" || p.est.Estimate(got) > budget {
 			t.Fatalf("budget %d returned unusable evidence (%d tokens): %q", budget, p.est.Estimate(got), got)
 		}

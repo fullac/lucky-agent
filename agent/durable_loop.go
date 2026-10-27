@@ -699,7 +699,7 @@ func (a *Agent) compactDurableCheckpoint(ctx context.Context, goal string, cp *d
 		return fmt.Errorf("progress summary is incomplete")
 	}
 	p := newContextPlannerWithProvider(a, defaultContextBuildOptions(), snapshot)
-	cp.Summary, cp.SummarizedThrough = p.fitEvidenceToBudget(resp.Content, a.contextInputLimit()/5), cut
+	cp.Summary, cp.SummarizedThrough = p.fitTextToBudget(resp.Content, a.contextInputLimit()/5), cut
 	cp.Tokens += resp.TokensUsed
 	return save()
 }
