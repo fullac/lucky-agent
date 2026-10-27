@@ -115,7 +115,7 @@ func TestRecapFailurePreservesPreviousAndLatestTurnWins(t *testing.T) {
 }
 
 func TestSuccessfulTurnsQueueRecapsWithoutBlocking(t *testing.T) {
-	for _, mode := range []string{"sync", "native", "simulated", "foreground"} {
+	for _, mode := range []string{"sync", "native", "simulated", "foreground", "ephemeral"} {
 		t.Run(mode, func(t *testing.T) {
 			a, s, cfg := foregroundHarness(t)
 			a.recaps = newRecapService()
@@ -137,6 +137,7 @@ func TestSuccessfulTurnsQueueRecapsWithoutBlocking(t *testing.T) {
 				cfg.Foreground = false
 				_ = a.cfg.Set("agent.foreground.enabled", "false")
 			}
+			cfg.Ephemeral = mode == "ephemeral"
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			if mode == "sync" || mode == "foreground" {
@@ -144,7 +145,11 @@ func TestSuccessfulTurnsQueueRecapsWithoutBlocking(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				_ = a.cfg.Set("stream_mode", mode)
+				streamMode := mode
+				if mode == "ephemeral" {
+					streamMode = "native"
+				}
+				_ = a.cfg.Set("stream_mode", streamMode)
 				events, err := a.ChatWithSessionStreamWithLoopConfig(ctx, s.ID, "你好", cfg)
 				if err != nil {
 					t.Fatal(err)
@@ -166,7 +171,10 @@ func TestSuccessfulTurnsQueueRecapsWithoutBlocking(t *testing.T) {
 			a.recaps.mu.Lock()
 			queued := a.recaps.running[s]
 			a.recaps.mu.Unlock()
-			if !queued {
+			if mode == "ephemeral" && queued {
+				t.Fatal("ephemeral turn queued a recap")
+			}
+			if mode != "ephemeral" && !queued {
 				t.Fatal("turn did not queue a recap")
 			}
 		})
