@@ -165,7 +165,7 @@ func (a *Agent) shouldAutoCompactSession(sess *session.Session, routingText stri
 	checkMessages = append(checkMessages, provider.Message{Role: "user", Content: routingText})
 	core := a.buildSystemPromptWithOptions(sess, systemPromptOptions{OmitProjectContext: true})
 	checkMessages = append(checkMessages, provider.Message{Role: "system", Content: planner.fitTextToBudget(core, planner.budget.System)})
-	project := planner.fitEvidenceToBudget(a.buildPinnedProjectPrompt(sess), planner.budget.Project)
+	project := planner.fitProjectContextToBudget(a.buildPinnedProjectPrompt(sess), planner.budget.Project)
 	checkMessages = append(checkMessages, provider.Message{Role: "system", Content: project})
 	estimated := estimateProviderMessages(planner.est, checkMessages)
 	maxTokens := a.contextInputLimit()

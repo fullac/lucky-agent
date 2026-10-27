@@ -47,26 +47,87 @@ func (a *Agent) buildPinnedProjectPrompt(sess *session.Session) string {
 	})
 }
 
-// Preserve both ends, and expose omissions rather than hiding a log's final
-// status or a document's final constraint behind a prefix-only truncation.
-func (p *contextPlanner) fitEvidenceToBudget(text string, budget int) string {
+// fitProjectContextToBudget keeps project instructions separate from the
+// tool-output compressor. Project rules are natural language: they do not
+// become less important merely because a line lacks a path or command.
+func (p *contextPlanner) fitProjectContextToBudget(text string, budget int) string {
+	text = strings.TrimSpace(text)
 	if budget <= 0 {
 		return ""
 	}
 	if p.est.Estimate(text) <= budget {
 		return text
 	}
-	lo, hi, best := 1, len([]rune(text)), ""
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		candidate := truncateToolResultForContext(text, mid)
-		if p.est.Estimate(candidate) <= budget {
-			best, lo = candidate, mid+1
-		} else {
-			hi = mid - 1
+
+	runes := []rune(text)
+	marker := "\n\n...[project context omitted; consult the source file for full rules]...\n\n"
+	for keep := len(runes); keep > 0; {
+		candidate := balancedTextWithMarker(runes, keep, marker)
+		cost := p.est.Estimate(candidate)
+		if cost <= budget {
+			return candidate
 		}
+		if keep == 1 {
+			break
+		}
+		next := max(1, min(keep*budget/cost, keep-max(1, keep/10)))
+		if next >= keep {
+			next = keep - 1
+		}
+		keep = next
 	}
-	return best
+	return ""
+}
+
+// balancedTextWithMarker keeps both ends of a natural-language block while
+// making the omission explicit. It deliberately does not classify lines:
+// project instructions and summaries must not inherit tool-log heuristics.
+func balancedTextWithMarker(runes []rune, keep int, marker string) string {
+	if keep >= len(runes) {
+		return string(runes)
+	}
+	if keep <= 0 {
+		return marker
+	}
+	headCount := keep / 2
+	tailCount := keep - headCount
+	head := strings.TrimRight(string(runes[:headCount]), " \t\r\n")
+	tail := strings.TrimLeft(string(runes[len(runes)-tailCount:]), " \t\r\n")
+	switch {
+	case head == "":
+		return marker + tail
+	case tail == "":
+		return head + marker
+	default:
+		return head + marker + tail
+	}
+}
+
+// fitToolEvidenceToBudget applies the deterministic line heuristic only to
+// tool output. Other context categories use fitTextToBudget or the dedicated
+// project-context clip above.
+func (p *contextPlanner) fitToolEvidenceToBudget(text string, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	if p.est.Estimate(text) <= budget {
+		return text
+	}
+	// Line selection can change the composition as the rune cap changes, so
+	// estimated tokens are not monotonic. Back off a bounded cap and validate
+	// each actual candidate instead of binary-searching an invalid predicate.
+	for limit := len([]rune(text)); limit > 0; {
+		candidate := truncateToolResultForContext(text, limit)
+		cost := p.est.Estimate(candidate)
+		if cost <= budget {
+			return candidate
+		}
+		if limit == 1 {
+			break
+		}
+		limit = max(1, min(limit*budget/cost, limit-max(1, limit/10)))
+	}
+	return ""
 }
 
 // Storage remains append-only. Only the projection presented to the model is
@@ -92,7 +153,7 @@ func (p *contextPlanner) projectCompactSummaries(messages []provider.Message) []
 			if len(selected) > 0 {
 				break
 			}
-			msg.Content = p.fitEvidenceToBudget(msg.Content, remaining-4)
+			msg.Content = p.fitTextToBudget(msg.Content, remaining-4)
 			cost = estimateProviderMessages(p.est, []provider.Message{msg})
 		}
 		if msg.Content == "" || cost > remaining {
@@ -135,7 +196,7 @@ func (a *Agent) projectToolEvidence(messages []provider.Message) []provider.Mess
 		if bodyBudget < 16 {
 			bodyBudget = 16
 		}
-		out[i].Content = p.fitEvidenceToBudget(body, bodyBudget) + ref
+		out[i].Content = p.fitToolEvidenceToBudget(body, bodyBudget) + ref
 	}
 	return out
 }

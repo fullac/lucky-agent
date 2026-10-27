@@ -266,7 +266,7 @@ func (p *contextPlanner) BuildInput(ctx context.Context, sess *session.Session, 
 	}
 	if source, ok := p.agent.(interface{ buildPinnedProjectPrompt(*session.Session) string }); ok {
 		if project := source.buildPinnedProjectPrompt(sess); project != "" {
-			messages = append(messages, provider.Message{Role: "system", Content: p.fitEvidenceToBudget(project, p.budget.Project)})
+			messages = append(messages, provider.Message{Role: "system", Content: p.fitProjectContextToBudget(project, p.budget.Project)})
 		}
 	}
 	// Keep the append-only session history ahead of query-dependent evidence so
